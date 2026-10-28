@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from heapq import heappop, heappush
 from itertools import pairwise
 from math import log, pi
 from typing import Hashable, Sequence
@@ -69,7 +68,11 @@ class NetworkRouter:
     def _middle(self, start: Hashable, end: Hashable) -> tuple[float, tuple[DirectedEdge, ...]]:
         cached = self._routes_from.get(start)
         if cached is None:
-            cached = _single_source_dijkstra(self.routing_graph, start)
+            cached = nx.dijkstra_predecessor_and_distance(
+                self.routing_graph,
+                start,
+                weight="length",
+            )
             self._routes_from[start] = cached
 
         predecessors, distances = cached
@@ -117,31 +120,6 @@ class NetworkRouter:
                 edges = (source_edge, *middle_edges, target_edge)
                 choices.append(Transition(source_cost + middle_cost + target_cost, edges))
         return min(choices, key=lambda item: item.distance) if choices else None
-
-
-def _single_source_dijkstra(
-    graph: nx.Graph,
-    source: Hashable,
-) -> tuple[dict[Hashable, list[Hashable]], dict[Hashable, float]]:
-    """Compute routes without NetworkX's intermittently crashing implementation."""
-    predecessors: dict[Hashable, list[Hashable]] = {source: []}
-    distances: dict[Hashable, float] = {source: 0.0}
-    queue: list[tuple[float, int, Hashable]] = [(0.0, 0, source)]
-    sequence = 0
-
-    while queue:
-        distance, _order, node = heappop(queue)
-        if distance != distances.get(node):
-            continue
-        for neighbor, attributes in graph[node].items():
-            candidate = distance + float(attributes["length"])
-            if candidate >= distances.get(neighbor, float("inf")):
-                continue
-            distances[neighbor] = candidate
-            predecessors[neighbor] = [node]
-            sequence += 1
-            heappush(queue, (candidate, sequence, neighbor))
-    return predecessors, distances
 
 
 def viterbi(

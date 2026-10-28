@@ -4,7 +4,6 @@ import networkx as nx
 import pytest
 from shapely.geometry import LineString
 
-import path_map.hmm as hmm
 from path_map.hmm import NetworkRouter
 from path_map.path import DirectedEdge
 
@@ -43,7 +42,7 @@ def test_router_runs_single_source_dijkstra_once_per_source(monkeypatch):
         lines=[LineString([(0, 0), (10, 0)]), LineString([(10, 0), (20, 0)])],
     )
     router = NetworkRouter(SimpleNamespace(graph=graph), index)
-    original = hmm._single_source_dijkstra
+    original = nx.dijkstra_predecessor_and_distance
     call_count = 0
 
     def counted_dijkstra(*args, **kwargs):
@@ -51,7 +50,7 @@ def test_router_runs_single_source_dijkstra_once_per_source(monkeypatch):
         call_count += 1
         return original(*args, **kwargs)
 
-    monkeypatch.setattr(hmm, "_single_source_dijkstra", counted_dijkstra)
+    monkeypatch.setattr(nx, "dijkstra_predecessor_and_distance", counted_dijkstra)
 
     assert router._middle("A", "B")[0] == pytest.approx(10)
     assert router._middle("A", "C")[0] == pytest.approx(20)
