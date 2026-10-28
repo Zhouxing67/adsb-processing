@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Airport Workbench</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header class="topbar panel">
+    <div class="brand-mark">AW</div>
+    <div class="brand-copy"><strong>Airport Workbench</strong><span id="counts">载入中…</span></div>
+    <div class="top-actions">
+      <button id="search-toggle" class="text-button"><span>⌕</span> 搜索</button>
+      <button id="topology-toggle" class="text-button"><span>◇</span> 拓扑检查</button>
+      <button id="undo" class="text-button" disabled><span>↶</span> 撤销</button>
+      <button id="save" class="save-button"><span>✓</span> 保存</button>
+      <button id="finish" class="finish-button hidden"><span>→</span> 完成</button>
+    </div>
+  </header>
+  <nav class="tool-dock panel" aria-label="编辑工具">
+    <div class="dock-title">编辑工具</div>
+    <button class="tool active" data-mode="inspect"><span>⌖</span><em>查看</em></button>
+    <button class="tool" data-mode="split"><span>✂</span><em>补充分割点</em></button>
+    <button class="tool" data-mode="restore"><span>⌁</span><em>恢复来源连接</em></button>
+    <button class="tool" data-mode="merge"><span>◎</span><em>合并重合节点</em></button>
+    <button class="tool" data-mode="snap"><span>↦</span><em>人工吸附到边</em></button>
+    <div class="dock-divider"></div>
+    <button class="tool danger" data-mode="delete"><span>×</span><em>删除 / 简化</em></button>
+  </nav>
+  <main class="workspace">
+    <div id="map" aria-label="机场工作台地图"></div>
+    <div class="map-overlay-stack">
+      <div class="legend panel">
+        <span><i class="dot node-dot"></i>图节点</span><span><i class="line edge-line"></i>派生边</span>
+        <span><i class="line flight-line"></i>Flight</span><span><i class="line path-line"></i>Path</span>
+      </div>
+      <div id="layer-control-slot"></div>
+    </div>
+  </main>
+  <section id="search-panel" class="search-panel panel hidden">
+    <div class="panel-heading"><div><small>快速定位</small><h2>搜索图要素</h2></div><button class="panel-close" data-close="search-panel">×</button></div>
+    <label>节点 ID<div class="input-action"><input id="search-node" placeholder="例如 1055650164"><button id="search-node-button">选中</button></div></label>
+    <label>边的两个端点<div class="edge-inputs"><input id="search-edge-u" placeholder="端点 A"><span>—</span><input id="search-edge-v" placeholder="端点 B"><button id="search-edge-button">选中</button></div></label>
+  </section>
+  <aside id="topology-panel" class="topology-panel panel hidden">
+    <div class="panel-heading"><div><small>只辅助人工判断，不自动修改</small><h2>拓扑概览</h2></div><button class="panel-close" data-close="topology-panel">×</button></div>
+    <div id="topology-summary" class="metric-grid"></div>
+    <div class="topology-actions"><button id="split-validation-toggle" class="secondary-button">开启相邻边辨色</button></div>
+    <p class="field-note">度为 0/1 的节点只是“值得检查”，不一定是错误。点击地图节点可查看它的所有直连边和邻居。</p>
+  </aside>
+  <aside id="details" class="details panel hidden">
+    <button id="close-details" class="panel-close" aria-label="关闭">×</button><div id="details-content"></div>
+  </aside>
+  <div id="status" class="status panel">查看模式 · 点击图层要素查看详情</div>
+  <div id="busy" class="busy hidden"><span></span></div>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

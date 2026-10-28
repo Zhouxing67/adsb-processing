@@ -1,0 +1,498 @@
+"""Local browser application for airport graph editing and visualization."""
+
+from __future__ import annotations
+
+import argparse
+import threading
+import time
+import webbrowser
+from collections import defaultdict
+from pathlib import Path as FilePath
+from typing import TYPE_CHECKING, Any, Callable, Sequence
+
+import uvicorn
+import networkx as nx
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
+from shapely.geometry import LineString, mapping
+from traffic.core import Flight
+
+from airport_surface import edge_source_segments
+from airport_surface.graph import (
+    DEFAULT_GRAPH_PATH,
+    _json_value,
+    build_graph,
+    load_graph,
+    save_graph,
+    validate_edge_endpoints,
+    validate_edge_sources,
+)
+
+from .editor import EditorSession
+from .serializers import serialize_flights, serialize_paths
+
+if TYPE_CHECKING:
+    from path_map import Path
+
+STATIC_DIRECTORY = FilePath(__file__).with_name("static")
+NO_CACHE_HEADERS = {"Cache-Control": "no-store"}
+VALIDATION_EDGE_COLORS = (
+    "#0072b2",
+    "#d55e00",
+    "#009e73",
+    "#cc79a7",
+    "#e6ab02",
+    "#6a3d9a",
+    "#00a6d6",
+    "#e31a1c",
+)
+
+
+def _edge_colors(graph: Any) -> dict[tuple[Any, Any, Any], str]:
+    """Greedily give incident edges strongly contrasting validation colors."""
+    used_at_node: dict[Any, set[int]] = defaultdict(set)
+    result: dict[tuple[Any, Any, Any], str] = {}
+    for u, v, key in graph.edges(keys=True):
+        unavailable = used_at_node[u] | used_at_node[v]
+        color_index = 0
+        while color_index in unavailable:
+            color_index += 1
+        used_at_node[u].add(color_index)
+        used_at_node[v].add(color_index)
+        result[(u, v, key)] = (
+            VALIDATION_EDGE_COLORS[color_index]
+            if color_index < len(VALIDATION_EDGE_COLORS)
+            else f"hsl({(18 + color_index * 47) % 360} 72% 50%)"
+        )
+    return result
+
+
+class Token(BaseModel):
+    token: str
+
+
+class RestoreRequest(BaseModel):
+    start: str
+    end: str
+    candidate_id: str | None = None
+
+
+class MergeNodesRequest(BaseModel):
+    node_ids: list[Any] = Field(default_factory=list)
+    node_tokens: list[str] = Field(default_factory=list)
+    canonical_node_id: Any | None = None
+
+
+class UpdatedAttributes(BaseModel):
+    token: str
+    attributes: dict[str, Any]
+
+
+class NodeDeletionRequest(BaseModel):
+    token: str
+    pair_ids: list[str] = Field(default_factory=list)
+    discard_unpaired: bool = False
+
+
+class SourceSplitRequest(BaseModel):
+    edge: str
+    longitude: float
+    latitude: float
+    osm_node_id: Any | None = None
+
+
+class ManualSnapRequest(BaseModel):
+    node: str
+    edge: str
+
+
+class BrowserState:
+    def __init__(
+        self,
+        session: EditorSession,
+        flights: Sequence[Flight] = (),
+        paths: Sequence[Path] = (),
+    ) -> None:
+        self.session = session
+        self.flights = tuple(flights)
+        self.paths = tuple(paths)
+        self.nodes: dict[str, Any] = {}
+        self.edges: dict[str, tuple[Any, Any, Any]] = {}
+
+    def state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
+        with self.session.lock:
+            return self._state(can_finish, save_path)
+
+    def _state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
+        graph = self.session.graph
+        components = list(nx.connected_components(graph))
+        component_by_node = {
+            node: index + 1 for index, members in enumerate(components) for node in members
+        }
+        isolated_nodes = [node for node, degree in graph.degree if degree == 0]
+        dangling_nodes = [node for node, degree in graph.degree if degree == 1]
+        parallel_pairs = sum(
+            1
+            for _u, neighbours in graph.adjacency()
+            for _v, keyed_edges in neighbours.items()
+            if len(keyed_edges) > 1
+        ) // 2
+        self.nodes = {}
+        self.edges = {}
+        node_features = []
+        for index, (node, data) in enumerate(graph.nodes(data=True)):
+            token = f"n{index}"
+            self.nodes[token] = node
+            longitude, latitude = data["pos"][:2]
+            degree = graph.degree(node)
+            color = (
+                "#808080"
+                if data.get("source") == "manual"
+                else "#d73027"
+                if degree == 1
+                else "#2166ac"
+            )
+            node_features.append(
+                {
+                    "type": "Feature",
+                    "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
+                    "properties": {
+                        "token": token,
+                        "node_id": repr(node),
+                        "longitude": longitude,
+                        "latitude": latitude,
+                        "degree": degree,
+                        "component": component_by_node[node],
+                        "topology_role": (
+                            "isolated" if degree == 0 else "dangling" if degree == 1 else "connected"
+                        ),
+                        "neighbours": ", ".join(repr(item) for item in graph.neighbors(node)),
+                        "attributes": repr(
+                            {key: value for key, value in data.items() if key != "pos"}
+                        ),
+                        "editable_attributes": _json_value(
+                            {key: value for key, value in data.items() if key != "pos"}
+                        ),
+                        "manual": data.get("source") == "manual",
+                        "color": color,
+                        "radius": 4 if degree == 1 else 2.75,
+                    },
+                }
+            )
+
+        edge_features = []
+        edge_colors = _edge_colors(graph)
+        for index, (u, v, key, data) in enumerate(graph.edges(keys=True, data=True)):
+            token = f"e{index}"
+            self.edges[token] = (u, v, key)
+            geometry = data.get("geometry") or LineString(
+                [graph.nodes[u]["pos"][:2], graph.nodes[v]["pos"][:2]]
+            )
+            edge_features.append(
+                {
+                    "type": "Feature",
+                    "geometry": mapping(geometry),
+                    "properties": {
+                        "token": token,
+                        "edge_id": repr((u, v, key)),
+                        "u": repr(u),
+                        "v": repr(v),
+                        "key": repr(key),
+                        "validation_color": edge_colors[(u, v, key)],
+                        "geometry_length_m": round(self.session.airport_graph.length(geometry), 2),
+                        "source_id": data.get("source_id"),
+                        "source_type": data.get("source_type"),
+                        "source_start_m": data.get("source_start_m"),
+                        "source_end_m": data.get("source_end_m"),
+                        "osm_node_ids": repr(data.get("osm_node_ids", ())),
+                        "source_segments": repr(edge_source_segments(data)),
+                        "aeroway": data.get("aeroway"),
+                        "name": data.get("name"),
+                        "ref": data.get("ref"),
+                        "attributes": repr(
+                            {name: value for name, value in data.items() if name != "geometry"}
+                        ),
+                        "editable_attributes": _json_value(
+                            {
+                                name: value
+                                for name, value in data.items()
+                                if name not in {"geometry", "first", "last"}
+                            }
+                        ),
+                    },
+                }
+            )
+        return {
+            "nodes": {"type": "FeatureCollection", "features": node_features},
+            "edges": {"type": "FeatureCollection", "features": edge_features},
+            "flights": serialize_flights(self.flights),
+            "paths": serialize_paths(self.paths),
+            "node_count": graph.number_of_nodes(),
+            "edge_count": graph.number_of_edges(),
+            "flight_count": len(self.flights),
+            "path_count": len(self.paths),
+            "topology": {
+                "component_count": len(components),
+                "largest_component": max((len(item) for item in components), default=0),
+                "isolated_count": len(isolated_nodes),
+                "dangling_count": len(dangling_nodes),
+                "parallel_pair_count": parallel_pairs,
+                "isolated_nodes": [repr(node) for node in isolated_nodes[:100]],
+                "dangling_nodes": [repr(node) for node in dangling_nodes[:100]],
+            },
+            "can_undo": self.session.can_undo,
+            "can_finish": can_finish,
+            "save_path": str(save_path),
+        }
+
+    def node(self, token: str) -> Any:
+        if token not in self.nodes:
+            raise HTTPException(409, "图已更新，请重试")
+        return self.nodes[token]
+
+    def edge(self, token: str) -> tuple[Any, Any, Any]:
+        if token not in self.edges:
+            raise HTTPException(409, "图已更新，请重试")
+        return self.edges[token]
+
+    def node_token(self, node: Any) -> str:
+        for token, value in self.nodes.items():
+            if value == node:
+                return token
+        raise HTTPException(409, "图已更新，请重试")
+
+
+def create_app(
+    session: EditorSession,
+    save_path: FilePath = DEFAULT_GRAPH_PATH,
+    on_finish: Callable[[], None] | None = None,
+    *,
+    flights: Sequence[Flight] = (),
+    paths: Sequence[Path] = (),
+) -> FastAPI:
+    browser = BrowserState(session, flights, paths)
+    app = FastAPI(title="Airport Workbench")
+
+    @app.get("/")
+    def index() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "index.html", headers=NO_CACHE_HEADERS)
+
+    @app.get("/app.css")
+    def stylesheet() -> FileResponse:
+        return FileResponse(
+            STATIC_DIRECTORY / "app.css", media_type="text/css", headers=NO_CACHE_HEADERS
+        )
+
+    @app.get("/app.js")
+    def javascript() -> FileResponse:
+        return FileResponse(
+            STATIC_DIRECTORY / "app.js",
+            media_type="text/javascript",
+            headers=NO_CACHE_HEADERS,
+        )
+
+    @app.get("/api/state")
+    def state() -> dict[str, Any]:
+        return browser.state(on_finish is not None, save_path)
+
+    @app.post("/api/restore-options")
+    def restore_options(item: RestoreRequest) -> dict[str, Any]:
+        start = browser.node(item.start)
+        end = browser.node(item.end)
+        if start == end:
+            raise HTTPException(400, "起点和终点不能相同")
+        candidates = session.connection_candidates(start, end)
+        return {
+            "current_endpoints": [repr(start), repr(end)],
+            "candidates": [
+                {
+                    **{
+                        name: _json_value(value)
+                        for name, value in candidate.items()
+                        if name != "geometry"
+                    },
+                    "geometry": mapping(candidate["geometry"]),
+                }
+                for candidate in candidates
+            ],
+        }
+
+    @app.post("/api/restore-confirm")
+    def restore_confirm(item: RestoreRequest) -> dict[str, Any]:
+        if item.candidate_id is None:
+            raise HTTPException(400, "必须选择一个来源路径")
+        start, end = browser.node(item.start), browser.node(item.end)
+        try:
+            key = session.restore_source_connection(start, end, item.candidate_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": f"已从原始来源路径恢复派生边，key={key!r}"}
+
+    @app.get("/api/merge-candidates")
+    def merge_candidates() -> dict[str, Any]:
+        return {"candidates": _json_value(session.merge_candidates())}
+
+    @app.post("/api/merge-nodes-preview")
+    def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
+        node_ids = item.node_ids or [browser.node(token) for token in item.node_tokens]
+        try:
+            return _json_value(
+                session.merge_nodes_preview(node_ids, item.canonical_node_id)
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/api/merge-nodes-confirm")
+    def merge_nodes_confirm(item: MergeNodesRequest) -> dict[str, Any]:
+        node_ids = item.node_ids or [browser.node(token) for token in item.node_tokens]
+        try:
+            canonical = session.merge_nodes(node_ids, item.canonical_node_id)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": f"已合并节点，规范节点为 {canonical!r}"}
+
+    @app.post("/api/delete-edge-preview")
+    def delete_edge_preview(item: Token) -> dict[str, Any]:
+        edge = browser.edge(item.token)
+        data = session.graph.edges[edge]
+        segments = edge_source_segments(data)
+        return {
+            "edge": repr(edge),
+            "endpoints": [repr(edge[0]), repr(edge[1])],
+            "source_id": data.get("source_id"),
+            "source_interval": [data.get("source_start_m"), data.get("source_end_m")],
+            "source_segments": [
+                {
+                    "source_id": segment.source_id,
+                    "source_start_m": segment.source_start_m,
+                    "source_end_m": segment.source_end_m,
+                    "reversed": segment.reversed,
+                }
+                for segment in segments
+            ],
+            "source_preserved": True,
+        }
+
+    @app.post("/api/delete-edge-confirm")
+    def delete_edge_confirm(item: Token) -> dict[str, Any]:
+        edge = browser.edge(item.token)
+        session.remove_derived_edge(*edge)
+        return {"message": f"已删除派生边 {edge!r}，SourceEdge 保持不变"}
+
+    @app.post("/api/delete-node-preview")
+    def delete_node_preview(item: Token) -> dict[str, Any]:
+        return session.node_deletion_plan(browser.node(item.token))
+
+    @app.post("/api/delete-node-confirm")
+    def delete_node_confirm(item: NodeDeletionRequest) -> dict[str, Any]:
+        node = browser.node(item.token)
+        try:
+            session.remove_node_with_pairs(node, item.pair_ids, item.discard_unpaired)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": f"已按所选来源策略删除节点 {node!r}"}
+
+    @app.post("/api/split-source-preview")
+    def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
+        try:
+            return session.source_split_preview(
+                *browser.edge(item.edge), item.longitude, item.latitude
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/api/split-source-confirm")
+    def split_source_confirm(item: SourceSplitRequest) -> dict[str, Any]:
+        try:
+            node = session.split_source_edge(
+                *browser.edge(item.edge),
+                item.longitude,
+                item.latitude,
+                item.osm_node_id,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": f"已在 SourceEdge 上使用节点 {node!r} 切分"}
+
+    @app.post("/api/manual-snap-preview")
+    def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
+        node = browser.node(item.node)
+        edge = browser.edge(item.edge)
+        try:
+            return _json_value(session.manual_snap_preview(node, *edge))
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.post("/api/manual-snap-confirm")
+    def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
+        node = browser.node(item.node)
+        edge = browser.edge(item.edge)
+        try:
+            session.manual_snap_node_to_edge(node, *edge)
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": f"已将节点 {node!r} 人工接入目标边"}
+
+    @app.post("/api/update-node")
+    def update_node(item: UpdatedAttributes) -> dict[str, Any]:
+        node = browser.node(item.token)
+        session.update_node_attributes(node, item.attributes)
+        return {"message": f"已更新节点 {node!r} 的属性"}
+
+    @app.post("/api/update-edge")
+    def update_edge(item: UpdatedAttributes) -> dict[str, Any]:
+        edge = browser.edge(item.token)
+        session.update_edge_attributes(*edge, item.attributes)
+        return {"message": f"已更新边 {edge!r} 的属性"}
+
+    @app.post("/api/save")
+    def save() -> dict[str, Any]:
+        with session.lock:
+            validate_edge_endpoints(session.airport_graph)
+            validate_edge_sources(session.airport_graph)
+            output = save_graph(session.airport_graph, save_path)
+        return {
+            "message": (
+                f"已保存 {output} · {session.graph.number_of_nodes()} 节点 · "
+                f"{session.graph.number_of_edges()} 边"
+            )
+        }
+
+    @app.post("/api/undo")
+    def undo() -> dict[str, Any]:
+        try:
+            session.undo()
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": "已撤销上一步操作"}
+
+    @app.post("/api/finish")
+    def finish() -> dict[str, Any]:
+        if on_finish is None:
+            raise HTTPException(400, "当前为独立编辑模式")
+        with session.lock:
+            validate_edge_endpoints(session.airport_graph)
+            validate_edge_sources(session.airport_graph)
+            output = save_graph(session.airport_graph, save_path)
+        on_finish()
+        return {"message": f"已保存 {output}，编辑完成，正在返回 AirportGraph"}
+
+    return app
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Start the airport workbench.")
+    parser.add_argument("--graph", type=FilePath, default=DEFAULT_GRAPH_PATH)
+    parser.add_argument("--fresh", action="store_true", help="ignore a saved graph and rebuild")
+    parser.add_argument("--host", default="127.0.0.1")
+    parser.add_argument("--port", type=int, default=8765)
+    parser.add_argument("--no-browser", action="store_true")
+    args = parser.parse_args()
+
+    graph = load_graph(args.graph) if args.graph.exists() and not args.fresh else build_graph()
+    session = EditorSession(graph)
+    if not args.no_browser:
+        url = f"http://{args.host}:{args.port}/?session={time.time_ns()}"
+        threading.Timer(1.0, webbrowser.open, args=(url,)).start()
+    uvicorn.run(create_app(session, args.graph), host=args.host, port=args.port)
