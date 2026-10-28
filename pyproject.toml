@@ -3,14 +3,13 @@ name = "adsb-processing"
 version = "0.1.0"
 description = "ADS-B airport surface trajectory processing and HMM map matching"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.13,<3.14"
 dependencies = [
     "pandas<3",
     "numpy",
     "pyarrow",
     "matplotlib",
     "geopandas>=1.1.4",
-    "traffic>=2.13",
     "networkx>=3.6.1",
     "shapely>=2.1",
     "pyproj>=3.7",
@@ -23,13 +22,14 @@ dependencies = [
 
 [dependency-groups]
 dev = ["pytest", "ruff", "jupyterlab"]
+graph-build = ["traffic>=2.13"]
 
 [build-system]
 requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["airport_surface", "airport_workbench", "path_map"]
+module-name = ["adsb", "airport_surface", "airport_workbench", "path_map"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

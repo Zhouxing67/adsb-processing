@@ -7,8 +7,8 @@ from typing import Any, Sequence
 
 import pandas as pd
 from shapely.geometry import LineString, Point, mapping
-from traffic.core import Flight
 
+from adsb import Flight
 from path_map import Path
 
 

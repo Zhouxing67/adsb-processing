@@ -663,6 +663,32 @@ Workbench 当前提供以下来源感知操作：
 
 人工合并默认候选距离为 0.5 米，硬性上限为 2 米。候选距离只用于发现，不会触发自动合并。
 
+#### 只读可视化
+
+仅查看机场图、ADS-B 轨迹或匹配路径时，应使用 `airport_workbench.visualize_graph()`，
+而不是打开完整编辑器：
+
+```python
+from airport_surface import load_graph
+from airport_workbench import visualize_graph
+
+graph = load_graph("data/graphs/zbaa.json")
+visualize_graph(graph, flights=[flight], paths=[matched_path])
+```
+
+只读模式复用 Workbench 的地图图层、节点/边详情、搜索、拓扑检查、连通分量定位、
+平行边定位和相邻边辨色功能。它不会显示编辑工具、保存、撤销或完成按钮；服务端也会
+拒绝所有写请求，因此不会修改传入的 `AirportGraph` 或磁盘文件。
+
+也可以通过命令行脚本打开已有机场图：
+
+```powershell
+uv run python scripts/visualize_airport_graph.py `
+    --input data/graphs/zbaa_final.json
+```
+
+可选参数包括 `--host`、`--port` 和 `--no-browser`。
+
 ### 9.7 访问底层 NetworkX API
 
 ```python

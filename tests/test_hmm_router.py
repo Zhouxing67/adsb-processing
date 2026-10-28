@@ -4,6 +4,7 @@ import networkx as nx
 import pytest
 from shapely.geometry import LineString
 
+import path_map.hmm as hmm
 from path_map.hmm import NetworkRouter
 from path_map.path import DirectedEdge
 
@@ -31,3 +32,31 @@ def test_router_uses_shortest_parallel_edge_and_preserves_its_key():
         DirectedEdge("A", "B", "short"),
         DirectedEdge("B", "C", "next"),
     )
+
+
+def test_router_runs_single_source_dijkstra_once_per_source(monkeypatch):
+    graph = nx.MultiGraph()
+    graph.add_edge("A", "B", key=0, geometry=LineString([(0, 0), (10, 0)]))
+    graph.add_edge("B", "C", key=0, geometry=LineString([(10, 0), (20, 0)]))
+    index = SimpleNamespace(
+        edge_ids=[("A", "B", 0), ("B", "C", 0)],
+        lines=[LineString([(0, 0), (10, 0)]), LineString([(10, 0), (20, 0)])],
+    )
+    router = NetworkRouter(SimpleNamespace(graph=graph), index)
+    original = hmm._single_source_dijkstra
+    call_count = 0
+
+    def counted_dijkstra(*args, **kwargs):
+        nonlocal call_count
+        call_count += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(hmm, "_single_source_dijkstra", counted_dijkstra)
+
+    assert router._middle("A", "B")[0] == pytest.approx(10)
+    assert router._middle("A", "C")[0] == pytest.approx(20)
+    assert call_count == 1
+
+    router.clear_route_cache()
+    assert router._middle("A", "C")[0] == pytest.approx(20)
+    assert call_count == 2

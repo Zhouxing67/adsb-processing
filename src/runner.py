@@ -2,40 +2,30 @@
 
 from __future__ import annotations
 
-import csv
 import json
 import time
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
+from zoneinfo import ZoneInfo
 
-from traffic.core import Flight, Traffic
-
-from airport_surface import load_graph
+from adsb import Flight
+from airport_surface import graph_id, load_graph, save_graph
 from airport_workbench import open_workbench
-from path_map import MapMatchingError, MatchConfig, Matcher, MovementType
+from path_map import (
+    MapMatchingError,
+    MatchConfig,
+    Matcher,
+    MovementType,
+    PathRecord,
+    load_data,
+)
 from path_map.path import Path as MatchedPath
 
-MATCH_COLUMNS = [
-    "batch",
-    "flight_id",
-    "movement_type",
-    "observation_count",
-    "edge_count",
-    "path_length_m",
-    "elapsed_seconds",
-]
-EDGE_COLUMNS = ["batch", "flight_id", "sequence", "from_node", "to_node", "key"]
-FAILURE_COLUMNS = [
-    "batch",
-    "flight_id",
-    "observation_count",
-    "failure_type",
-    "reason",
-    "elapsed_seconds",
-]
+LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True, slots=True)
@@ -90,142 +80,99 @@ class Runner:
             return "disconnected"
         return "matching_error"
 
-    def _iter_flights(self, path: Path) -> Iterator[Flight]:
-        """Load a CSV as Traffic and yield flights in timestamp order."""
-        if not path.exists():
-            raise FileNotFoundError(f"ADS-B input does not exist: {path}")
-
-        traffic = Traffic.from_file(path, parse_dates=["timestamp"])
-        if "flight_id" not in traffic.data.columns:
-            raise ValueError(f"ADS-B input has no flight_id column: {path}")
-        if traffic.data["flight_id"].isna().any():
-            raise ValueError(f"ADS-B input contains an empty flight_id: {path}")
-
-        for flight in traffic.iterate(nb_flights=self.limit):
-            ordered = flight.data.sort_values("timestamp").reset_index(drop=True)
-            yield Flight(ordered)
+    def _iter_flights(
+        self,
+        path: Path,
+        movement_type: MovementType = MovementType.UNKNOWN,
+    ) -> Iterator[Flight]:
+        """Load a CSV and yield validated flights in deterministic order."""
+        yield from load_data(path, movement_type).iterate(limit=self.limit)
 
     def _run_batch(
         self,
         spec: BatchSpec,
         matcher: Matcher,
+        graph_identity: str,
+        path_file: TextIO,
+        match_file: TextIO,
+        path_ids: dict[tuple[tuple[Any, Any, Any], ...], int],
     ) -> tuple[dict[str, Any], list[Flight], list[MatchedPath]]:
         successful_sample_flights: list[Flight] = []
         failed_sample_flights: list[Flight] = []
         sample_paths: list[MatchedPath] = []
         started = time.perf_counter()
-        batch_dir = self.output_dir / spec.name
-        batch_dir.mkdir(parents=True, exist_ok=True)
         matched_count = 0
         failed_count = 0
         failure_counts: Counter[str] = Counter()
 
-        def build_summary(status: str) -> dict[str, Any]:
-            elapsed = time.perf_counter() - started
-            total = matched_count + failed_count
-            return {
-                "status": status,
-                "batch": spec.name,
-                "input": str(spec.input_path),
-                "total_flights": total,
-                "matched_flights": matched_count,
-                "failed_flights": failed_count,
-                "success_rate": matched_count / total if total else None,
-                "elapsed_seconds": elapsed,
-                "average_seconds_per_flight": elapsed / total if total else None,
-                "failure_counts": dict(failure_counts),
-            }
-
-        def save_summary(status: str) -> dict[str, Any]:
-            summary = build_summary(status)
-            (batch_dir / "summary.json").write_text(
-                json.dumps(summary, ensure_ascii=False, indent=2),
-                encoding="utf-8",
-            )
-            return summary
-
-        with (
-            (batch_dir / "matches.csv").open("w", newline="", encoding="utf-8-sig") as match_file,
-            (batch_dir / "matched_edges.csv").open(
-                "w", newline="", encoding="utf-8-sig"
-            ) as edge_file,
-            (batch_dir / "failures.csv").open(
-                "w", newline="", encoding="utf-8-sig"
-            ) as failure_file,
+        for number, flight in enumerate(
+            self._iter_flights(spec.input_path, spec.movement_type), start=1
         ):
-            match_writer = csv.DictWriter(match_file, fieldnames=MATCH_COLUMNS)
-            edge_writer = csv.DictWriter(edge_file, fieldnames=EDGE_COLUMNS)
-            failure_writer = csv.DictWriter(failure_file, fieldnames=FAILURE_COLUMNS)
-            match_writer.writeheader()
-            edge_writer.writeheader()
-            failure_writer.writeheader()
-            save_summary("running")
-
+            flight_id = self._flight_id(flight)
+            flight_started = time.perf_counter()
+            result: dict[str, Any] = {
+                "flight_id": flight_id,
+                "movement_type": spec.movement_type.value,
+                "observation_count": len(flight.data),
+            }
             try:
-                for number, flight in enumerate(self._iter_flights(spec.input_path), start=1):
-                    flight_id = self._flight_id(flight)
-                    flight_started = time.perf_counter()
-                    try:
-                        path = matcher.map_flight(flight, movement_type=spec.movement_type)
-                    except MapMatchingError as error:
-                        reason = str(error)
-                        failure_type = self._failure_type(reason)
-                        failure_writer.writerow(
+                path = matcher.map_flight(flight)
+            except MapMatchingError as error:
+                reason = str(error)
+                failure_type = self._failure_type(reason)
+                result.update(path_id=None, failure_type=failure_type, reason=reason)
+                failed_count += 1
+                failure_counts[failure_type] += 1
+                if len(failed_sample_flights) < self.failure_samples:
+                    failed_sample_flights.append(flight)
+            else:
+                path_key = path.edge_ids
+                path_id = path_ids.get(path_key)
+                if path_id is None:
+                    path_id = len(path_ids) + 1
+                    path_ids[path_key] = path_id
+                    path_file.write(
+                        json.dumps(
                             {
-                                "batch": spec.name,
-                                "flight_id": flight_id,
-                                "observation_count": len(flight.data),
-                                "failure_type": failure_type,
-                                "reason": reason,
-                                "elapsed_seconds": time.perf_counter() - flight_started,
-                            }
+                                "path_id": path_id,
+                                "path": PathRecord(graph_identity, path.edges).to_dict(),
+                            },
+                            ensure_ascii=False,
+                            separators=(",", ":"),
                         )
-                        failed_count += 1
-                        failure_counts[failure_type] += 1
-                        if len(failed_sample_flights) < self.failure_samples:
-                            failed_sample_flights.append(flight)
-                    else:
-                        match_writer.writerow(
-                            {
-                                "batch": spec.name,
-                                "flight_id": flight_id,
-                                "movement_type": spec.movement_type.value,
-                                "observation_count": len(flight.data),
-                                "edge_count": len(path),
-                                "path_length_m": path.total_length,
-                                "elapsed_seconds": time.perf_counter() - flight_started,
-                            }
-                        )
-                        matched_count += 1
-                        for sequence, edge in enumerate(path.edges):
-                            edge_writer.writerow(
-                                {
-                                    "batch": spec.name,
-                                    "flight_id": flight_id,
-                                    "sequence": sequence,
-                                    "from_node": repr(edge.from_),
-                                    "to_node": repr(edge.to_),
-                                    "key": repr(edge.key_),
-                                }
-                            )
-                        if len(sample_paths) < self.success_samples:
-                            successful_sample_flights.append(flight)
-                            sample_paths.append(path)
+                        + "\n"
+                    )
+                result["path_id"] = path_id
+                matched_count += 1
+                if len(sample_paths) < self.success_samples:
+                    successful_sample_flights.append(flight)
+                    sample_paths.append(path)
 
-                    if number % 100 == 0:
-                        match_file.flush()
-                        edge_file.flush()
-                        failure_file.flush()
-                        save_summary("running")
-                        print(
-                            f"[{spec.name}] processed={number} "
-                            f"matched={matched_count} failed={failed_count}"
-                        )
-            except BaseException:
-                save_summary("interrupted")
-                raise
+            result["elapsed_seconds"] = time.perf_counter() - flight_started
+            match_file.write(
+                json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n"
+            )
+            if number % 100 == 0:
+                match_file.flush()
+                path_file.flush()
+                print(
+                    f"[{spec.name}] processed={number} "
+                    f"matched={matched_count} failed={failed_count}"
+                )
 
-        summary = save_summary("completed")
+        elapsed = time.perf_counter() - started
+        total = matched_count + failed_count
+        summary = {
+            "batch": spec.name,
+            "input": str(spec.input_path),
+            "total_flights": total,
+            "matched_flights": matched_count,
+            "failed_flights": failed_count,
+            "success_rate": matched_count / total if total else None,
+            "elapsed_seconds": elapsed,
+            "average_seconds_per_flight": elapsed / total if total else None,
+            "failure_counts": dict(failure_counts),
+        }
         elapsed = summary["elapsed_seconds"]
         print(
             f"[{spec.name}] total={matched_count + failed_count} matched={matched_count} "
@@ -236,33 +183,53 @@ class Runner:
     def run(self) -> dict[str, Any]:
         if not self.graph_path.exists():
             raise FileNotFoundError(f"Airport graph does not exist: {self.graph_path}")
-        self.output_dir.mkdir(parents=True, exist_ok=True)
+        run_started_at = datetime.now(LOCAL_TIMEZONE)
+        run_dir = self.output_dir / run_started_at.strftime("%Y%m%d_%H%M%S")
+        run_dir.mkdir(parents=True, exist_ok=False)
         airport_graph = load_graph(self.graph_path)
         matcher = Matcher(airport_graph, self.match_config)
+        graph_snapshot = run_dir / "graph.json"
+        save_graph(airport_graph, graph_snapshot)
+        graph_identity = graph_id(airport_graph)
 
         summaries: list[dict[str, Any]] = []
         sample_flights: list[Flight] = []
         sample_paths: list[MatchedPath] = []
+        path_ids: dict[tuple[tuple[Any, Any, Any], ...], int] = {}
         started = time.perf_counter()
-        for spec in self.batches:
-            summary, flights, paths = self._run_batch(spec, matcher)
-            summaries.append(summary)
-            sample_flights.extend(flights)
-            sample_paths.extend(paths)
+        with (
+            (run_dir / "paths.jsonl").open("w", encoding="utf-8") as path_file,
+            (run_dir / "matches.jsonl").open("w", encoding="utf-8") as match_file,
+        ):
+            for spec in self.batches:
+                summary, flights, paths = self._run_batch(
+                    spec,
+                    matcher,
+                    graph_identity,
+                    path_file,
+                    match_file,
+                    path_ids,
+                )
+                summaries.append(summary)
+                sample_flights.extend(flights)
+                sample_paths.extend(paths)
 
         total = sum(item["total_flights"] for item in summaries)
         matched = sum(item["matched_flights"] for item in summaries)
         failed = sum(item["failed_flights"] for item in summaries)
         report = {
-            "graph": str(self.graph_path),
+            "started_at": run_started_at.isoformat(),
+            "completed_at": datetime.now(LOCAL_TIMEZONE).isoformat(),
+            "graph_id": graph_identity,
             "total_flights": total,
             "matched_flights": matched,
             "failed_flights": failed,
+            "unique_paths": len(path_ids),
             "success_rate": matched / total if total else None,
             "elapsed_seconds": time.perf_counter() - started,
             "batches": summaries,
         }
-        (self.output_dir / "summary.json").write_text(
+        (run_dir / "summary.json").write_text(
             json.dumps(report, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )

@@ -3,19 +3,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
 from typing import Any
 
 import networkx as nx
 import pandas as pd
 from shapely.geometry import Point
-from traffic.core import Flight, Traffic
 
+from adsb import Flight, Flights
 from airport_surface import AirportGraph
 
 from .candidates import Candidate, CandidateIndex
 from .hmm import NetworkRouter, viterbi
-from .path import DirectedEdge, MovementType, Path
+from .path import DirectedEdge, Path
 
 
 class MapMatchingError(ValueError):
@@ -25,14 +24,24 @@ class MapMatchingError(ValueError):
 @dataclass(frozen=True, slots=True)
 class MatchConfig:
     search_radius: float = 40.0
-    max_candidates: int = 6
+    max_search_radius: float = 120.0
+    max_candidates: int = 40
     gps_sigma: float = 10.0
     transition_beta: float = 20.0
-    max_time_gap: timedelta | None = timedelta(minutes=2)
 
     def __post_init__(self) -> None:
-        if min(self.search_radius, self.gps_sigma, self.transition_beta) <= 0:
+        if (
+            min(
+                self.search_radius,
+                self.max_search_radius,
+                self.gps_sigma,
+                self.transition_beta,
+            )
+            <= 0
+        ):
             raise ValueError("Distance parameters must be positive")
+        if self.max_search_radius < self.search_radius:
+            raise ValueError("max_search_radius must not be smaller than search_radius")
         if self.max_candidates < 1:
             raise ValueError("max_candidates must be at least one")
 
@@ -72,41 +81,49 @@ class Matcher:
     def map_flight(
         self,
         flight: Flight,
-        *,
-        movement_type: MovementType = MovementType.UNKNOWN,
     ) -> Path:
         """Match one flight while reusing the graph index and router."""
-        observations = _observations(self.airport_graph, flight, self.config)
-        layers = [
-            self.index.candidates(
-                index,
-                point,
-                self.config.search_radius,
-                self.config.max_candidates,
-            )
-            for index, point in enumerate(observations)
-        ]
-        empty = [index for index, layer in enumerate(layers) if not layer]
-        if empty:
-            raise MapMatchingError(f"No edge candidates for observation(s): {empty}")
+        observations = _observations(self.airport_graph, flight)
+        matched_observations: list[Point] = []
+        layers: list[list[Candidate]] = []
+        for index, point in enumerate(observations):
+            candidates = self._candidates(index, point)
+            if not candidates:
+                continue
+            matched_observations.append(point)
+            layers.append(candidates)
+
+        if not layers:
+            raise MapMatchingError("No edge candidates for any observation")
+        self.router.clear_route_cache()
         try:
             states, transitions = viterbi(
                 layers,
-                observations,
+                matched_observations,
                 self.router,
                 self.config.gps_sigma,
                 self.config.transition_beta,
             )
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError("No connected network path matches all observations") from exc
-        return Path(
-            self.airport_graph,
-            _recover(transitions, states[0]),
-            movement_type=movement_type,
-        )
+        return Path(self.airport_graph, _recover(transitions, states[0]))
+
+    def _candidates(self, observation_index: int, point: Point) -> list[Candidate]:
+        """Find candidates, expanding the radius only when none are found."""
+        radius = self.config.search_radius
+        while True:
+            candidates = self.index.candidates(
+                observation_index,
+                point,
+                radius,
+                self.config.max_candidates,
+            )
+            if candidates or radius >= self.config.max_search_radius:
+                return candidates
+            radius = min(radius * 2, self.config.max_search_radius)
 
 
-def _observations(ag: AirportGraph, flight: Flight, config: MatchConfig) -> list[Point]:
+def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
     required = {"longitude", "latitude"}
     if not required <= set(flight.data.columns):
         raise MapMatchingError("Flight must contain longitude and latitude columns")
@@ -120,8 +137,6 @@ def _observations(ag: AirportGraph, flight: Flight, config: MatchConfig) -> list
         except (TypeError, ValueError) as exc:
             raise MapMatchingError("Flight contains invalid timestamps") from exc
         frame = frame.sort_values("timestamp", kind="stable")
-        if config.max_time_gap is not None and (frame.timestamp.diff() > config.max_time_gap).any():
-            raise MapMatchingError("Flight contains a time gap larger than max_time_gap")
     if len(frame) < 2:
         raise MapMatchingError("At least two valid observations are required")
     x, y = ag.project.transform(frame.longitude.to_numpy(), frame.latitude.to_numpy())
@@ -145,32 +160,25 @@ def map_flight(
     AG: AirportGraph,
     f: Flight,
     config: MatchConfig | None = None,
-    *,
-    movement_type: MovementType = MovementType.UNKNOWN,
 ) -> Path:
     """Match ADS-B observations to a continuous airport-network path with an HMM."""
-    return Matcher(AG, config).map_flight(f, movement_type=movement_type)
+    return Matcher(AG, config).map_flight(f)
 
 
-def map_traffic(
+def map_flights(
     airport_graph: AirportGraph,
-    traffic: Traffic,
+    flights: Flights,
     config: MatchConfig | None = None,
-    *,
-    movement_type: MovementType = MovementType.UNKNOWN,
 ) -> BatchMatchResult:
     """Match every flight independently without stopping on matching failures."""
     matches: list[tuple[Any, Path]] = []
     failures: list[MatchFailure] = []
     matcher = Matcher(airport_graph, config)
 
-    for flight in traffic:
+    for flight in flights:
         flight_id = flight.flight_id
         try:
-            path = matcher.map_flight(
-                flight,
-                movement_type=movement_type,
-            )
+            path = matcher.map_flight(flight)
         except MapMatchingError as error:
             failures.append(MatchFailure(flight_id, str(error)))
             continue

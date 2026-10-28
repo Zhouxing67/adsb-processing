@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 from collections import Counter, defaultdict
@@ -17,8 +18,6 @@ from pyproj import Proj
 from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
 from shapely.ops import substring
-from traffic.core.structure import Airport
-from traffic.data import airports
 
 from .models import (
     AirportGraph,
@@ -32,6 +31,7 @@ from .models import (
 )
 
 DEFAULT_GRAPH_PATH = Path("data/graphs/zbaa_final.json")
+GRAPH_SCHEMA_VERSION = 1
 ENDPOINT_TOLERANCE_M = 1e-3
 
 
@@ -544,35 +544,6 @@ def validate_source_intervals(
                 raise ValueError(f"Source {source_id!r} has a gap or overlap in its intervals")
 
 
-def build_airport_graph(airport: Airport) -> AirportGraph:
-    """Build topology only from way endpoints and shared OSM node identities."""
-    osm = airport._openstreetmap()
-    raw_graph = osm.network_graph(
-        "geometry",
-        "aeroway",
-        "parking_position",
-        "ref",
-        "name",
-        "id_",
-        "nodes",
-        query_str='aeroway == "taxiway" or aeroway == "runway" or aeroway == "parking_position"',
-    )
-    sources, node_positions, issues = _extract_sources(raw_graph)
-    source_nodes, aliases = _canonicalize_source_nodes(
-        node_positions, _node_attributes_from_osm(osm)
-    )
-    issues.extend(_geometric_crossing_issues(sources, aliases))
-    graph = _build_derived_graph(sources, source_nodes, aliases, UTM(zone=50), airport.icao, issues)
-    validate_edge_endpoints(graph)
-    validate_edge_sources(graph)
-    validate_source_intervals(graph)
-    return graph
-
-
-def build_graph() -> AirportGraph:
-    return build_airport_graph(airports["ZBAA"])
-
-
 def _json_value(value: Any) -> Any:
     if is_dataclass(value):
         return _json_value(asdict(value))
@@ -589,10 +560,9 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
-def save_graph(airport_graph: AirportGraph, path: str | Path = DEFAULT_GRAPH_PATH) -> Path:
-    output = Path(path)
-    output.parent.mkdir(parents=True, exist_ok=True)
-    document = {
+def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
+    return {
+        "schema_version": GRAPH_SCHEMA_VERSION,
         "airport": airport_graph.metadata.airport,
         "projection": airport_graph.projection.srs,
         "build_issues": list(airport_graph.metadata.build_issues),
@@ -655,6 +625,30 @@ def save_graph(airport_graph: AirportGraph, path: str | Path = DEFAULT_GRAPH_PAT
             for u, v, key, data in airport_graph.graph.edges(keys=True, data=True)
         ],
     }
+
+
+def _document_graph_id(document: Mapping[str, Any]) -> str:
+    payload = {key: value for key, value in document.items() if key != "graph_id"}
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        allow_nan=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return f"sha256:{hashlib.sha256(canonical).hexdigest()}"
+
+
+def graph_id(airport_graph: AirportGraph) -> str:
+    """Return the content identity of the graph in its persistent representation."""
+    return _document_graph_id(_graph_document(airport_graph))
+
+
+def save_graph(airport_graph: AirportGraph, path: str | Path = DEFAULT_GRAPH_PATH) -> Path:
+    output = Path(path)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    document = _graph_document(airport_graph)
+    document["graph_id"] = _document_graph_id(document)
     temporary = output.with_suffix(f"{output.suffix}.tmp")
     temporary.write_text(
         json.dumps(document, ensure_ascii=False, allow_nan=False, separators=(",", ":")),
@@ -667,6 +661,17 @@ def save_graph(airport_graph: AirportGraph, path: str | Path = DEFAULT_GRAPH_PAT
 def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
     source_path = Path(path)
     document = json.loads(source_path.read_text(encoding="utf-8"))
+    schema_version = document.get("schema_version", GRAPH_SCHEMA_VERSION)
+    if schema_version != GRAPH_SCHEMA_VERSION:
+        raise ValueError(f"Unsupported airport graph schema version: {schema_version!r}")
+    declared_graph_id = document.get("graph_id")
+    if declared_graph_id is not None:
+        actual_graph_id = _document_graph_id(document)
+        if declared_graph_id != actual_graph_id:
+            raise ValueError(
+                f"Airport graph content does not match graph_id: "
+                f"expected {declared_graph_id!r}, got {actual_graph_id!r}"
+            )
     graph = nx.MultiGraph()
     for node in document["nodes"]:
         graph.add_node(node["id"], pos=tuple(node["pos"]), **node["attributes"])
@@ -745,6 +750,3 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         node_snap_records=snap_records,
         metadata=metadata,
     )
-
-
-build_zbaa_graph = build_graph

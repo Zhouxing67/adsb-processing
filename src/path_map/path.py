@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from enum import Enum
 from typing import Any, Hashable, Iterator, Sequence
 
 from shapely.geometry import LineString
 from shapely.ops import linemerge
 
-from airport_surface import AirportGraph
+from airport_surface import AirportGraph, graph_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,14 +28,6 @@ class DirectedEdge:
         return self.from_, self.to_, self.key_
 
 
-class MovementType(str, Enum):
-    """路径对应的机场运行类型。"""
-
-    ARRIVAL = "arrival"
-    DEPARTURE = "departure"
-    UNKNOWN = "unknown"
-
-
 class Path(Sequence[DirectedEdge]):
     """AirportGraph 上有顺序、有方向且拓扑连续的路径。
 
@@ -48,12 +39,9 @@ class Path(Sequence[DirectedEdge]):
         self,
         airport_graph: AirportGraph,
         edges: Sequence[DirectedEdge | tuple[Hashable, Hashable, Hashable]],
-        *,
-        movement_type: MovementType = MovementType.UNKNOWN,
     ) -> None:
         self.airport_graph = airport_graph
         self._edges = tuple(e if isinstance(e, DirectedEdge) else DirectedEdge(*e) for e in edges)
-        self.movement_type = MovementType(movement_type)
         self.validate()
 
     def __len__(self) -> int:
@@ -133,4 +121,51 @@ class Path(Sequence[DirectedEdge]):
                 self.airport_graph.graph.edges[e.from_, e.to_, e.key_]["geometry"]
             )
             for e in self._edges
+        )
+
+
+class PathGraphMismatch(ValueError):
+    """Raised when a persisted path is resolved against a different graph."""
+
+
+@dataclass(frozen=True, slots=True)
+class PathRecord:
+    """Minimal persistent representation of a path tied to one exact graph."""
+
+    graph_id: str
+    edges: tuple[DirectedEdge, ...]
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "edges",
+            tuple(
+                edge if isinstance(edge, DirectedEdge) else DirectedEdge(*edge)
+                for edge in self.edges
+            ),
+        )
+
+    @classmethod
+    def from_path(cls, path: Path) -> PathRecord:
+        return cls(graph_id(path.airport_graph), path.edges)
+
+    def resolve(self, airport_graph: AirportGraph) -> Path:
+        actual_graph_id = graph_id(airport_graph)
+        if actual_graph_id != self.graph_id:
+            raise PathGraphMismatch(
+                f"Path requires graph {self.graph_id!r}, got {actual_graph_id!r}"
+            )
+        return Path(airport_graph, self.edges)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "graph_id": self.graph_id,
+            "edges": [[edge.from_, edge.to_, edge.key_] for edge in self.edges],
+        }
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> PathRecord:
+        return cls(
+            graph_id=str(value["graph_id"]),
+            edges=tuple(DirectedEdge(*edge) for edge in value["edges"]),
         )

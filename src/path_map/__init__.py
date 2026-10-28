@@ -1,5 +1,6 @@
 """HMM map matching for :class:`airport_surface.AirportGraph`."""
 
+from .data import MovementType, load_data
 from .matcher import (
     BatchMatchResult,
     MapMatchingError,
@@ -7,9 +8,9 @@ from .matcher import (
     Matcher,
     MatchFailure,
     map_flight,
-    map_traffic,
+    map_flights,
 )
-from .path import DirectedEdge, MovementType, Path
+from .path import DirectedEdge, Path, PathGraphMismatch, PathRecord
 
 __all__ = [
     "DirectedEdge",
@@ -20,6 +21,9 @@ __all__ = [
     "MatchConfig",
     "MovementType",
     "Path",
+    "PathGraphMismatch",
+    "PathRecord",
+    "load_data",
     "map_flight",
-    "map_traffic",
+    "map_flights",
 ]

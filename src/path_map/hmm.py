@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from heapq import heappop, heappush
 from itertools import pairwise
 from math import log, pi
 from typing import Hashable, Sequence
@@ -52,15 +53,41 @@ class NetworkRouter:
         # Routing never changes the airport topology. Freezing the private
         # view makes accidental mutations fail immediately during development.
         nx.freeze(self.routing_graph)
+        self._routes_from: dict[
+            Hashable,
+            tuple[dict[Hashable, list[Hashable]], dict[Hashable, float]],
+        ] = {}
+
+    def clear_route_cache(self) -> None:
+        """Release single-source routes retained for the previous flight."""
+        self._routes_from.clear()
 
     def _best_parallel_edge(self, u: Hashable, v: Hashable) -> DirectedEdge:
         data = self.routing_graph.edges[u, v]
         return DirectedEdge(u, v, data["key"])
 
     def _middle(self, start: Hashable, end: Hashable) -> tuple[float, tuple[DirectedEdge, ...]]:
-        nodes = nx.shortest_path(self.routing_graph, start, end, weight="length")
+        cached = self._routes_from.get(start)
+        if cached is None:
+            cached = _single_source_dijkstra(self.routing_graph, start)
+            self._routes_from[start] = cached
+
+        predecessors, distances = cached
+        if end not in distances:
+            raise nx.NetworkXNoPath(f"No path between {start!r} and {end!r}")
+
+        nodes = [end]
+        current = end
+        while current != start:
+            previous = predecessors.get(current)
+            if not previous:
+                raise nx.NetworkXNoPath(f"No path between {start!r} and {end!r}")
+            current = previous[0]
+            nodes.append(current)
+        nodes.reverse()
+
         edges = tuple(self._best_parallel_edge(u, v) for u, v in pairwise(nodes))
-        return sum(self.lengths[e.from_, e.to_, e.key_] for e in edges), edges
+        return distances[end], edges
 
     def transition(self, source: Candidate, target: Candidate) -> Transition | None:
         su, sv, sk = source.edge_id
@@ -90,6 +117,31 @@ class NetworkRouter:
                 edges = (source_edge, *middle_edges, target_edge)
                 choices.append(Transition(source_cost + middle_cost + target_cost, edges))
         return min(choices, key=lambda item: item.distance) if choices else None
+
+
+def _single_source_dijkstra(
+    graph: nx.Graph,
+    source: Hashable,
+) -> tuple[dict[Hashable, list[Hashable]], dict[Hashable, float]]:
+    """Compute routes without NetworkX's intermittently crashing implementation."""
+    predecessors: dict[Hashable, list[Hashable]] = {source: []}
+    distances: dict[Hashable, float] = {source: 0.0}
+    queue: list[tuple[float, int, Hashable]] = [(0.0, 0, source)]
+    sequence = 0
+
+    while queue:
+        distance, _order, node = heappop(queue)
+        if distance != distances.get(node):
+            continue
+        for neighbor, attributes in graph[node].items():
+            candidate = distance + float(attributes["length"])
+            if candidate >= distances.get(neighbor, float("inf")):
+                continue
+            distances[neighbor] = candidate
+            predecessors[neighbor] = [node]
+            sequence += 1
+            heappush(queue, (candidate, sequence, neighbor))
+    return predecessors, distances
 
 
 def viterbi(

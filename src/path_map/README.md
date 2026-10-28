@@ -1,16 +1,18 @@
 # `path_map`
 
-`path_map` implements a small HMM map matcher for `traffic` 2.13 airport graphs.
+`path_map` implements a small HMM map matcher for the project's own airport graphs
+and validated `adsb.Flight` trajectories.
 It does not call `AirportGraph.map_flight()` or `intersection_with_flight()`.
 
 ```python
-from path_map import MatchConfig, MovementType, map_flight
+from path_map import MatchConfig, MovementType, load_data, map_flight
+
+flights = load_data("data/ADS-B/more_15_arr.csv", MovementType.ARRIVAL)
 
 path = map_flight(
     airport_graph,
     flight,
     MatchConfig(search_radius=40, max_candidates=6, gps_sigma=10),
-    movement_type=MovementType.ARRIVAL,
 )
 print(path.edge_ids)  # directed (u, v, key) tuples
 print(path.total_length)  # metres
@@ -23,9 +25,9 @@ Viterbi in log space. Candidate-to-candidate network distance includes both edge
 fractions and all shortest-path intermediate edges.
 
 `Path` references its `AirportGraph`, retains traversal direction, parallel-edge
-keys, loops, and reversals, and exposes a WGS84 geometry. A future reviewed-path
-library will need a separate serialization schema and stable infrastructure IDs:
-NetworkX node and edge IDs are not durable across graph rebuilds.
+keys, loops, and reversals, and exposes a WGS84 geometry. `PathRecord` is its
+minimal persistent form: a graph content ID plus directed edge IDs. Resolving a
+record against a modified graph is rejected.
 
 Current conservative limitations: the network is treated as undirected; heading,
 speed, runway/taxiway semantics, uncertainty varying by observation, outlier
@@ -44,4 +46,4 @@ uv run python tests/example_zbaa_map_match.py
 
 The example loads `data/graphs/zbaa_final.json` through the project's own
 `airport_surface.load_graph()` function and reads
-`data/ADS-B/one_flight.csv` into a `traffic.core.Flight`.
+`data/ADS-B/one_flight.csv` into an `adsb.Flight`.

@@ -5,8 +5,8 @@ import pandas as pd
 import pytest
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
-from traffic.core import Flight
 
+from adsb import Flight
 from airport_surface import (
     AirportGraph,
     SourceEdge,
@@ -269,7 +269,10 @@ def test_internal_osm_node_is_excluded_from_merge_candidates_and_rejected():
     source = source_edge("nearby", (7, 6, 8), ((10.04, -5), (10.04, 0), (10.04, 5)))
     graph.source_edges[source.source_id] = source
     graph.source_nodes.update(
-        {node: SourceNode(node, node_position, (node,)) for node, node_position in positions.items()}
+        {
+            node: SourceNode(node, node_position, (node,))
+            for node, node_position in positions.items()
+        }
     )
     graph.graph.add_node(7, pos=positions[7], source_type="osm")
     graph.graph.add_node(8, pos=positions[8], source_type="osm")
@@ -333,7 +336,10 @@ def test_manual_snap_moves_graph_node_splits_target_and_preserves_sources(tmp_pa
     spur = source_edge("spur", (7, 6), ((20, -5), (10.2, -5)))
     graph.source_edges[spur.source_id] = spur
     graph.source_nodes.update(
-        {node: SourceNode(node, node_position, (node,)) for node, node_position in positions.items()}
+        {
+            node: SourceNode(node, node_position, (node,))
+            for node, node_position in positions.items()
+        }
     )
     for node, node_position in positions.items():
         graph.graph.add_node(node, pos=node_position, source_type="osm")
@@ -431,6 +437,8 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
     flight = Flight(
         pd.DataFrame(
             {
+                "flight_id": ["test"] * 6,
+                "timestamp": pd.date_range("2026-01-01", periods=6, freq="1s"),
                 "longitude": [position(x, 0)[0] for x in (1, 5, 9, 11, 15, 19)],
                 "latitude": [position(x, 0)[1] for x in (1, 5, 9, 11, 15, 19)],
             }

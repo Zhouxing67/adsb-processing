@@ -8,11 +8,11 @@ Run from the repository root with::
 from pathlib import Path as FilePath
 
 import pandas as pd
-from traffic.core import Flight
 
+from adsb import Flight
 from airport_surface import load_graph
 from airport_workbench import open_workbench
-from path_map import MatchConfig, MovementType, map_flight
+from path_map import MatchConfig, map_flight
 
 ROOT = FilePath(__file__).resolve().parents[1]
 GRAPH_FILE = ROOT / "data" / "graphs" / "zbaa_final.json"
@@ -32,11 +32,9 @@ def main() -> None:
             gps_sigma=15.0,
             transition_beta=25.0,
         ),
-        movement_type=MovementType.ARRIVAL,
     )
 
     print(f"Matched {len(flight.data)} observations to {len(matched_path)} edges")
-    print(f"Movement type: {matched_path.movement_type.value}")
     print(f"Network-path length: {matched_path.total_length:.1f} m")
     for edge in matched_path.edge_ids:
         print(edge)

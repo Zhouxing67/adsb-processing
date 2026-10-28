@@ -2,14 +2,14 @@ from __future__ import annotations
 
 import pandas as pd
 import pytest
-from traffic.core import Traffic
 
 import path_map.matcher as matcher_module
-from path_map import MapMatchingError, map_traffic
+from adsb import Flights
+from path_map import MapMatchingError, map_flights
 
 
-def traffic_with_two_flights() -> Traffic:
-    return Traffic(
+def flights_with_two_flights() -> Flights:
+    return Flights(
         pd.DataFrame(
             {
                 "flight_id": ["good", "good", "bad", "bad"],
@@ -28,13 +28,13 @@ def test_batch_continues_after_expected_match_failure(monkeypatch):
         def __init__(self, graph, config):
             pass
 
-        def map_flight(self, flight, *, movement_type):
+        def map_flight(self, flight):
             if flight.flight_id == "bad":
                 raise MapMatchingError("no candidates")
             return expected_path
 
     monkeypatch.setattr(matcher_module, "Matcher", FakeMatcher)
-    result = map_traffic(object(), traffic_with_two_flights())
+    result = map_flights(object(), flights_with_two_flights())
 
     assert result.matches == [("good", expected_path)]
     assert len(result.failures) == 1
@@ -47,9 +47,9 @@ def test_batch_does_not_hide_programming_errors(monkeypatch):
         def __init__(self, graph, config):
             pass
 
-        def map_flight(self, flight, *, movement_type):
+        def map_flight(self, flight):
             raise RuntimeError("bug")
 
     monkeypatch.setattr(matcher_module, "Matcher", BrokenMatcher)
     with pytest.raises(RuntimeError, match="bug"):
-        map_traffic(object(), traffic_with_two_flights())
+        map_flights(object(), flights_with_two_flights())

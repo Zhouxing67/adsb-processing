@@ -16,8 +16,8 @@ from typing import TYPE_CHECKING, Any, Sequence
 import networkx as nx
 from shapely.geometry import LineString, Point, mapping
 from shapely.ops import nearest_points, substring, transform
-from traffic.core import Flight
 
+from adsb import Flight
 from airport_surface import (
     AirportGraph,
     NodeMergeGroup,
@@ -1335,7 +1335,7 @@ class EditorSession:
             validate_edge_endpoints(self.airport_graph, MANUAL_SOURCE_TOLERANCE_M)
 
 
-def open_workbench(
+def _serve_workbench(
     airport_graph: AirportGraph,
     *,
     flights: Sequence[Flight] = (),
@@ -1344,8 +1344,9 @@ def open_workbench(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    read_only: bool = False,
 ) -> AirportGraph:
-    """Open the workbench and block until the server is stopped or Finish is clicked."""
+    """Serve the shared workbench UI in editing or read-only mode."""
     import uvicorn
 
     from .app import create_app
@@ -1362,6 +1363,7 @@ def open_workbench(
         on_finish=finish,
         flights=flights,
         paths=paths,
+        read_only=read_only,
     )
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     if open_browser:
@@ -1369,6 +1371,49 @@ def open_workbench(
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
     server.run()
     return session.airport_graph
+
+
+def open_workbench(
+    airport_graph: AirportGraph,
+    *,
+    flights: Sequence[Flight] = (),
+    paths: Sequence[Path] = (),
+    save_path: str | FilePath = DEFAULT_GRAPH_PATH,
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+) -> AirportGraph:
+    """Open the editable workbench and block until it is stopped or finished."""
+    return _serve_workbench(
+        airport_graph,
+        flights=flights,
+        paths=paths,
+        save_path=save_path,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+    )
+
+
+def visualize(
+    airport_graph: AirportGraph,
+    *,
+    flights: Sequence[Flight] = (),
+    paths: Sequence[Path] = (),
+    host: str = "127.0.0.1",
+    port: int = 8765,
+    open_browser: bool = True,
+) -> None:
+    """Open a read-only graph viewer with search and topology inspection tools."""
+    _serve_workbench(
+        airport_graph,
+        flights=flights,
+        paths=paths,
+        host=host,
+        port=port,
+        open_browser=open_browser,
+        read_only=True,
+    )
 
 
 def edit_graph(

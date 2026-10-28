@@ -1,32 +1,28 @@
+# Virtual environments
 .venv/
+.venv-*/
+
+# Python caches and build artifacts
 __pycache__/
 *.py[cod]
 .pytest_cache/
+.pytest-*/
 .ruff_cache/
 .ipynb_checkpoints/
 *.egg-info/
 dist/
 build/
+
+# Local editor and scratch files
+.vscode/
+.cache/
+Untitled*.ipynb
+
+# Local datasets and generated outputs
+data/
+outputs/
+
+# Local databases
 *.duckdb
 *.duckdb.wal
 .duckdb_temp/
-data/raw/*
-data/interim/*
-data/processed/*
-!data/raw/.gitkeep
-!data/interim/.gitkeep
-!data/processed/.gitkeep
-/*
-!/src/
-src/*
-!/src/__main__.py
-!/src/runner.py
-!/src/path_map/
-!/src/path_map/**
-src/path_map/__pycache__/
-!/tests/
-tests/*
-!/tests/test_path_map.py
-!/tests/example_zbaa_map_match.py
-!/tests/test_path_map_batch.py
-!/tests/test_runner.py

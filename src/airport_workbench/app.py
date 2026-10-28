@@ -10,19 +10,18 @@ from collections import defaultdict
 from pathlib import Path as FilePath
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-import uvicorn
 import networkx as nx
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+import uvicorn
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, mapping
-from traffic.core import Flight
 
+from adsb import Flight
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
     _json_value,
-    build_graph,
     load_graph,
     save_graph,
     validate_edge_endpoints,
@@ -38,14 +37,14 @@ if TYPE_CHECKING:
 STATIC_DIRECTORY = FilePath(__file__).with_name("static")
 NO_CACHE_HEADERS = {"Cache-Control": "no-store"}
 VALIDATION_EDGE_COLORS = (
-    "#0072b2",
-    "#d55e00",
-    "#009e73",
-    "#cc79a7",
-    "#e6ab02",
-    "#6a3d9a",
-    "#00a6d6",
-    "#e31a1c",
+    "#406c80",
+    "#9a684d",
+    "#5f7660",
+    "#765f7f",
+    "#9a7b3f",
+    "#4f6287",
+    "#8a5968",
+    "#4f7b78",
 )
 
 
@@ -63,7 +62,7 @@ def _edge_colors(graph: Any) -> dict[tuple[Any, Any, Any], str]:
         result[(u, v, key)] = (
             VALIDATION_EDGE_COLORS[color_index]
             if color_index < len(VALIDATION_EDGE_COLORS)
-            else f"hsl({(18 + color_index * 47) % 360} 72% 50%)"
+            else f"hsl({(18 + color_index * 47) % 360} 38% 42%)"
         )
     return result
 
@@ -120,24 +119,28 @@ class BrowserState:
         self.nodes: dict[str, Any] = {}
         self.edges: dict[str, tuple[Any, Any, Any]] = {}
 
-    def state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
+    def state(
+        self, can_finish: bool, save_path: FilePath, *, read_only: bool = False
+    ) -> dict[str, Any]:
         with self.session.lock:
-            return self._state(can_finish, save_path)
+            return self._state(can_finish, save_path, read_only=read_only)
 
-    def _state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
+    def _state(
+        self, can_finish: bool, save_path: FilePath, *, read_only: bool = False
+    ) -> dict[str, Any]:
         graph = self.session.graph
-        components = list(nx.connected_components(graph))
+        components = sorted(nx.connected_components(graph), key=len, reverse=True)
         component_by_node = {
             node: index + 1 for index, members in enumerate(components) for node in members
         }
         isolated_nodes = [node for node, degree in graph.degree if degree == 0]
         dangling_nodes = [node for node, degree in graph.degree if degree == 1]
-        parallel_pairs = sum(
-            1
-            for _u, neighbours in graph.adjacency()
-            for _v, keyed_edges in neighbours.items()
-            if len(keyed_edges) > 1
-        ) // 2
+        parallel_groups = [
+            (u, v, tuple(keyed_edges))
+            for u, neighbours in graph.adjacency()
+            for v, keyed_edges in neighbours.items()
+            if repr(u) <= repr(v) and len(keyed_edges) > 1
+        ]
         self.nodes = {}
         self.edges = {}
         node_features = []
@@ -147,11 +150,13 @@ class BrowserState:
             longitude, latitude = data["pos"][:2]
             degree = graph.degree(node)
             color = (
-                "#808080"
+                "#a34f6a"
+                if degree == 0
+                else "#808080"
                 if data.get("source") == "manual"
-                else "#d73027"
+                else "#b56f38"
                 if degree == 1
-                else "#2166ac"
+                else "#416878"
             )
             node_features.append(
                 {
@@ -165,7 +170,11 @@ class BrowserState:
                         "degree": degree,
                         "component": component_by_node[node],
                         "topology_role": (
-                            "isolated" if degree == 0 else "dangling" if degree == 1 else "connected"
+                            "isolated"
+                            if degree == 0
+                            else "dangling"
+                            if degree == 1
+                            else "connected"
                         ),
                         "neighbours": ", ".join(repr(item) for item in graph.neighbors(node)),
                         "attributes": repr(
@@ -176,7 +185,7 @@ class BrowserState:
                         ),
                         "manual": data.get("source") == "manual",
                         "color": color,
-                        "radius": 4 if degree == 1 else 2.75,
+                        "radius": 5 if degree == 0 else 4 if degree == 1 else 2.75,
                     },
                 }
             )
@@ -237,12 +246,36 @@ class BrowserState:
                 "largest_component": max((len(item) for item in components), default=0),
                 "isolated_count": len(isolated_nodes),
                 "dangling_count": len(dangling_nodes),
-                "parallel_pair_count": parallel_pairs,
+                "parallel_pair_count": len(parallel_groups),
                 "isolated_nodes": [repr(node) for node in isolated_nodes[:100]],
                 "dangling_nodes": [repr(node) for node in dangling_nodes[:100]],
+                "components": [
+                    {
+                        "index": index,
+                        "size": len(members),
+                        "node_tokens": [
+                            token for token, node in self.nodes.items() if node in members
+                        ],
+                    }
+                    for index, members in enumerate(components, start=1)
+                ],
+                "parallel_groups": [
+                    {
+                        "u": repr(u),
+                        "v": repr(v),
+                        "edge_tokens": [
+                            token
+                            for token, edge in self.edges.items()
+                            if edge[2] in keys
+                            and ({edge[0], edge[1]} == {u, v})
+                        ],
+                    }
+                    for u, v, keys in parallel_groups
+                ],
             },
             "can_undo": self.session.can_undo,
             "can_finish": can_finish,
+            "read_only": read_only,
             "save_path": str(save_path),
         }
 
@@ -270,9 +303,19 @@ def create_app(
     *,
     flights: Sequence[Flight] = (),
     paths: Sequence[Path] = (),
+    read_only: bool = False,
 ) -> FastAPI:
     browser = BrowserState(session, flights, paths)
-    app = FastAPI(title="Airport Workbench")
+    app = FastAPI(title="Airport Graph Viewer" if read_only else "Airport Workbench")
+
+    @app.middleware("http")
+    async def enforce_read_only(request: Request, call_next: Callable[..., Any]) -> Any:
+        if read_only and request.method not in {"GET", "HEAD", "OPTIONS"}:
+            return JSONResponse(
+                status_code=405,
+                content={"detail": "当前为只读可视化模式，不允许修改机场图"},
+            )
+        return await call_next(request)
 
     @app.get("/")
     def index() -> FileResponse:
@@ -294,7 +337,7 @@ def create_app(
 
     @app.get("/api/state")
     def state() -> dict[str, Any]:
-        return browser.state(on_finish is not None, save_path)
+        return browser.state(on_finish is not None, save_path, read_only=read_only)
 
     @app.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
@@ -484,13 +527,12 @@ def create_app(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Start the airport workbench.")
     parser.add_argument("--graph", type=FilePath, default=DEFAULT_GRAPH_PATH)
-    parser.add_argument("--fresh", action="store_true", help="ignore a saved graph and rebuild")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
     args = parser.parse_args()
 
-    graph = load_graph(args.graph) if args.graph.exists() and not args.fresh else build_graph()
+    graph = load_graph(args.graph)
     session = EditorSession(graph)
     if not args.no_browser:
         url = f"http://{args.host}:{args.port}/?session={time.time_ns()}"
