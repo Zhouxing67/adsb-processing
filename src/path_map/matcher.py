@@ -95,7 +95,6 @@ class Matcher:
 
         if not layers:
             raise MapMatchingError("No edge candidates for any observation")
-        self.router.clear_route_cache()
         try:
             states, transitions = viterbi(
                 layers,
