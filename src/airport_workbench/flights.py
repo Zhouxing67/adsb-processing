@@ -9,6 +9,7 @@ import threading
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
+from math import ceil
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 import pandas as pd
@@ -35,6 +36,17 @@ BUSINESS_FIELD_NAMES = {
     "destination",
     "movement_type",
 }
+
+
+class CataloguePageOutOfRange(ValueError):
+    """Raised when a filtered catalogue page no longer exists."""
+
+    def __init__(self, requested_page: int, total_pages: int) -> None:
+        self.requested_page = requested_page
+        self.total_pages = total_pages
+        super().__init__(
+            f"page must be between 1 and {total_pages}; got {requested_page}"
+        )
 
 
 def flight_key(index: int, source: str, original_flight_id: str) -> str:
@@ -195,6 +207,9 @@ class FlightWorkbench:
                 result.path = associated_path
                 result.updated_at = self._now()
             self.results[key] = result
+        self.dataset_max_points = max(
+            (item.point_count for item in self.items.values()), default=0
+        )
 
     @staticmethod
     def _now() -> str:
@@ -228,6 +243,8 @@ class FlightWorkbench:
         query: str = "",
         movement_type: str | None = None,
         status: str | None = None,
+        min_points: int = 0,
+        max_points: int | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -236,6 +253,17 @@ class FlightWorkbench:
             raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
         if status and status not in MATCH_STATUSES:
             raise ValueError("unknown match status")
+        if min_points < 0:
+            raise ValueError("min_points must be a non-negative integer")
+        effective_max = self.dataset_max_points if max_points is None else max_points
+        if effective_max < 0:
+            raise ValueError("max_points must be a non-negative integer")
+        if min_points > effective_max:
+            raise ValueError("min_points must not be greater than max_points")
+        if effective_max > self.dataset_max_points:
+            raise ValueError(
+                f"max_points must not exceed dataset maximum {self.dataset_max_points}"
+            )
         needle = query.strip().casefold()
         rows = []
         with self.lock:
@@ -249,16 +277,29 @@ class FlightWorkbench:
                     continue
                 if status and status != result.status:
                     continue
+                if not min_points <= item.point_count <= effective_max:
+                    continue
                 row = asdict(item)
                 row["start_time"] = self._display_time(item.start_time)
                 row["end_time"] = self._display_time(item.end_time)
                 rows.append({**row, "match": result.public()})
+        total = len(rows)
+        total_pages = ceil(total / page_size) if total else 0
+        if total_pages and page > total_pages:
+            raise CataloguePageOutOfRange(page, total_pages)
+        if not total_pages and page != 1:
+            raise CataloguePageOutOfRange(page, 0)
+        actual_page = page if total_pages else 0
         start = (page - 1) * page_size
         return {
             "items": rows[start : start + page_size],
-            "total": len(rows),
-            "page": page,
+            "total": total,
+            "total_pages": total_pages,
+            "page": actual_page,
             "page_size": page_size,
+            "dataset_max_points": self.dataset_max_points,
+            "min_points": min_points,
+            "max_points": effective_max,
             "max_selected": MAX_SELECTED_FLIGHTS,
             "graph_id": self._graph_id,
             "time": {

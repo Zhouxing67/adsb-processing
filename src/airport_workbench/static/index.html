@@ -56,11 +56,16 @@
   <aside id="flights-panel" class="flights-panel panel">
     <div id="flight-list-view" class="flight-view">
       <div class="flight-sidebar-header"><div><small>当前工作台加载的数据集</small><h2>全部航班</h2></div></div>
-      <div class="flight-query"><input id="flight-search" placeholder="搜索航班号或 flight_id"><div class="flight-filters"><select id="flight-movement"><option value="">全部进出港</option><option value="arrival">进港</option><option value="departure">离港</option><option value="unknown">未知</option></select><select id="flight-status"><option value="">全部状态</option><option value="unmatched">未匹配</option><option value="queued">排队中</option><option value="matching">匹配中</option><option value="success">成功</option><option value="failed">失败</option><option value="stale">已失效</option></select></div></div>
+      <div class="flight-query">
+        <input id="flight-search" placeholder="搜索航班号或 flight_id，按 Enter 应用">
+        <div class="flight-filters"><select id="flight-movement"><option value="">全部进出港</option><option value="arrival">进港</option><option value="departure">离港</option><option value="unknown">未知</option></select><select id="flight-status"><option value="">全部状态</option><option value="unmatched">未匹配</option><option value="queued">排队中</option><option value="matching">匹配中</option><option value="success">成功</option><option value="failed">失败</option><option value="stale">已失效</option></select></div>
+        <div class="point-filter"><span>观测点数</span><input id="flight-min-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最小观测点数"><span>～</span><input id="flight-max-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最大观测点数"><button id="apply-point-filter" class="secondary-button">应用</button><button id="reset-point-filter" class="text-button">重置点数</button></div>
+        <p id="flight-query-error" class="field-error hidden" role="alert"></p>
+      </div>
       <section class="selected-section"><div class="section-title"><strong id="selection-count">已选择 0/5</strong><span>A～E 固定色槽</span></div><div id="selected-flights" class="selected-flights"></div></section>
       <p id="flight-time-note" class="field-note"></p><div id="flight-error" class="warning hidden"></div><div id="overlap-notice" class="warning hidden"></div>
       <div id="flight-list" class="flight-list"></div>
-      <div class="flight-sidebar-footer"><div class="pager"><button id="flight-prev" class="secondary-button">上一页</button><span id="flight-page"></span><button id="flight-next" class="secondary-button">下一页</button></div><div class="footer-actions"><button id="fit-selected" class="secondary-button">定位所选</button><button id="match-selected" class="primary-button" disabled>匹配所选航班</button></div></div>
+      <div class="flight-sidebar-footer"><div class="pager"><button id="flight-prev" class="secondary-button">上一页</button><span id="flight-page"></span><div class="page-jump"><input id="flight-page-input" type="number" min="1" step="1" inputmode="numeric" aria-label="跳转页码"><button id="flight-page-jump" class="secondary-button">跳转</button></div><button id="flight-next" class="secondary-button">下一页</button></div><p id="flight-page-error" class="field-error hidden" role="alert"></p><div class="footer-actions"><button id="fit-selected" class="secondary-button">定位所选</button><button id="match-selected" class="primary-button" disabled>匹配所选航班</button></div></div>
     </div>
     <div id="flight-detail-view" class="flight-view hidden"><div class="flight-detail-header"><button id="back-to-flights" class="secondary-button">← 返回列表</button><h2 id="flight-detail-title">航班详情</h2></div><div id="flight-detail-body" class="flight-detail-body"></div></div>
   </aside>

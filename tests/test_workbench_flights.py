@@ -13,7 +13,11 @@ from adsb import Flight
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
-from airport_workbench.flights import FlightWorkbench, flight_key
+from airport_workbench.flights import (
+    CataloguePageOutOfRange,
+    FlightWorkbench,
+    flight_key,
+)
 from path_map import MapMatchingError, Path
 
 
@@ -40,6 +44,106 @@ def flight(identifier: str, callsigns: tuple[str, str] | None = None) -> Flight:
     if callsigns:
         frame["callsign"] = callsigns
     return Flight(frame)
+
+
+def flight_with_points(identifier: str, point_count: int) -> Flight:
+    return Flight(
+        pd.DataFrame(
+            {
+                "flight_id": [identifier] * point_count,
+                "timestamp": pd.date_range(
+                    "2024-01-01", periods=point_count, freq="1min", tz="UTC"
+                ),
+                "longitude": np.linspace(116.0, 116.01, point_count),
+                "latitude": np.linspace(40.0, 40.01, point_count),
+            }
+        )
+    )
+
+
+def test_catalogue_point_filter_is_closed_and_precedes_pagination() -> None:
+    workbench = FlightWorkbench(
+        SmallGraph(),
+        [
+            flight_with_points("two", 2),
+            flight_with_points("three", 3),
+            flight_with_points("four", 4),
+        ],
+        movement_types=["arrival", "arrival", "departure"],
+    )
+
+    first = workbench.catalogue(min_points=2, max_points=3, page=1, page_size=1)
+    second = workbench.catalogue(min_points=2, max_points=3, page=2, page_size=1)
+    exact = workbench.catalogue(min_points=3, max_points=3)
+
+    assert first["dataset_max_points"] == 4
+    assert first["total"] == 2
+    assert first["total_pages"] == 2
+    assert first["items"][0]["point_count"] == 2
+    assert second["items"][0]["point_count"] == 3
+    assert [item["flight_id"] for item in exact["items"]] == ["three"]
+
+
+def test_catalogue_empty_result_and_dataset_maximum_are_stable() -> None:
+    workbench = FlightWorkbench(
+        SmallGraph(), [flight_with_points("short", 2), flight_with_points("long", 5)]
+    )
+
+    empty = workbench.catalogue(query="missing")
+    filtered = workbench.catalogue(max_points=2)
+
+    assert empty["items"] == []
+    assert empty["page"] == 0
+    assert empty["total_pages"] == 0
+    assert empty["dataset_max_points"] == 5
+    assert filtered["dataset_max_points"] == 5
+
+
+def test_catalogue_combines_search_movement_status_and_point_range() -> None:
+    workbench = FlightWorkbench(
+        SmallGraph(),
+        [flight_with_points("target-arrival", 3), flight_with_points("target-departure", 3)],
+        movement_types=["arrival", "departure"],
+    )
+    arrival_key = next(
+        key for key, item in workbench.items.items() if item.flight_id == "target-arrival"
+    )
+    workbench.results[arrival_key].status = "success"
+
+    result = workbench.catalogue(
+        query="target",
+        movement_type="arrival",
+        status="success",
+        min_points=3,
+        max_points=3,
+    )
+
+    assert [item["flight_id"] for item in result["items"]] == ["target-arrival"]
+
+
+@pytest.mark.parametrize(
+    ("kwargs", "message"),
+    [
+        ({"min_points": -1}, "min_points"),
+        ({"max_points": -1}, "max_points"),
+        ({"min_points": 4, "max_points": 3}, "greater"),
+        ({"max_points": 6}, "dataset maximum"),
+    ],
+)
+def test_catalogue_rejects_invalid_point_ranges(kwargs: dict, message: str) -> None:
+    workbench = FlightWorkbench(SmallGraph(), [flight_with_points("five", 5)])
+
+    with pytest.raises(ValueError, match=message):
+        workbench.catalogue(**kwargs)
+
+
+def test_catalogue_rejects_page_beyond_filtered_last_page() -> None:
+    workbench = FlightWorkbench(SmallGraph(), [flight_with_points("two", 2)])
+
+    with pytest.raises(CataloguePageOutOfRange) as error:
+        workbench.catalogue(page=2)
+
+    assert error.value.total_pages == 1
 
 
 def test_six_flights_are_rejected_and_inconsistent_fields_are_explicit() -> None:

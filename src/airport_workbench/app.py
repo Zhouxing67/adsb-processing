@@ -29,7 +29,7 @@ from airport_surface.graph import (
 )
 
 from .editor import EditorSession
-from .flights import FlightWorkbench
+from .flights import CataloguePageOutOfRange, FlightWorkbench
 from .serializers import serialize_flights, serialize_paths
 
 if TYPE_CHECKING:
@@ -395,6 +395,8 @@ def create_app(
         q: str = "",
         movement_type: str | None = None,
         match_status: str | None = None,
+        min_points: int = 0,
+        max_points: int | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -403,9 +405,20 @@ def create_app(
                 query=q,
                 movement_type=movement_type,
                 status=match_status,
+                min_points=min_points,
+                max_points=max_points,
                 page=page,
                 page_size=page_size,
             )
+        except CataloguePageOutOfRange as error:
+            raise HTTPException(
+                400,
+                {
+                    "code": "page_out_of_range",
+                    "message": str(error),
+                    "total_pages": error.total_pages,
+                },
+            ) from error
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
