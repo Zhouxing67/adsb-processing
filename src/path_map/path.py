@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Hashable, Iterator, Sequence
 
 from shapely.geometry import LineString
-from shapely.ops import linemerge
 
 from airport_surface import AirportGraph, graph_id
 
@@ -73,6 +72,10 @@ class Path(Sequence[DirectedEdge]):
     def validate(self) -> None:
         """检查所有边存在于图中，并检查相邻边是否首尾相接。"""
         for edge in self._edges:
+            if edge.from_ == edge.to_:
+                raise ValueError(
+                    f"Self-loop path direction is not supported: {edge.id!r}"
+                )
             if not self.airport_graph.graph.has_edge(edge.from_, edge.to_, edge.key_):
                 raise ValueError(f"Unknown graph edge: {(edge.from_, edge.to_, edge.key_)!r}")
         for left, right in zip(self._edges, self._edges[1:]):
@@ -104,10 +107,6 @@ class Path(Sequence[DirectedEdge]):
         if not self._edges:
             return LineString()
         pieces = [self.oriented_geometry(edge) for edge in self._edges]
-        merged = linemerge(pieces)
-        if isinstance(merged, LineString):
-            return merged
-        # A valid walk may retrace an edge; concatenation preserves that order.
         coords = list(pieces[0].coords)
         for piece in pieces[1:]:
             coords.extend(list(piece.coords)[1:])

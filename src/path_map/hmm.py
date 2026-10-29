@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
-from math import log, pi
+from math import isinf, log, pi
 from typing import Hashable, Sequence
 
 import networkx as nx
@@ -14,6 +14,8 @@ from airport_surface import AirportGraph
 
 from .candidates import Candidate, CandidateIndex
 from .path import DirectedEdge
+
+ZERO_DISTANCE_TOLERANCE_M = 1e-9
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +54,7 @@ class NetworkRouter:
         # Routing never changes the airport topology. Freezing the private
         # view makes accidental mutations fail immediately during development.
         nx.freeze(self.routing_graph)
+
     def _best_parallel_edge(self, u: Hashable, v: Hashable) -> DirectedEdge:
         data = self.routing_graph.edges[u, v]
         return DirectedEdge(u, v, data["key"])
@@ -71,12 +74,18 @@ class NetworkRouter:
         tu, tv, tk = target.edge_id
         slen = self.lengths[su, sv, sk]
         tlen = self.lengths[tu, tv, tk]
-        if {su, sv} == {tu, tv} and sk == tk:
-            if target.offset >= source.offset:
-                return Transition(target.offset - source.offset, (DirectedEdge(su, sv, sk),))
-            return Transition(source.offset - target.offset, (DirectedEdge(sv, su, sk),))
-
         choices: list[Transition] = []
+        if (su, sv, sk) == (tu, tv, tk):
+            offset_delta = target.offset - source.offset
+            if abs(offset_delta) <= ZERO_DISTANCE_TOLERANCE_M:
+                choices.append(Transition(0.0, ()))
+            elif offset_delta > 0:
+                direct_edge = DirectedEdge(su, sv, sk)
+                choices.append(Transition(offset_delta, (direct_edge,)))
+            else:
+                direct_edge = DirectedEdge(sv, su, sk)
+                choices.append(Transition(-offset_delta, (direct_edge,)))
+
         source_exits = (
             (su, source.offset, DirectedEdge(sv, su, sk)),
             (sv, slen - source.offset, DirectedEdge(su, sv, sk)),
@@ -91,9 +100,27 @@ class NetworkRouter:
                     middle_cost, middle_edges = self._middle(exit_node, entry_node)
                 except nx.NetworkXNoPath:
                     continue
-                edges = (source_edge, *middle_edges, target_edge)
-                choices.append(Transition(source_cost + middle_cost + target_cost, edges))
+                edges: list[DirectedEdge] = []
+                if source_cost > ZERO_DISTANCE_TOLERANCE_M:
+                    edges.append(source_edge)
+                edges.extend(middle_edges)
+                if target_cost > ZERO_DISTANCE_TOLERANCE_M:
+                    edges.append(target_edge)
+                distance = source_cost + middle_cost + target_cost
+                if distance <= ZERO_DISTANCE_TOLERANCE_M:
+                    distance = 0.0
+                choices.append(Transition(distance, tuple(edges)))
         return min(choices, key=lambda item: item.distance) if choices else None
+
+
+def observation_log_score(distance: float, sigma: float) -> float:
+    """Log probability density for one candidate's observation distance."""
+    return -(distance**2) / (2 * sigma**2) - log(sigma * (2 * pi) ** 0.5)
+
+
+def transition_log_score(network_distance: float, observed_distance: float, beta: float) -> float:
+    """Distance-only transition score; reachability is represented separately."""
+    return -abs(network_distance - observed_distance) / beta
 
 
 def viterbi(
@@ -109,19 +136,7 @@ def viterbi(
     - beta:网络转移距离误差的尺度参数，单位为米。
     """
 
-    def compute_emission(distance: float) -> float:
-        emission_constant = log(sigma * (2 * pi) ** 0.5)
-        return -(distance**2) / (2 * sigma**2) - emission_constant
-
-    def compute_candidate_score(
-        source_index: int,
-        transition: Transition,
-        observed_distance: float,
-        emission: float,
-    ) -> float:
-        return scores[source_index] - abs(transition.distance - observed_distance) / beta + emission
-
-    scores = [compute_emission(candidate.distance) for candidate in layers[0]]
+    scores = [observation_log_score(candidate.distance, sigma) for candidate in layers[0]]
     backrefs: list[list[tuple[int, Transition] | None]] = []
 
     for step in range(1, len(layers)):
@@ -129,17 +144,18 @@ def viterbi(
         next_scores: list[float] = []
         refs: list[tuple[int, Transition] | None] = []
         for target in layers[step]:
-            emission = compute_emission(target.distance)
+            emission = observation_log_score(target.distance, sigma)
             best: tuple[float, int, Transition] | None = None
             for source_index, source in enumerate(layers[step - 1]):
+                if isinf(scores[source_index]) and scores[source_index] < 0:
+                    continue
                 transition = router.transition(source, target)
                 if transition is None:
                     continue
-                value = compute_candidate_score(
-                    source_index,
-                    transition,
-                    observed_distance,
-                    emission,
+                value = (
+                    scores[source_index]
+                    + transition_log_score(transition.distance, observed_distance, beta)
+                    + emission
                 )
 
                 if best is None or value > best[0]:

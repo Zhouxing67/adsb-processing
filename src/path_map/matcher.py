@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import logging
+import math
 from dataclasses import dataclass
 from typing import Any
 
@@ -15,6 +17,8 @@ from airport_surface import AirportGraph
 from .candidates import Candidate, CandidateIndex
 from .hmm import NetworkRouter, viterbi
 from .path import DirectedEdge, Path
+
+logger = logging.getLogger(__name__)
 
 
 class MapMatchingError(ValueError):
@@ -30,20 +34,20 @@ class MatchConfig:
     transition_beta: float = 20.0
 
     def __post_init__(self) -> None:
-        if (
-            min(
-                self.search_radius,
-                self.max_search_radius,
-                self.gps_sigma,
-                self.transition_beta,
-            )
-            <= 0
-        ):
-            raise ValueError("Distance parameters must be positive")
+        distances = (
+            self.search_radius,
+            self.max_search_radius,
+            self.gps_sigma,
+            self.transition_beta,
+        )
+        if any(not math.isfinite(value) or value <= 0 for value in distances):
+            raise ValueError("Distance parameters must be finite and positive")
         if self.max_search_radius < self.search_radius:
             raise ValueError("max_search_radius must not be smaller than search_radius")
+        if isinstance(self.max_candidates, bool) or not isinstance(self.max_candidates, int):
+            raise ValueError("max_candidates must be a positive integer")
         if self.max_candidates < 1:
-            raise ValueError("max_candidates must be at least one")
+            raise ValueError("max_candidates must be a positive integer")
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,10 +76,7 @@ class Matcher:
     ) -> None:
         self.airport_graph = airport_graph
         self.config = config or MatchConfig()
-        try:
-            self.index = CandidateIndex(airport_graph)
-        except ValueError as exc:
-            raise MapMatchingError(str(exc)) from exc
+        self.index = CandidateIndex(airport_graph)
         self.router = NetworkRouter(airport_graph, self.index)
 
     def map_flight(
@@ -93,8 +94,16 @@ class Matcher:
             matched_observations.append(point)
             layers.append(candidates)
 
-        if not layers:
-            raise MapMatchingError("No edge candidates for any observation")
+        skipped_count = len(observations) - len(layers)
+        logger.debug(
+            "Map matching retained %d observations and skipped %d without candidates",
+            len(layers),
+            skipped_count,
+        )
+        if len(layers) < 2:
+            raise MapMatchingError(
+                f"At least two observations with edge candidates are required; got {len(layers)}"
+            )
         try:
             states, transitions = viterbi(
                 layers,
@@ -105,7 +114,13 @@ class Matcher:
             )
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError("No connected network path matches all observations") from exc
-        return Path(self.airport_graph, _recover(transitions, states[0]))
+        edges = _recover(transitions, states[0])
+        if not edges:
+            raise MapMatchingError(
+                "Retained candidates have no along-network movement; "
+                "a directed path cannot be determined"
+            )
+        return Path(self.airport_graph, edges)
 
     def _candidates(self, observation_index: int, point: Point) -> list[Candidate]:
         """Find candidates, expanding the radius only when none are found."""
@@ -118,6 +133,10 @@ class Matcher:
                 self.config.max_candidates,
             )
             if candidates or radius >= self.config.max_search_radius:
+                if any(candidate.edge_id[0] == candidate.edge_id[1] for candidate in candidates):
+                    raise MapMatchingError(
+                        "Map matching candidates on self-loop edges are not supported"
+                    )
                 return candidates
             radius = min(radius * 2, self.config.max_search_radius)
 
@@ -142,16 +161,21 @@ def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
     return [Point(float(px), float(py)) for px, py in zip(x, y)]
 
 
+def _append_transition_edges(
+    output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]
+) -> None:
+    """Join transitions, collapsing only continued travel on their shared boundary edge."""
+    start = 1 if output and edges and output[-1] == edges[0] else 0
+    output.extend(edges[start:])
+
+
 def _recover(transitions: list, first: Candidate) -> list[DirectedEdge]:
     if not transitions:
         u, v, key = first.edge_id
         return [DirectedEdge(u, v, key)]
     output: list[DirectedEdge] = []
     for transition in transitions:
-        for edge in transition.edges:
-            if output and output[-1] == edge:
-                continue
-            output.append(edge)
+        _append_transition_edges(output, transition.edges)
     return output
 
 

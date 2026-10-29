@@ -141,8 +141,116 @@ def test_all_observations_without_candidates_still_fail():
         [(450_001, 4_428_500), (450_019, 4_428_500)],
     )
 
-    with pytest.raises(MapMatchingError, match="any observation"):
+    with pytest.raises(MapMatchingError, match="got 0"):
         robust_matcher(airport_graph).map_flight(flight)
+
+
+def test_one_observation_with_candidates_still_fails():
+    airport_graph, to_wgs84 = straight_airport_graph()
+    flight = make_flight(
+        to_wgs84,
+        [(450_001, 4_428_000), (450_019, 4_428_500)],
+    )
+
+    with pytest.raises(MapMatchingError, match="got 1"):
+        robust_matcher(airport_graph).map_flight(flight)
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_distance_configuration_must_be_finite_and_positive(value):
+    with pytest.raises(ValueError, match="finite and positive"):
+        MatchConfig(search_radius=value)
+
+
+@pytest.mark.parametrize("value", [True, 0, -1, 1.5])
+def test_max_candidates_must_be_a_positive_integer(value):
+    with pytest.raises(ValueError, match="positive integer"):
+        MatchConfig(max_candidates=value)
+
+
+def test_path_geometry_preserves_forward_reverse_and_repeated_order():
+    airport_graph, _ = straight_airport_graph()
+    path = Path(
+        airport_graph,
+        [("A", "B", "AB"), ("B", "A", "AB"), ("A", "B", "AB")],
+    )
+
+    assert list(path.geometry.coords) == [
+        airport_graph.graph.nodes[node]["pos"] for node in ("A", "B", "A", "B")
+    ]
+
+
+def test_path_geometry_preserves_closed_loop_and_repeated_edge_order():
+    airport_graph, _ = straight_airport_graph()
+    positions = nx.get_node_attributes(airport_graph.graph, "pos")
+    airport_graph.graph.add_edge(
+        "C", "A", key="CA", geometry=LineString([positions["C"], positions["A"]])
+    )
+    path = Path(
+        airport_graph,
+        [("A", "B", "AB"), ("B", "C", "BC"), ("C", "A", "CA"), ("A", "B", "AB")],
+    )
+
+    assert list(path.geometry.coords) == [
+        positions[node] for node in ("A", "B", "C", "A", "B")
+    ]
+
+
+def test_path_rejects_ambiguous_self_loop_direction():
+    airport_graph, _ = straight_airport_graph()
+    position = airport_graph.graph.nodes["A"]["pos"]
+    airport_graph.graph.add_edge(
+        "A",
+        "A",
+        key="loop",
+        geometry=LineString([position, (position[0] + 0.00001, position[1]), position]),
+    )
+
+    with pytest.raises(ValueError, match="Self-loop path direction is not supported"):
+        Path(airport_graph, [("A", "A", "loop")])
+
+
+@pytest.mark.parametrize(
+    "offsets",
+    [
+        [8, 7, 7, 6],
+        [8, 8, 7, 6],
+        [8, 7, 6, 6],
+    ],
+)
+def test_repeated_positions_do_not_add_false_traversals(offsets):
+    airport_graph, to_wgs84 = straight_airport_graph()
+    flight = make_flight(
+        to_wgs84,
+        [(450_000 + offset, 4_428_000) for offset in offsets],
+    )
+
+    path = robust_matcher(airport_graph).map_flight(flight)
+
+    assert path.edge_ids == (("B", "A", "AB"),)
+
+
+def test_all_repeated_positions_have_no_determined_direction():
+    airport_graph, to_wgs84 = straight_airport_graph()
+    flight = make_flight(
+        to_wgs84,
+        [(450_007, 4_428_000)] * 3,
+    )
+
+    with pytest.raises(MapMatchingError, match="no along-network movement"):
+        robust_matcher(airport_graph).map_flight(flight)
+
+
+def test_real_same_edge_reversal_is_preserved():
+    airport_graph, to_wgs84 = straight_airport_graph()
+    flight = make_flight(
+        to_wgs84,
+        [(450_000 + offset, 4_428_000) for offset in (8, 7, 8)],
+    )
+
+    path = robust_matcher(airport_graph).map_flight(flight)
+
+    assert path.edge_ids == (("B", "A", "AB"), ("A", "B", "AB"))
 
 
 def test_long_time_gap_does_not_reject_otherwise_valid_observations():
