@@ -59,18 +59,26 @@ uv run python -m airport_workbench
 `adsb.Flight` 和 `path_map.Path`：
 
 ```python
-from airport_workbench import open_workbench
+from airport_workbench import flight_key, open_workbench
 
-open_workbench(graph, flights=[flight], paths=[matched_path])
+open_workbench(
+    graph,
+    flights=[flight],
+    paths_by_flight_key={flight_key(0, "provided", flight.flight_id): matched_path},
+)
 ```
 
 只查看机场图、轨迹与匹配结果时，使用只读入口。它保留搜索、图层控制和拓扑检查，
 但不提供编辑控件，服务端也会拒绝写请求：
 
 ```python
-from airport_workbench import visualize_graph
+from airport_workbench import flight_key, visualize
 
-visualize_graph(graph, flights=[flight], paths=[matched_path])
+visualize(
+    graph,
+    flights=[flight],
+    paths_by_flight_key={flight_key(0, "provided", flight.flight_id): matched_path},
+)
 ```
 
 Flight 显示原始轨迹和观测点；Path 按遍历顺序显示每一条有向边。二者可在
