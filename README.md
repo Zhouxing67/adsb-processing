@@ -4,6 +4,8 @@
 
 ## HMM 批量路径匹配
 
+后台批量运行与 Workbench 交互匹配的完整步骤见 [路径匹配运行说明](docs/path_matching_run.md)。
+
 ```powershell
 uv run python src/__main__.py `
     --graph data/graphs/zbaa_final.json `
@@ -12,10 +14,10 @@ uv run python src/__main__.py `
     --output outputs/path_map
 ```
 
-调试时可以限制每批航班数，并在匹配结束后用 Workbench 查看少量成功和失败样本：
+调试时可以限制每类航班数：
 
 ```powershell
-uv run python src/__main__.py --limit 10 --visualize
+uv run python src/__main__.py --limit 10
 ```
 
 每次任务在输出根目录下创建时间戳目录，只保存 `graph.json`、`paths.jsonl`、
@@ -23,9 +25,21 @@ uv run python src/__main__.py --limit 10 --visualize
 每架航班在 `matches.jsonl` 中通过 `path_id` 引用路径，匹配失败时该值为 `null`。
 `PathRecord` 本身只包含图内容 ID 和有向边序列。
 机场图的空间索引和路由器
-只构建一次，并在两批航班之间复用。ADS-B 文件通过 `load_data()` 读取、附加运行类型并按
+只构建一次，并在所选批次之间复用。ADS-B 文件通过 `load_data()` 读取、附加运行类型并按
 `flight_id` 拆分；每架航班的观测按时间排序后再进行匹配。匹配结果逐条写入磁盘，
 每处理 100 架航班刷新一次输出和运行中摘要。
+
+交互匹配使用同一个入口并显式选择 Workbench 模式，不会预先执行批量匹配，也不会创建输出目录：
+
+```powershell
+uv run python src/__main__.py `
+    --workbench `
+    --graph data/graphs/zbaa_final.json `
+    --arrivals data/ADS-B/more_15_arr.csv `
+    --departures data/ADS-B/more_15_dep.csv `
+    --input-timezone Asia/Shanghai `
+    --display-timezone Asia/Shanghai
+```
 
 ## PEK 地面图与 Top 3 滑行路径
 
@@ -54,8 +68,9 @@ NetworkX MultiGraph，识别单个停机位与跑道边界接入点。默认建�
 uv run python -m airport_workbench
 ```
 
-工作台只加载已经生成的 `data/graphs/zbaa_final.json`，不会在匹配或编辑过程中隐式建图。
-浏览器中的“保存”直接更新该文件。工作台还可以叠加显示项目自己的
+此入口只加载已有机场图用于查看和编辑，不接受航班 CSV 或匹配参数。航班交互匹配应使用
+`src/__main__.py --workbench`。工作台不会在匹配或编辑过程中隐式建图。
+纯图编辑模式中的“保存”写入配置的目标图文件。通过 Python 接口传入航班后进入航班模式，禁止图编辑，并可显示项目自己的
 `adsb.Flight` 和 `path_map.Path`：
 
 ```python
@@ -69,7 +84,7 @@ open_workbench(
 ```
 
 只查看机场图、轨迹与匹配结果时，使用只读入口。它保留搜索、图层控制和拓扑检查，
-但不提供编辑控件，服务端也会拒绝写请求：
+但不提供编辑控件，服务端拒绝图修改请求；航班匹配请求仍被允许：
 
 ```python
 from airport_workbench import flight_key, visualize

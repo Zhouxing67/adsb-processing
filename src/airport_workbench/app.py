@@ -11,14 +11,13 @@ from pathlib import Path as FilePath
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 import networkx as nx
-import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, mapping
 
-from adsb import Flight, Flights
+from adsb import Flight
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
@@ -633,49 +632,11 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
-    parser.add_argument("--arrivals-csv", type=FilePath)
-    parser.add_argument("--departures-csv", type=FilePath)
-    parser.add_argument(
-        "--input-timezone",
-        default="UTC",
-        help="IANA timezone describing naive CSV timestamps (default: UTC)",
-    )
-    parser.add_argument("--display-timezone", default="UTC")
     args = parser.parse_args()
 
     graph = load_graph(args.graph)
-    flights: list[Flight] = []
-    sources: list[str] = []
-    movements: list[str] = []
-    for path, movement in (
-        (args.arrivals_csv, "arrival"),
-        (args.departures_csv, "departure"),
-    ):
-        if path is None:
-            continue
-        frame = pd.read_csv(path)
-        parsed = pd.to_datetime(frame["timestamp"], errors="raise")
-        if parsed.dt.tz is None:
-            parsed = parsed.dt.tz_localize(args.input_timezone)
-        frame["timestamp"] = parsed.dt.tz_convert("UTC")
-        loaded = list(Flights(frame))
-        flights.extend(loaded)
-        sources.extend([str(path)] * len(loaded))
-        movements.extend([movement] * len(loaded))
     session = EditorSession(graph)
     if not args.no_browser:
         url = f"http://{args.host}:{args.port}/?session={time.time_ns()}"
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    uvicorn.run(
-        create_app(
-            session,
-            args.graph,
-            flights=flights,
-            flight_sources=sources,
-            movement_types=movements,
-            input_time_semantics=args.input_timezone,
-            display_timezone=args.display_timezone,
-        ),
-        host=args.host,
-        port=args.port,
-    )
+    uvicorn.run(create_app(session, args.graph), host=args.host, port=args.port)

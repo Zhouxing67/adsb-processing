@@ -4,6 +4,12 @@
 and validated `adsb.Flight` trajectories.
 It does not call `AirportGraph.map_flight()` or `intersection_with_flight()`.
 
+The single CLI entry point is `uv run python src/__main__.py`. It runs selected
+datasets in batch mode by default; add `--workbench` to load the same normalized
+datasets and `MatchConfig` into the interactive flight workbench without running
+the batch matcher first. `python -m airport_workbench` is reserved for graph
+viewing and editing.
+
 ```python
 from path_map import MatchConfig, MovementType, load_data, map_flight
 

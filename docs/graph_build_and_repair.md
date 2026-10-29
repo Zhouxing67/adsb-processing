@@ -126,3 +126,5 @@ uv run python src/__main__.py `
 
 最终图包含投影定义和内容 `graph_id`。匹配输出会记录对应的 `graph_id`，从而避免路径结果
 被错误地解析到另一版本的机场图上。
+
+后台批量匹配、结果文件和 Workbench 交互匹配的详细步骤见 [路径匹配运行说明](path_matching_run.md)。
