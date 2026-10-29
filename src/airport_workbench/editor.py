@@ -11,7 +11,7 @@ from itertools import combinations
 from math import acos, degrees
 from pathlib import Path as FilePath
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Sequence
+from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
 import networkx as nx
 from shapely.geometry import LineString, Point, mapping
@@ -68,6 +68,7 @@ class EditorSession:
             metadata=airport_graph.metadata,
         )
         self._history: list[AirportGraph] = []
+        self.revision = 0
         self.lock = RLock()
         self._source_path_graph = self._build_source_path_graph()
 
@@ -104,6 +105,7 @@ class EditorSession:
                 self.airport_graph = backup
                 raise
             self._history.append(backup)
+            self.revision += 1
             if len(self._history) > 50:
                 self._history.pop(0)
 
@@ -112,6 +114,7 @@ class EditorSession:
             if not self._history:
                 raise ValueError("没有可以撤销的操作")
             self.airport_graph = self._history.pop()
+            self.revision += 1
             self._source_path_graph = self._build_source_path_graph()
 
     def _new_node_id(self) -> int:
@@ -1339,12 +1342,17 @@ def _serve_workbench(
     airport_graph: AirportGraph,
     *,
     flights: Sequence[Flight] = (),
-    paths: Sequence[Path] = (),
+    paths_by_flight_key: Mapping[str, Path] | None = None,
     save_path: str | FilePath = DEFAULT_GRAPH_PATH,
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
     read_only: bool = False,
+    match_config: Any | None = None,
+    flight_sources: Sequence[str] | None = None,
+    movement_types: Sequence[str] | None = None,
+    input_time_semantics: str = "UTC",
+    display_timezone: str = "UTC",
 ) -> AirportGraph:
     """Serve the shared workbench UI in editing or read-only mode."""
     import uvicorn
@@ -1362,8 +1370,13 @@ def _serve_workbench(
         FilePath(save_path),
         on_finish=finish,
         flights=flights,
-        paths=paths,
+        paths_by_flight_key=paths_by_flight_key,
         read_only=read_only,
+        match_config=match_config,
+        flight_sources=flight_sources,
+        movement_types=movement_types,
+        input_time_semantics=input_time_semantics,
+        display_timezone=display_timezone,
     )
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     if open_browser:
@@ -1377,21 +1390,31 @@ def open_workbench(
     airport_graph: AirportGraph,
     *,
     flights: Sequence[Flight] = (),
-    paths: Sequence[Path] = (),
+    paths_by_flight_key: Mapping[str, Path] | None = None,
     save_path: str | FilePath = DEFAULT_GRAPH_PATH,
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    match_config: Any | None = None,
+    flight_sources: Sequence[str] | None = None,
+    movement_types: Sequence[str] | None = None,
+    input_time_semantics: str = "UTC",
+    display_timezone: str = "UTC",
 ) -> AirportGraph:
     """Open the editable workbench and block until it is stopped or finished."""
     return _serve_workbench(
         airport_graph,
         flights=flights,
-        paths=paths,
+        paths_by_flight_key=paths_by_flight_key,
         save_path=save_path,
         host=host,
         port=port,
         open_browser=open_browser,
+        match_config=match_config,
+        flight_sources=flight_sources,
+        movement_types=movement_types,
+        input_time_semantics=input_time_semantics,
+        display_timezone=display_timezone,
     )
 
 
@@ -1399,20 +1422,30 @@ def visualize(
     airport_graph: AirportGraph,
     *,
     flights: Sequence[Flight] = (),
-    paths: Sequence[Path] = (),
+    paths_by_flight_key: Mapping[str, Path] | None = None,
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
+    match_config: Any | None = None,
+    flight_sources: Sequence[str] | None = None,
+    movement_types: Sequence[str] | None = None,
+    input_time_semantics: str = "UTC",
+    display_timezone: str = "UTC",
 ) -> None:
     """Open a read-only graph viewer with search and topology inspection tools."""
     _serve_workbench(
         airport_graph,
         flights=flights,
-        paths=paths,
+        paths_by_flight_key=paths_by_flight_key,
         host=host,
         port=port,
         open_browser=open_browser,
         read_only=True,
+        match_config=match_config,
+        flight_sources=flight_sources,
+        movement_types=movement_types,
+        input_time_semantics=input_time_semantics,
+        display_timezone=display_timezone,
     )
 
 

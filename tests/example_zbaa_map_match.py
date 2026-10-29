@@ -11,7 +11,7 @@ import pandas as pd
 
 from adsb import Flight
 from airport_surface import load_graph
-from airport_workbench import open_workbench
+from airport_workbench import flight_key, open_workbench
 from path_map import MatchConfig, map_flight
 
 ROOT = FilePath(__file__).resolve().parents[1]
@@ -39,7 +39,11 @@ def main() -> None:
     for edge in matched_path.edge_ids:
         print(edge)
 
-    open_workbench(airport_graph, flights=[flight], paths=[matched_path])
+    open_workbench(
+        airport_graph,
+        flights=[flight],
+        paths_by_flight_key={flight_key(0, "provided", flight.flight_id): matched_path},
+    )
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 from adsb import Flight
 from airport_surface import load_graph
-from airport_workbench import visualize
+from airport_workbench import flight_key, visualize
 from path_map import map_flight
 
 
@@ -12,7 +12,7 @@ def main():
     visualize(
         graph,
         flights=[flight],
-        paths=[path],
+        paths_by_flight_key={flight_key(0, "provided", flight.flight_id): path},
     )
 
 

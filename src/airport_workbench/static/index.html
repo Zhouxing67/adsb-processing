@@ -6,6 +6,7 @@
   <title>Airport Workbench</title>
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/app.css">
+  <link rel="stylesheet" href="/flight-layout.css">
 </head>
 <body>
   <header class="topbar panel">
@@ -14,6 +15,7 @@
     <div class="top-actions">
       <button id="search-toggle" class="text-button"><span>⌕</span> 搜索</button>
       <button id="topology-toggle" class="text-button"><span>◇</span> 拓扑检查</button>
+      <button id="flights-toggle" class="text-button"><span>✈</span> 全部航班</button>
       <button id="undo" class="text-button" disabled><span>↶</span> 撤销</button>
       <button id="save" class="save-button"><span>✓</span> 保存</button>
       <button id="finish" class="finish-button hidden"><span>→</span> 完成</button>
@@ -34,7 +36,7 @@
     <div class="map-overlay-stack">
       <div class="legend panel">
         <span><i class="dot node-dot"></i>图节点</span><span><i class="line edge-line"></i>派生边</span>
-        <span><i class="line flight-line"></i>Flight</span><span><i class="line path-line"></i>Path</span>
+        <span><i class="line flight-line"></i>虚线＝原始轨迹</span><span><i class="line path-line"></i>实线＝匹配路径</span>
       </div>
       <div id="layer-control-slot"></div>
     </div>
@@ -51,6 +53,17 @@
     <div class="topology-actions"><button id="split-validation-toggle" class="secondary-button">开启相邻边辨色</button></div>
     <p class="field-note">度为 0/1 的节点只是“值得检查”，不一定是错误。点击上方统计或下方明细可直接在地图定位。</p>
   </aside>
+  <aside id="flights-panel" class="flights-panel panel">
+    <div id="flight-list-view" class="flight-view">
+      <div class="flight-sidebar-header"><div><small>当前工作台加载的数据集</small><h2>全部航班</h2></div></div>
+      <div class="flight-query"><input id="flight-search" placeholder="搜索航班号或 flight_id"><div class="flight-filters"><select id="flight-movement"><option value="">全部进出港</option><option value="arrival">进港</option><option value="departure">离港</option><option value="unknown">未知</option></select><select id="flight-status"><option value="">全部状态</option><option value="unmatched">未匹配</option><option value="queued">排队中</option><option value="matching">匹配中</option><option value="success">成功</option><option value="failed">失败</option><option value="stale">已失效</option></select></div></div>
+      <section class="selected-section"><div class="section-title"><strong id="selection-count">已选择 0/5</strong><span>A～E 固定色槽</span></div><div id="selected-flights" class="selected-flights"></div></section>
+      <p id="flight-time-note" class="field-note"></p><div id="flight-error" class="warning hidden"></div><div id="overlap-notice" class="warning hidden"></div>
+      <div id="flight-list" class="flight-list"></div>
+      <div class="flight-sidebar-footer"><div class="pager"><button id="flight-prev" class="secondary-button">上一页</button><span id="flight-page"></span><button id="flight-next" class="secondary-button">下一页</button></div><div class="footer-actions"><button id="fit-selected" class="secondary-button">定位所选</button><button id="match-selected" class="primary-button" disabled>匹配所选航班</button></div></div>
+    </div>
+    <div id="flight-detail-view" class="flight-view hidden"><div class="flight-detail-header"><button id="back-to-flights" class="secondary-button">← 返回列表</button><h2 id="flight-detail-title">航班详情</h2></div><div id="flight-detail-body" class="flight-detail-body"></div></div>
+  </aside>
   <aside id="details" class="details panel hidden">
     <button id="close-details" class="panel-close" aria-label="关闭">×</button><div id="details-content"></div>
   </aside>
@@ -58,5 +71,6 @@
   <div id="busy" class="busy hidden"><span></span></div>
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/app.js"></script>
+  <script src="/flights-v2.js"></script>
 </body>
 </html>

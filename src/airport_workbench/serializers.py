@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from datetime import date, datetime
 from typing import Any, Sequence
 
@@ -15,21 +16,25 @@ from path_map import Path
 def _json_value(value: Any) -> Any:
     if value is None:
         return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (datetime, date, pd.Timestamp)):
-        return value.isoformat()
     try:
         if pd.isna(value):
             return None
     except (TypeError, ValueError):
         pass
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, (datetime, date, pd.Timestamp)):
+        return value.isoformat()
     if hasattr(value, "item"):
         return _json_value(value.item())
     return str(value)
 
 
-def flight_geojson(flight: Flight, index: int = 0) -> dict[str, Any]:
+def flight_geojson(
+    flight: Flight, index: int = 0, *, flight_key: str | None = None
+) -> dict[str, Any]:
     """Serialize valid Flight observations and their connecting line."""
     data = flight.data
     if "longitude" not in data or "latitude" not in data:
@@ -45,7 +50,9 @@ def flight_geojson(flight: Flight, index: int = 0) -> dict[str, Any]:
         coordinate = [float(longitude), float(latitude)]
         coordinates.append(coordinate)
         properties = {name: _json_value(value) for name, value in row.items()}
-        properties.update(kind="observation", sequence=sequence, flight_index=index)
+        properties.update(
+            kind="observation", sequence=sequence, flight_index=index, flight_key=flight_key
+        )
         features.append(
             {
                 "type": "Feature",
@@ -62,6 +69,7 @@ def flight_geojson(flight: Flight, index: int = 0) -> dict[str, Any]:
                 "properties": {
                     "kind": "trajectory",
                     "flight_index": index,
+                    "flight_key": flight_key,
                     "observation_count": len(coordinates),
                 },
             },
@@ -69,7 +77,7 @@ def flight_geojson(flight: Flight, index: int = 0) -> dict[str, Any]:
     return {"type": "FeatureCollection", "features": features}
 
 
-def path_geojson(path: Path, index: int = 0) -> dict[str, Any]:
+def path_geojson(path: Path, index: int = 0, *, flight_key: str | None = None) -> dict[str, Any]:
     """Serialize every directed path edge separately, preserving traversal order."""
     features = []
     for sequence, edge in enumerate(path):
@@ -81,6 +89,7 @@ def path_geojson(path: Path, index: int = 0) -> dict[str, Any]:
                 "properties": {
                     "kind": "path_edge",
                     "path_index": index,
+                    "flight_key": flight_key,
                     "sequence": sequence,
                     "u": repr(edge.from_),
                     "v": repr(edge.to_),

@@ -2,8 +2,9 @@ from pathlib import Path
 
 import pandas as pd
 
+from airport_workbench import flight_key
 from path_map import MovementType, load_data
-from runner import Runner
+from runner import Runner, _sample_path_associations
 
 
 def make_runner(input_path: Path, *, limit: int | None = None) -> Runner:
@@ -68,3 +69,24 @@ def test_load_data_attaches_movement_type(tmp_path):
     traffic = load_data(source, MovementType.ARRIVAL)
 
     assert traffic.data["movement_type"].tolist() == ["arrival", "arrival"]
+
+
+def test_sample_paths_remain_associated_across_failed_and_later_batches():
+    class SampleFlight:
+        def __init__(self, identifier: str) -> None:
+            self.flight_id = identifier
+
+    arrival_success = SampleFlight("A")
+    arrival_failure = SampleFlight("B")
+    departure_success = SampleFlight("C")
+    path_a, path_c = object(), object()
+
+    associations = _sample_path_associations(
+        [arrival_success, arrival_failure, departure_success],
+        [(arrival_success, path_a), (departure_success, path_c)],
+    )
+
+    assert associations == {
+        flight_key(0, "provided", "A"): path_a,
+        flight_key(2, "provided", "C"): path_c,
+    }

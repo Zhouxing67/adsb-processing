@@ -8,16 +8,17 @@ import time
 import webbrowser
 from collections import defaultdict
 from pathlib import Path as FilePath
-from typing import TYPE_CHECKING, Any, Callable, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 
 import networkx as nx
+import pandas as pd
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 from shapely.geometry import LineString, mapping
 
-from adsb import Flight
+from adsb import Flight, Flights
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
@@ -29,6 +30,7 @@ from airport_surface.graph import (
 )
 
 from .editor import EditorSession
+from .flights import FlightWorkbench
 from .serializers import serialize_flights, serialize_paths
 
 if TYPE_CHECKING:
@@ -104,6 +106,11 @@ class SourceSplitRequest(BaseModel):
 class ManualSnapRequest(BaseModel):
     node: str
     edge: str
+
+
+class MatchFlightsRequest(BaseModel):
+    flight_keys: list[str] = Field(default_factory=list)
+    force: bool = False
 
 
 class BrowserState:
@@ -302,15 +309,37 @@ def create_app(
     on_finish: Callable[[], None] | None = None,
     *,
     flights: Sequence[Flight] = (),
-    paths: Sequence[Path] = (),
+    paths_by_flight_key: Mapping[str, Path] | None = None,
     read_only: bool = False,
+    match_config: Any | None = None,
+    flight_sources: Sequence[str] | None = None,
+    movement_types: Sequence[str] | None = None,
+    input_time_semantics: str = "UTC",
+    display_timezone: str = "UTC",
 ) -> FastAPI:
-    browser = BrowserState(session, flights, paths)
+    browser = BrowserState(session)
+    flight_workbench = FlightWorkbench(
+        session.airport_graph,
+        flights,
+        sources=flight_sources,
+        movement_types=movement_types,
+        paths_by_flight_key=paths_by_flight_key,
+        match_config=match_config,
+        input_time_semantics=input_time_semantics,
+        display_timezone=display_timezone,
+        graph_lock=session.lock,
+        graph_provider=lambda: session.airport_graph,
+        revision_provider=lambda: getattr(session, "revision", 0),
+    )
+    flight_mode = bool(flights)
     app = FastAPI(title="Airport Graph Viewer" if read_only else "Airport Workbench")
 
     @app.middleware("http")
     async def enforce_read_only(request: Request, call_next: Callable[..., Any]) -> Any:
-        if read_only and request.method not in {"GET", "HEAD", "OPTIONS"}:
+        read_only_match_api = request.url.path == "/api/matches" and request.method == "POST"
+        safe_method = request.method in {"GET", "HEAD", "OPTIONS"}
+        graph_write_blocked = (read_only or flight_mode) and not read_only_match_api
+        if graph_write_blocked and not safe_method:
             return JSONResponse(
                 status_code=405,
                 content={"detail": "当前为只读可视化模式，不允许修改机场图"},
@@ -327,6 +356,14 @@ def create_app(
             STATIC_DIRECTORY / "app.css", media_type="text/css", headers=NO_CACHE_HEADERS
         )
 
+    @app.get("/flight-layout.css")
+    def flight_layout_stylesheet() -> FileResponse:
+        return FileResponse(
+            STATIC_DIRECTORY / "flight-layout.css",
+            media_type="text/css",
+            headers=NO_CACHE_HEADERS,
+        )
+
     @app.get("/app.js")
     def javascript() -> FileResponse:
         return FileResponse(
@@ -335,9 +372,75 @@ def create_app(
             headers=NO_CACHE_HEADERS,
         )
 
+    @app.get("/flights-v2.js")
+    def flight_javascript_v2() -> FileResponse:
+        return FileResponse(
+            STATIC_DIRECTORY / "flights-v2.js",
+            media_type="text/javascript",
+            headers=NO_CACHE_HEADERS,
+        )
+
     @app.get("/api/state")
     def state() -> dict[str, Any]:
-        return browser.state(on_finish is not None, save_path, read_only=read_only)
+        flight_workbench.sync_graph()
+        value = browser.state(on_finish is not None, save_path, read_only=read_only)
+        value["flight_count"] = len(flight_workbench.flights)
+        value["flight_mode"] = flight_mode
+        value["path_count"] = sum(
+            result.status == "success" for result in flight_workbench.results.values()
+        )
+        return value
+
+    @app.get("/api/flights")
+    def flights_catalogue(
+        q: str = "",
+        movement_type: str | None = None,
+        match_status: str | None = None,
+        page: int = 1,
+        page_size: int = 20,
+    ) -> dict[str, Any]:
+        try:
+            return flight_workbench.catalogue(
+                query=q,
+                movement_type=movement_type,
+                status=match_status,
+                page=page,
+                page_size=page_size,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/flights/{flight_key}")
+    def flight_detail(flight_key: str) -> dict[str, Any]:
+        try:
+            return flight_workbench.detail(flight_key)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.get("/api/flights/{flight_key}/geometry")
+    def flight_geometry(flight_key: str) -> dict[str, Any]:
+        try:
+            return flight_workbench.geometry(flight_key)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+
+    @app.post("/api/matches")
+    def match_flights(item: MatchFlightsRequest) -> dict[str, Any]:
+        try:
+            return flight_workbench.submit(item.flight_keys, force=item.force)
+        except KeyError as error:
+            raise HTTPException(404, str(error)) from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/matches")
+    def match_status() -> dict[str, Any]:
+        current_graph_id = flight_workbench.sync_graph()
+        with flight_workbench.lock:
+            return {
+                "graph_id": current_graph_id,
+                "items": [result.public() for result in flight_workbench.results.values()],
+            }
 
     @app.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
@@ -530,11 +633,49 @@ def main() -> None:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8765)
     parser.add_argument("--no-browser", action="store_true")
+    parser.add_argument("--arrivals-csv", type=FilePath)
+    parser.add_argument("--departures-csv", type=FilePath)
+    parser.add_argument(
+        "--input-timezone",
+        default="UTC",
+        help="IANA timezone describing naive CSV timestamps (default: UTC)",
+    )
+    parser.add_argument("--display-timezone", default="UTC")
     args = parser.parse_args()
 
     graph = load_graph(args.graph)
+    flights: list[Flight] = []
+    sources: list[str] = []
+    movements: list[str] = []
+    for path, movement in (
+        (args.arrivals_csv, "arrival"),
+        (args.departures_csv, "departure"),
+    ):
+        if path is None:
+            continue
+        frame = pd.read_csv(path)
+        parsed = pd.to_datetime(frame["timestamp"], errors="raise")
+        if parsed.dt.tz is None:
+            parsed = parsed.dt.tz_localize(args.input_timezone)
+        frame["timestamp"] = parsed.dt.tz_convert("UTC")
+        loaded = list(Flights(frame))
+        flights.extend(loaded)
+        sources.extend([str(path)] * len(loaded))
+        movements.extend([movement] * len(loaded))
     session = EditorSession(graph)
     if not args.no_browser:
         url = f"http://{args.host}:{args.port}/?session={time.time_ns()}"
         threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    uvicorn.run(create_app(session, args.graph), host=args.host, port=args.port)
+    uvicorn.run(
+        create_app(
+            session,
+            args.graph,
+            flights=flights,
+            flight_sources=sources,
+            movement_types=movements,
+            input_time_semantics=args.input_timezone,
+            display_timezone=args.display_timezone,
+        ),
+        host=args.host,
+        port=args.port,
+    )

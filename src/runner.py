@@ -14,7 +14,7 @@ from zoneinfo import ZoneInfo
 
 from adsb import Flight
 from airport_surface import graph_id, load_graph, save_graph
-from airport_workbench import open_workbench
+from airport_workbench import flight_key, open_workbench
 from path_map import (
     MapMatchingError,
     MatchConfig,
@@ -26,6 +26,19 @@ from path_map import (
 from path_map.path import Path as MatchedPath
 
 LOCAL_TIMEZONE = ZoneInfo("Asia/Shanghai")
+
+
+def _sample_path_associations(
+    sample_flights: list[Flight],
+    sample_matches: list[tuple[Flight, MatchedPath]],
+) -> dict[str, MatchedPath]:
+    """Associate sampled paths using the exact Flight object that produced each path."""
+    path_by_flight_object = {id(flight): path for flight, path in sample_matches}
+    return {
+        flight_key(index, "provided", flight.flight_id): path_by_flight_object[id(flight)]
+        for index, flight in enumerate(sample_flights)
+        if id(flight) in path_by_flight_object
+    }
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,10 +109,10 @@ class Runner:
         path_file: TextIO,
         match_file: TextIO,
         path_ids: dict[tuple[tuple[Any, Any, Any], ...], int],
-    ) -> tuple[dict[str, Any], list[Flight], list[MatchedPath]]:
+    ) -> tuple[dict[str, Any], list[Flight], list[tuple[Flight, MatchedPath]]]:
         successful_sample_flights: list[Flight] = []
         failed_sample_flights: list[Flight] = []
-        sample_paths: list[MatchedPath] = []
+        sample_matches: list[tuple[Flight, MatchedPath]] = []
         started = time.perf_counter()
         matched_count = 0
         failed_count = 0
@@ -144,9 +157,9 @@ class Runner:
                     )
                 result["path_id"] = path_id
                 matched_count += 1
-                if len(sample_paths) < self.success_samples:
+                if len(sample_matches) < self.success_samples:
                     successful_sample_flights.append(flight)
-                    sample_paths.append(path)
+                    sample_matches.append((flight, path))
 
             result["elapsed_seconds"] = time.perf_counter() - flight_started
             match_file.write(
@@ -178,7 +191,7 @@ class Runner:
             f"[{spec.name}] total={matched_count + failed_count} matched={matched_count} "
             f"failed={failed_count} elapsed={elapsed:.2f}s"
         )
-        return summary, successful_sample_flights + failed_sample_flights, sample_paths
+        return summary, successful_sample_flights + failed_sample_flights, sample_matches
 
     def run(self) -> dict[str, Any]:
         if not self.graph_path.exists():
@@ -194,7 +207,7 @@ class Runner:
 
         summaries: list[dict[str, Any]] = []
         sample_flights: list[Flight] = []
-        sample_paths: list[MatchedPath] = []
+        sample_matches: list[tuple[Flight, MatchedPath]] = []
         path_ids: dict[tuple[tuple[Any, Any, Any], ...], int] = {}
         started = time.perf_counter()
         with (
@@ -202,7 +215,7 @@ class Runner:
             (run_dir / "matches.jsonl").open("w", encoding="utf-8") as match_file,
         ):
             for spec in self.batches:
-                summary, flights, paths = self._run_batch(
+                summary, flights, matches = self._run_batch(
                     spec,
                     matcher,
                     graph_identity,
@@ -212,7 +225,7 @@ class Runner:
                 )
                 summaries.append(summary)
                 sample_flights.extend(flights)
-                sample_paths.extend(paths)
+                sample_matches.extend(matches)
 
         total = sum(item["total_flights"] for item in summaries)
         matched = sum(item["matched_flights"] for item in summaries)
@@ -238,7 +251,9 @@ class Runner:
             open_workbench(
                 airport_graph,
                 flights=sample_flights,
-                paths=sample_paths,
+                paths_by_flight_key=_sample_path_associations(
+                    sample_flights, sample_matches
+                ),
                 save_path=self.graph_path,
             )
         return report
