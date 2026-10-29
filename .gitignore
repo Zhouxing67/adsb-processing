@@ -19,7 +19,8 @@ build/
 Untitled*.ipynb
 
 # Local datasets and generated outputs
-data/
+data/ADS-B
+
 outputs/
 
 # Local databases
