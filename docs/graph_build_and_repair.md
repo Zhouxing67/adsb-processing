@@ -30,10 +30,10 @@ uv sync --group graph-build
 
 脚本位置：`scripts/build_airport_graph.py`。
 
-必须提供：
+参数说明：
 
-- `--airport`：ICAO 机场代码，例如 `ZBAA`、`KJFK`；
-- `--projection`：适用于该机场的米制投影 CRS，例如 `EPSG:32650`；
+- `--airport`：必填，ICAO 机场代码，例如 `ZBAA`、`KJFK`；
+- `--projection`：必填，适用于该机场的米制投影 CRS，例如 `EPSG:32650`；
 - `--output`：可选。省略时写入 `data/graphs/<icao小写>_raw.json`。
 
 北京首都机场示例：
@@ -76,7 +76,33 @@ uv run python scripts/build_airport_graph.py `
     --force
 ```
 
-## 3. 检查和修复机场图
+## 3. 可视化已有机场图
+
+只想查看图时，使用 `scripts/visualize_airport_graph.py`，无需启动修复流程，也无需提供航班数据：
+
+```powershell
+uv run python scripts/visualize_airport_graph.py `
+    --input data/graphs/zbaa_final.json
+```
+
+`--input` 必填，可以指向原始图或修复后的图。脚本直接加载已有 JSON，启动只读
+Workbench；不会重新建图，也不会修改输入文件。地图中可以查看节点、边、业务节点标记
+和拓扑概览，但不能编辑标注或启动逐点检查。
+
+默认监听 `127.0.0.1:8765`，并自动打开浏览器。可用 `--host`、`--port` 修改监听地址和端口，
+用 `--no-browser` 关闭自动打开浏览器：
+
+```powershell
+uv run python scripts/visualize_airport_graph.py `
+    --input data/graphs/zbaa_raw.json `
+    --port 8877 `
+    --no-browser
+```
+
+此时手动访问 `http://127.0.0.1:8877`。查看结束后，在运行脚本的终端按 `Ctrl+C` 停止服务；
+仅关闭浏览器标签页不会停止服务。查看已有图不需要 `graph-build` 可选依赖组。
+
+## 4. 检查和修复机场图
 
 脚本位置：`scripts/repair_airport_graph.py`。
 
@@ -112,7 +138,7 @@ uv run python scripts/repair_airport_graph.py `
 目标文件已经存在时，修复脚本同样默认停止。确认替换时添加 `--force`。建议保留原始图，
 把修复结果写入不同的 `_final.json` 文件，避免丢失可追溯的原始构图产物。
 
-## 4. 最终图用于匹配
+## 5. 最终图用于匹配
 
 确认后的图由主过程直接加载：
 
