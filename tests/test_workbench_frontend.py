@@ -142,3 +142,82 @@ def test_catalogue_initialization_locks_controls_until_restore_finishes() -> Non
     assert initialize.index(lock) < initialize.index("await queryCatalogue(1)")
     assert "const initialized=await queryCatalogue(1);if(!initialized)return" in initialize
     assert initialize.index("finally{") < initialize.index(unlock)
+
+
+def test_business_node_markers_and_point_review_are_wired() -> None:
+    source = Path("src/airport_workbench/static/app.js").read_text(encoding="utf-8")
+    html = Path("src/airport_workbench/static/index.html").read_text(encoding="utf-8")
+
+    assert 'p.parking_position_node?"P":""' in source
+    assert 'p.runway_access_node?"R":""' in source
+    assert "business-annotations" in source
+    assert "/business-annotations" in source
+    assert "sortedNodeReviewSnapshot(nodeFeatures)" in source
+    assert "nodeFeatureIndex.set(nodeKey(feature),feature)" in source
+    assert "nodeFeatureIndex.get(nodeKey(feature))" in source
+    assert "if(selected)selectNode(selected);else closeDetails()" in source
+    assert "if(current)showNodeProperties(current);else closeDetails()" in source
+    assert "lastTopologyRevision!==data.topology_revision" in source
+    assert "遍历位置" in source
+    assert "已到最后一个节点；这不表示全部复核通过" in source
+    assert 'id="node-review-start"' in html
+    assert 'id="node-review-prev"' in html
+    assert 'id="node-review-next"' in html
+    assert 'id="node-review-end"' in html
+
+
+def test_point_review_snapshot_sort_executes_for_mixed_node_types() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const definition=source.split(/\r?\n/).find(
+  line=>line.startsWith("function sortedNodeReviewSnapshot")
+);
+vm.runInThisContext(definition);
+const features=[
+  {properties:{node_id:"'b'",node_sort_key:["str","'b'"]}},
+  {properties:{node_id:"2",node_sort_key:["int","2"]}},
+  {properties:{node_id:"1",node_sort_key:["int","1"]}},
+  {properties:{node_id:"'a'",node_sort_key:["str","'a'"]}}
+];
+const ordered=sortedNodeReviewSnapshot(features).map(item=>item.properties.node_id);
+if(JSON.stringify(ordered)!==JSON.stringify(["1","2","'a'","'b'"])){
+  throw new Error(`unexpected review order: ${JSON.stringify(ordered)}`);
+}
+if(new Set(ordered).size!==features.length)throw new Error("snapshot lost or repeated nodes");
+"""
+
+    subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_point_review_refresh_preserves_mixed_node_identities() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const definition=source.split(/\r?\n/).find(line=>line.startsWith("function nodeKey"));
+vm.runInThisContext(definition);
+const integer={properties:{node_id:"1",node_sort_key:["int","1"]}};
+const string={properties:{node_id:"'1'",node_sort_key:["str","'1'"]}};
+const refreshedInteger={properties:{
+  node_id:"1",node_sort_key:["int","1"],parking_position_node:true
+}};
+const refreshedString={properties:{
+  node_id:"'1'",node_sort_key:["str","'1'"],runway_access_node:true
+}};
+const index=new Map([refreshedInteger,refreshedString].map(feature=>[nodeKey(feature),feature]));
+const snapshot=[integer,string].map(feature=>index.get(nodeKey(feature)));
+if(snapshot[0]!==refreshedInteger||snapshot[1]!==refreshedString){
+  throw new Error("typed identities collided during refresh");
+}
+if(new Set(snapshot).size!==2)throw new Error("review snapshot repeated a mixed-type node");
+"""
+
+    subprocess.run([node, "-e", script, str(source_path)], check=True)

@@ -13,6 +13,7 @@ from .graph import (
     _extract_sources,
     _geometric_crossing_issues,
     _node_attributes_from_osm,
+    classify_business_nodes,
     validate_edge_endpoints,
     validate_edge_sources,
     validate_source_intervals,
@@ -46,6 +47,7 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
         airport.icao,
         issues,
     )
+    classify_business_nodes(graph)
     validate_edge_endpoints(graph)
     validate_edge_sources(graph)
     validate_source_intervals(graph)

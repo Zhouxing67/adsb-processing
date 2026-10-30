@@ -151,6 +151,8 @@ class AirportGraph:
         node_aliases: Mapping[Hashable, Hashable] | None = None,
         node_merge_groups: Mapping[Hashable, NodeMergeGroup] | None = None,
         node_snap_records: list[NodeSnapRecord] | tuple[NodeSnapRecord, ...] | None = None,
+        parking_position_nodes: set[Hashable] | None = None,
+        runway_access_nodes: set[Hashable] | None = None,
         metadata: GraphMetadata | None = None,
     ) -> None:
         self.graph = graph
@@ -162,7 +164,17 @@ class AirportGraph:
         self.node_aliases = dict(node_aliases or {})
         self.node_merge_groups = dict(node_merge_groups or {})
         self.node_snap_records = list(node_snap_records or ())
+        self.parking_position_nodes = set(parking_position_nodes or ())
+        self.runway_access_nodes = set(runway_access_nodes or ())
         self.metadata = metadata or GraphMetadata()
+        missing_business_nodes = (
+            self.parking_position_nodes | self.runway_access_nodes
+        ).difference(self.graph.nodes)
+        if missing_business_nodes:
+            raise ValueError(
+                "Business node annotations reference unknown graph nodes: "
+                f"{sorted(missing_business_nodes, key=repr)!r}"
+            )
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
             if segments:
@@ -206,5 +218,7 @@ class AirportGraph:
             node_aliases=self.node_aliases,
             node_merge_groups=self.node_merge_groups,
             node_snap_records=self.node_snap_records,
+            parking_position_nodes=self.parking_position_nodes,
+            runway_access_nodes=self.runway_access_nodes,
             metadata=self.metadata,
         )

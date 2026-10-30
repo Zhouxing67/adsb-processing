@@ -112,6 +112,11 @@ class MatchFlightsRequest(BaseModel):
     force: bool = False
 
 
+class BusinessNodeAnnotations(BaseModel):
+    parking_position: bool
+    runway_access: bool
+
+
 class BrowserState:
     def __init__(
         self,
@@ -190,6 +195,23 @@ class BrowserState:
                             {key: value for key, value in data.items() if key != "pos"}
                         ),
                         "manual": data.get("source") == "manual",
+                        "parking_position_node": (
+                            node
+                            in getattr(
+                                self.session.airport_graph,
+                                "parking_position_nodes",
+                                (),
+                            )
+                        ),
+                        "runway_access_node": (
+                            node
+                            in getattr(
+                                self.session.airport_graph,
+                                "runway_access_nodes",
+                                (),
+                            )
+                        ),
+                        "node_sort_key": [type(node).__qualname__, repr(node)],
                         "color": color,
                         "radius": 5 if degree == 0 else 4 if degree == 1 else 2.75,
                     },
@@ -213,6 +235,8 @@ class BrowserState:
                         "edge_id": repr((u, v, key)),
                         "u": repr(u),
                         "v": repr(v),
+                        "u_node_sort_key": [type(u).__qualname__, repr(u)],
+                        "v_node_sort_key": [type(v).__qualname__, repr(v)],
                         "key": repr(key),
                         "validation_color": edge_colors[(u, v, key)],
                         "geometry_length_m": round(self.session.airport_graph.length(geometry), 2),
@@ -282,6 +306,8 @@ class BrowserState:
             "can_undo": self.session.can_undo,
             "can_finish": can_finish,
             "read_only": read_only,
+            "revision": getattr(self.session, "revision", 0),
+            "topology_revision": getattr(self.session, "topology_revision", 0),
             "save_path": str(save_path),
         }
 
@@ -597,6 +623,25 @@ def create_app(
         node = browser.node(item.token)
         session.update_node_attributes(node, item.attributes)
         return {"message": f"已更新节点 {node!r} 的属性"}
+
+    @app.post("/api/nodes/{token}/business-annotations")
+    def update_business_node_annotations(
+        token: str, item: BusinessNodeAnnotations
+    ) -> dict[str, Any]:
+        node = browser.node(token)
+        try:
+            session.set_business_node_annotations(
+                node,
+                parking_position=item.parking_position,
+                runway_access=item.runway_access,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {
+            "message": f"已更新节点 {node!r} 的业务标注",
+            "parking_position": item.parking_position,
+            "runway_access": item.runway_access,
+        }
 
     @app.post("/api/update-edge")
     def update_edge(item: UpdatedAttributes) -> dict[str, Any]:

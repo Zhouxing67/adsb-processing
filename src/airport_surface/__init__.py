@@ -4,6 +4,7 @@ from typing import Any
 
 from .graph import (
     DEFAULT_GRAPH_PATH,
+    classify_business_nodes,
     geometry_from_source_segments,
     graph_id,
     load_graph,
@@ -49,6 +50,7 @@ __all__ = [
     "SourceEdge",
     "SourceNode",
     "SourceSegment",
+    "classify_business_nodes",
     "EditorSession",
     "edit_graph",
     "edge_source_segments",

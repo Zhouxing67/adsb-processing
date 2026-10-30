@@ -35,7 +35,7 @@
     <div id="map" aria-label="机场工作台地图"></div>
     <div class="map-overlay-stack">
       <div class="legend panel">
-        <span><i class="dot node-dot"></i>图节点</span><span><i class="line edge-line"></i>派生边</span>
+        <span><i class="dot node-dot"></i>普通节点</span><span><i class="business-legend">P</i>停机位侧</span><span><i class="business-legend runway">R</i>跑道进出</span><span><i class="line edge-line"></i>派生边</span>
         <span><i class="line flight-line"></i>虚线＝原始轨迹</span><span><i class="line path-line"></i>实线＝匹配路径</span>
       </div>
       <div id="layer-control-slot"></div>
@@ -51,6 +51,7 @@
     <div id="topology-summary" class="metric-grid"></div>
     <div id="topology-details" class="topology-details"></div>
     <div class="topology-actions"><button id="split-validation-toggle" class="secondary-button">开启相邻边辨色</button></div>
+    <section class="node-review"><h3>逐点检查</h3><p id="node-review-progress" class="field-note">尚未开始</p><div class="node-review-actions"><button id="node-review-start" class="primary-button">开始</button><button id="node-review-prev" class="secondary-button" disabled>上一个</button><button id="node-review-next" class="secondary-button" disabled>下一个</button><button id="node-review-end" class="secondary-button" disabled>结束</button></div></section>
     <p class="field-note">度为 0/1 的节点只是“值得检查”，不一定是错误。点击上方统计或下方明细可直接在地图定位。</p>
   </aside>
   <aside id="flights-panel" class="flights-panel panel">

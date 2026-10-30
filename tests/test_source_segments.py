@@ -235,6 +235,8 @@ def test_connection_can_be_restored_across_multiple_source_edges():
 
 def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_path: Path):
     session = EditorSession(near_duplicate_crossing_graph())
+    session.airport_graph.parking_position_nodes.add(2)
+    session.airport_graph.runway_access_nodes.add(6)
     candidate = next(
         item for item in session.merge_candidates() if set(item["node_ids"]) == {2, 6}
     )
@@ -246,6 +248,8 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     assert session.graph.degree(2) == 4
     assert session.airport_graph.node_aliases[6] == 2
     assert session.airport_graph.node_merge_groups[2].member_node_ids == (2, 6)
+    assert session.airport_graph.parking_position_nodes == {2}
+    assert session.airport_graph.runway_access_nodes == {2}
     assert session.airport_graph.source_edges["vertical"].geometry.wkb == (
         near_duplicate_crossing_graph().source_edges["vertical"].geometry.wkb
     )
@@ -261,6 +265,8 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     session.undo()
     assert 6 in session.graph
     assert 6 not in session.airport_graph.node_aliases
+    assert session.airport_graph.parking_position_nodes == {2}
+    assert session.airport_graph.runway_access_nodes == {6}
 
 
 def test_internal_osm_node_is_excluded_from_merge_candidates_and_rejected():

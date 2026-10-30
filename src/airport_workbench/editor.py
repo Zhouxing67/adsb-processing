@@ -65,10 +65,13 @@ class EditorSession:
             node_aliases=airport_graph.node_aliases,
             node_merge_groups=airport_graph.node_merge_groups,
             node_snap_records=airport_graph.node_snap_records,
+            parking_position_nodes=airport_graph.parking_position_nodes,
+            runway_access_nodes=airport_graph.runway_access_nodes,
             metadata=airport_graph.metadata,
         )
-        self._history: list[AirportGraph] = []
+        self._history: list[tuple[AirportGraph, bool]] = []
         self.revision = 0
+        self.topology_revision = 0
         self.lock = RLock()
         self._source_path_graph = self._build_source_path_graph()
 
@@ -86,6 +89,8 @@ class EditorSession:
             node_aliases=current.node_aliases,
             node_merge_groups=current.node_merge_groups,
             node_snap_records=current.node_snap_records,
+            parking_position_nodes=current.parking_position_nodes,
+            runway_access_nodes=current.runway_access_nodes,
             metadata=current.metadata,
         )
 
@@ -94,7 +99,7 @@ class EditorSession:
         return bool(self._history)
 
     @contextmanager
-    def _edit(self) -> Any:
+    def _edit(self, *, topology_change: bool = True) -> Any:
         """Make one graph edit atomic and record it only after success."""
         with self.lock:
             backup = self.airport_graph.copy()
@@ -104,8 +109,10 @@ class EditorSession:
             except Exception:
                 self.airport_graph = backup
                 raise
-            self._history.append(backup)
+            self._history.append((backup, topology_change))
             self.revision += 1
+            if topology_change:
+                self.topology_revision += 1
             if len(self._history) > 50:
                 self._history.pop(0)
 
@@ -113,8 +120,10 @@ class EditorSession:
         with self.lock:
             if not self._history:
                 raise ValueError("没有可以撤销的操作")
-            self.airport_graph = self._history.pop()
+            self.airport_graph, topology_change = self._history.pop()
             self.revision += 1
+            if topology_change:
+                self.topology_revision += 1
             self._source_path_graph = self._build_source_path_graph()
 
     def _new_node_id(self) -> int:
@@ -133,6 +142,23 @@ class EditorSession:
     def delete_node(self, node: Any) -> None:
         with self._edit():
             self.graph.remove_node(node)
+            self.airport_graph.parking_position_nodes.discard(node)
+            self.airport_graph.runway_access_nodes.discard(node)
+
+    def set_business_node_annotations(
+        self, node: Any, *, parking_position: bool, runway_access: bool
+    ) -> None:
+        if node not in self.graph:
+            raise ValueError(f"未知节点: {node!r}")
+        with self._edit(topology_change=False):
+            for enabled, collection in (
+                (parking_position, self.airport_graph.parking_position_nodes),
+                (runway_access, self.airport_graph.runway_access_nodes),
+            ):
+                if enabled:
+                    collection.add(node)
+                else:
+                    collection.discard(node)
 
     def add_edge(self, u: Any, v: Any, **attributes: Any) -> Any:
         with self._edit():
@@ -500,6 +526,13 @@ class EditorSession:
             member: tuple(self.graph.nodes[member]["pos"][:2]) for member in members
         }
         with self._edit():
+            parking = any(
+                member in self.airport_graph.parking_position_nodes
+                for member in members
+            )
+            runway_access = any(
+                member in self.airport_graph.runway_access_nodes for member in members
+            )
             incident = [
                 (u, v, key, deepcopy(data))
                 for u, v, key, data in self.graph.edges(keys=True, data=True)
@@ -527,6 +560,12 @@ class EditorSession:
                 merge_type="manual",
             )
             self.graph.add_node(canonical, **canonical_data)
+            self.airport_graph.parking_position_nodes.difference_update(members)
+            self.airport_graph.runway_access_nodes.difference_update(members)
+            if parking:
+                self.airport_graph.parking_position_nodes.add(canonical)
+            if runway_access:
+                self.airport_graph.runway_access_nodes.add(canonical)
             added_edges = []
             for u, v, _key, data in incident:
                 first = canonical if data.get("first", u) in members else data.get("first", u)
@@ -769,6 +808,8 @@ class EditorSession:
             additions.append((first, last, data))
         with self._edit():
             self.graph.remove_node(node)
+            self.airport_graph.parking_position_nodes.discard(node)
+            self.airport_graph.runway_access_nodes.discard(node)
             added_edges = []
             for first, last, data in additions:
                 key = self.graph.add_edge(first, last, **data)
@@ -779,14 +820,14 @@ class EditorSession:
     def update_node_attributes(self, node: Any, attributes: dict[str, Any]) -> None:
         attributes = deepcopy(attributes)
         attributes.pop("pos", None)
-        with self._edit():
+        with self._edit(topology_change=False):
             position = self.graph.nodes[node]["pos"]
             self.graph.nodes[node].clear()
             self.graph.nodes[node].update(pos=position, **attributes)
 
     def update_edge_attributes(self, u: Any, v: Any, key: Any, attributes: dict[str, Any]) -> None:
         attributes = deepcopy(attributes)
-        with self._edit():
+        with self._edit(topology_change=False):
             data = self.graph.edges[u, v, key]
             protected_names = {
                 "geometry",

@@ -19,7 +19,10 @@ let splitValidation = false, currentState = null;
 let dataLayers = [];
 let nodeFeatures = [], fitted = false, savePath = "", firstNode = null;
 let mergeNodeTokens = [];
-const nodeFeatureIndex = new Map(), edgeSearchIndex = new Map(), edgeTokenIndex = new Map();
+let nodeReviewSnapshot = [], nodeReviewIndex = -1, lastTopologyRevision = null, selectedNodeKey = null;
+function sortedNodeReviewSnapshot(features){return [...features].sort((left,right)=>{const a=left.properties.node_sort_key,b=right.properties.node_sort_key;return a[0].localeCompare(b[0])||a[1].localeCompare(b[1]);});}
+function nodeKey(value){const key=value?.properties?.node_sort_key??value;return JSON.stringify(key);}
+const nodeFeatureIndex = new Map(), nodeSearchIndex = new Map(), edgeSearchIndex = new Map(), edgeTokenIndex = new Map();
 const status = document.querySelector("#status"), busy = document.querySelector("#busy");
 const details = document.querySelector("#details"), detailsContent = document.querySelector("#details-content");
 const messages = {
@@ -44,11 +47,21 @@ async function post(path, body, reload = false) {
 function clearPreview() { if (previewLayer) { map.removeLayer(previewLayer); previewLayer = null; } }
 function clearEndpointHighlight() { if (endpointLayer) { map.removeLayer(endpointLayer); endpointLayer = null; } }
 function clearSelection() { if (selectionLayer) { map.removeLayer(selectionLayer); selectionLayer = null; } }
-function closeDetails() { details.classList.add("hidden"); clearPreview(); clearEndpointHighlight(); clearSelection(); }
+function closeDetails() { selectedNodeKey=null;details.classList.add("hidden"); clearPreview(); clearEndpointHighlight(); clearSelection(); }
 function showProperties(title, properties) {
   const ignored = new Set(["token", "validation_color", "editable_attributes"]);
   const rows = Object.entries(properties).filter(([key]) => !ignored.has(key)).map(([key,value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2><dl>${rows}</dl>`; details.classList.remove("hidden");
+}
+function showNodeProperties(feature) {
+  const properties=feature.properties;
+  showProperties(`节点 ${properties.node_id}`,properties);
+  const readonly=currentState?.read_only||currentState?.flight_mode;
+  detailsContent.insertAdjacentHTML("beforeend",`<section class="business-annotations"><h3>业务节点标注</h3><label><input id="node-parking-position" type="checkbox" ${properties.parking_position_node?"checked":""} ${readonly?"disabled":""}>停机位侧节点</label><label><input id="node-runway-access" type="checkbox" ${properties.runway_access_node?"checked":""} ${readonly?"disabled":""}>跑道进出节点</label></section>`);
+  if(readonly)return;
+  const update=async()=>{const parking=document.querySelector("#node-parking-position"),runway=document.querySelector("#node-runway-access");parking.disabled=true;runway.disabled=true;try{const response=await post(`/api/nodes/${encodeURIComponent(properties.token)}/business-annotations`,{parking_position:parking.checked,runway_access:runway.checked},true);setStatus(response.message);}catch(error){const current=nodeFeatureIndex.get(selectedNodeKey);if(current)showNodeProperties(current);else closeDetails();setStatus(`标注更新失败：${error.message}`);}};
+  document.querySelector("#node-parking-position").onchange=update;
+  document.querySelector("#node-runway-access").onchange=update;
 }
 function showConfirmation(title, html, confirmText, onConfirm) {
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2>${html}<div class="attribute-actions"><button id="cancel-action" class="secondary-button">取消</button><button id="confirm-action" class="primary-button">${escapeHtml(confirmText)}</button></div>`;
@@ -59,13 +72,14 @@ function showConfirmation(title, html, confirmText, onConfirm) {
 function showGeometry(geometry, color = "#db2777") { clearPreview(); previewLayer = L.geoJSON({type:"Feature", geometry}, {pane:"previewPane", interactive:false, style:{color,weight:9,opacity:.92,lineCap:"round",lineJoin:"round"}}).addTo(map); }
 function highlightEdgeEndpoints(feature) {
   clearEndpointHighlight();
-  const markers=[feature.properties.u,feature.properties.v].map(identifier=>nodeFeatureIndex.get(normalizeId(identifier))).filter(Boolean).map(node=>{
+  const markers=[feature.properties.u_node_sort_key,feature.properties.v_node_sort_key].map(identifier=>nodeFeatureIndex.get(nodeKey(identifier))).filter(Boolean).map(node=>{
     const [longitude,latitude]=node.geometry.coordinates;
     return L.circleMarker([latitude,longitude],{pane:"selectionPane",radius:11,color:"#facc15",weight:4,fill:false,interactive:false});
   });
   endpointLayer=L.layerGroup(markers).addTo(map);
 }
 function selectEdge(feature, fit = false) {
+  selectedNodeKey=null;
   clearSelection(); highlightEdgeEndpoints(feature);
   selectionLayer=L.geoJSON({type:"Feature",geometry:feature.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#7e22ce",weight:10,opacity:.9}}).addTo(map);
   if(fit) map.fitBounds(selectionLayer.getBounds(),{padding:[80,80],maxZoom:24});
@@ -73,19 +87,18 @@ function selectEdge(feature, fit = false) {
 }
 function selectNode(feature, fit = false) {
   clearSelection(); clearEndpointHighlight();
-  const id=normalizeId(feature.properties.node_id);
-  const incident=currentState.edges.features.filter(edge=>normalizeId(edge.properties.u)===id||normalizeId(edge.properties.v)===id);
-  const neighbours=new Set(incident.map(edge=>normalizeId(edge.properties.u)===id?normalizeId(edge.properties.v):normalizeId(edge.properties.u)));
+  const id=nodeKey(feature);selectedNodeKey=id;
+  const incident=currentState.edges.features.filter(edge=>nodeKey(edge.properties.u_node_sort_key)===id||nodeKey(edge.properties.v_node_sort_key)===id);
+  const neighbours=new Set(incident.map(edge=>nodeKey(edge.properties.u_node_sort_key)===id?nodeKey(edge.properties.v_node_sort_key):nodeKey(edge.properties.u_node_sort_key)));
   const layersToShow=[];
   const seenGeometry=new Set();
   incident.forEach(edge=>{const geometryKey=JSON.stringify(edge.geometry);if(seenGeometry.has(geometryKey))return;seenGeometry.add(geometryKey);layersToShow.push(L.geoJSON({type:"Feature",geometry:edge.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:6,opacity:.82,lineCap:"round",lineJoin:"round"}}));});
   neighbours.forEach(neighbour=>{const item=nodeFeatureIndex.get(neighbour);if(item){const [x,y]=item.geometry.coordinates;layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:7,color:"#fff",fillColor:"#0891b2",fillOpacity:1,weight:3,interactive:false}));}});
   const [x,y]=feature.geometry.coordinates;
   layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:14,color:"#2563eb",fill:false,opacity:.45,weight:2,interactive:false}));
-  layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:9,color:"#fff",fillColor:"#2563eb",fillOpacity:1,weight:3,interactive:false}));
   selectionLayer=L.layerGroup(layersToShow).addTo(map);
   if(fit) map.setView([y,x],Math.max(map.getZoom(),22));
-  showProperties(`节点 ${feature.properties.node_id}`,feature.properties);
+  showNodeProperties(feature);
 }
 function highlightMergeNodes(nodes) {
   clearSelection();
@@ -196,7 +209,7 @@ function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); selectE
 
 function renderNodes() {
   if(nodeLayer) { layers.removeLayer(nodeLayer); map.removeLayer(nodeLayer); }
-  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>L.circleMarker(latlng,{pane:"nodesPane",radius:feature.properties.radius,color:"rgba(255,255,255,.9)",fillColor:feature.properties.color,fillOpacity:.9,weight:1.25}),onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
+  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>{const p=feature.properties;if(!p.parking_position_node&&!p.runway_access_node)return L.circleMarker(latlng,{pane:"nodesPane",radius:p.radius,color:"rgba(255,255,255,.9)",fillColor:p.color,fillOpacity:.9,weight:1.25});const labels=`${p.parking_position_node?"P":""}${p.runway_access_node?"R":""}`;const kind=p.parking_position_node&&p.runway_access_node?"dual":p.runway_access_node?"runway":"";return L.marker(latlng,{pane:"nodesPane",icon:L.divIcon({className:`business-node-icon ${kind}`,html:labels,iconSize:[p.parking_position_node&&p.runway_access_node?22:17,17]})});},onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
   nodeLayer.addTo(map); layers.addOverlay(nodeLayer,`图节点 (${nodeFeatures.length})`);
 }
 function renderEdges(data) {
@@ -215,7 +228,12 @@ function renderReferenceLayers(data) {
   data.flights.forEach((collection,index)=>{const color=flightColors[index%flightColors.length];const layer=L.geoJSON(collection,{pane:"flightPane",interactive:false,style:{pane:"flightPane",color:"#fff",weight:7,opacity:.88},pointToLayer:(_feature,latlng)=>L.circleMarker(latlng,{pane:"flightPane",radius:2.5,color:"#fff",fillColor:color,weight:1,fillOpacity:.95})});const accent=L.geoJSON(collection,{pane:"flightPane",interactive:false,filter:feature=>feature.geometry.type!=="Point",style:{pane:"flightPane",color,weight:4.5,opacity:.96,dashArray:dashPatterns[Math.floor(index/flightColors.length)%dashPatterns.length]}});const group=L.layerGroup([layer,accent]);dataLayers.push(group);layers.addOverlay(group,`Flight ${index+1}`);group.addTo(map);});
   data.paths.forEach((collection,index)=>{const color=pathColors[index%pathColors.length];const casing=L.geoJSON(collection,{pane:"pathPane",interactive:false,style:{pane:"pathPane",color:"#fff",weight:9,opacity:.92}});const accent=L.geoJSON(collection,{pane:"pathPane",interactive:false,style:{pane:"pathPane",color,weight:6,opacity:.98,dashArray:dashPatterns[Math.floor(index/pathColors.length)%dashPatterns.length]}});const group=L.layerGroup([casing,accent]);dataLayers.push(group);layers.addOverlay(group,`Path ${index+1}`);group.addTo(map);});
 }
-async function loadState(){const data=await readResponse(await fetch("/api/state"));currentState=data;document.body.classList.toggle("read-only",data.read_only);document.body.classList.toggle("flight-mode",data.flight_mode);document.title=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";document.querySelector(".brand-copy strong").textContent=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeFeatures.forEach(feature=>nodeFeatureIndex.set(normalizeId(feature.properties.node_id),feature));renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边 · ${data.flight_count} 航班`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.read_only)setStatus("只读可视化 · 点击节点或派生边查看详情");if(data.flight_mode)setStatus("航班模式 · 选择最多 5 条航班进行比较");if(!fitted&&nodeLayer.getLayers().length){map.fitBounds(nodeLayer.getBounds(),{padding:[24,24]});fitted=true;}setTimeout(()=>map.invalidateSize(),0);}
+function updateNodeReviewControls(){const active=nodeReviewIndex>=0&&nodeReviewSnapshot.length>0;document.querySelector("#node-review-start").disabled=!nodeFeatures.length||currentState?.read_only||currentState?.flight_mode;document.querySelector("#node-review-prev").disabled=!active||nodeReviewIndex===0;document.querySelector("#node-review-next").disabled=!active||nodeReviewIndex===nodeReviewSnapshot.length-1;document.querySelector("#node-review-end").disabled=!active;document.querySelector("#node-review-progress").textContent=active?`遍历位置 ${nodeReviewIndex+1} / ${nodeReviewSnapshot.length} · 节点 ${nodeReviewSnapshot[nodeReviewIndex].properties.node_id}`:"尚未开始";}
+function endNodeReview(message=""){nodeReviewSnapshot=[];nodeReviewIndex=-1;updateNodeReviewControls();if(message)setStatus(message);}
+function showNodeReviewPosition(fit=true){const feature=nodeReviewSnapshot[nodeReviewIndex];if(!feature)return endNodeReview("节点快照已失效，请重新开始逐点检查");if(nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);selectNode(feature,fit);updateNodeReviewControls();if(nodeReviewIndex===nodeReviewSnapshot.length-1)setStatus("已到最后一个节点；这不表示全部复核通过");}
+function startNodeReview(){if(!nodeFeatures.length)return setStatus("当前图没有可检查节点");nodeReviewSnapshot=sortedNodeReviewSnapshot(nodeFeatures);nodeReviewIndex=0;showNodeReviewPosition(true);}
+function moveNodeReview(delta){if(nodeReviewIndex<0)return;const target=nodeReviewIndex+delta;if(target<0||target>=nodeReviewSnapshot.length)return;nodeReviewIndex=target;showNodeReviewPosition(true);}
+async function loadState(){const data=await readResponse(await fetch("/api/state"));const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||data.read_only||data.flight_mode))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;document.body.classList.toggle("read-only",data.read_only);document.body.classList.toggle("flight-mode",data.flight_mode);document.title=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";document.querySelector(".brand-copy strong").textContent=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected)selectNode(selected);else closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边 · ${data.flight_count} 航班`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.read_only)setStatus("只读可视化 · 点击节点或派生边查看详情");if(data.flight_mode)setStatus("航班模式 · 选择最多 5 条航班进行比较");if(!fitted&&nodeLayer.getLayers().length){map.fitBounds(nodeLayer.getBounds(),{padding:[24,24]});fitted=true;}setTimeout(()=>map.invalidateSize(),0);}
 
 function renderTopologySummary(topology) {
   const metrics = [
@@ -243,7 +261,11 @@ document.querySelector("#search-toggle").onclick=event=>{document.querySelector(
 document.querySelector("#topology-toggle").onclick=event=>{document.querySelector("#topology-panel").classList.toggle("hidden");event.currentTarget.classList.toggle("active");};
 document.querySelectorAll("[data-close]").forEach(button=>button.onclick=()=>{document.querySelector(`#${button.dataset.close}`).classList.add("hidden");});
 document.querySelector("#split-validation-toggle").onclick=event=>{splitValidation=!splitValidation;event.currentTarget.classList.toggle("active",splitValidation);event.currentTarget.textContent=splitValidation?"关闭相邻边辨色":"开启相邻边辨色";document.querySelector(".legend").classList.toggle("validation",splitValidation);if(currentState)renderEdges(currentState);setStatus(splitValidation?"拓扑辨色已开启 · 相邻边使用不同颜色，便于检查连接关系":"拓扑辨色已关闭 · 派生边恢复统一颜色");};
-document.querySelector("#search-node-button").onclick=()=>{const feature=nodeFeatureIndex.get(normalizeId(document.querySelector("#search-node").value));if(!feature)return setStatus("未找到该节点");selectNode(feature,true);setStatus(`已选中节点 ${feature.properties.node_id}`);};
+document.querySelector("#node-review-start").onclick=startNodeReview;
+document.querySelector("#node-review-prev").onclick=()=>moveNodeReview(-1);
+document.querySelector("#node-review-next").onclick=()=>moveNodeReview(1);
+document.querySelector("#node-review-end").onclick=()=>endNodeReview("逐点检查已结束；当前节点保持选中");
+document.querySelector("#search-node-button").onclick=()=>{const matches=nodeSearchIndex.get(normalizeId(document.querySelector("#search-node").value))||[];if(!matches.length)return setStatus("未找到该节点");if(matches.length>1)return setStatus("节点 ID 文本存在多种类型，请在地图上选择目标节点");selectNode(matches[0],true);setStatus(`已选中节点 ${matches[0].properties.node_id}`);};
 document.querySelector("#search-edge-button").onclick=()=>{const entries=edgeSearchIndex.get(edgePairKey(document.querySelector("#search-edge-u").value,document.querySelector("#search-edge-v").value));if(!entries?.length)return setStatus("未找到该组端点的派生边");selectEdge(entries[0].feature,true);setStatus(`已选中派生边；该组端点共有 ${entries.length} 条边`);};
 document.querySelector("#save").onclick=async()=>{try{const response=await post("/api/save",{},true);setStatus(response.message);}catch(error){setStatus(`保存失败：${error.message}`);}};
 document.querySelector("#undo").onclick=async()=>{try{const response=await post("/api/undo",{},true);setStatus(response.message);}catch(error){setStatus(`撤销失败：${error.message}`);}};

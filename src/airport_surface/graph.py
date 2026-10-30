@@ -13,7 +13,6 @@ from typing import Any, Hashable, Iterable, Mapping
 
 import networkx as nx
 import numpy as np
-from cartes.crs import UTM
 from pyproj import Proj
 from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
@@ -37,6 +36,43 @@ ENDPOINT_TOLERANCE_M = 1e-3
 
 def source_registry(airport_graph: AirportGraph) -> dict[str, SourceEdge]:
     return airport_graph.source_edges
+
+
+def _node_endpoint_aeroways(airport_graph: AirportGraph, node: Hashable) -> list[str | None]:
+    """Return the source aeroway touching ``node`` for every incident edge."""
+    aeroways: list[str | None] = []
+    for u, v, _key, data in airport_graph.graph.edges(node, keys=True, data=True):
+        segments = edge_source_segments(data)
+        if not segments:
+            aeroways.append(None)
+            continue
+        first, last = data.get("first", u), data.get("last", v)
+        if node == first:
+            segment = segments[0]
+        elif node == last:
+            segment = segments[-1]
+        else:
+            aeroways.append(None)
+            continue
+        source = airport_graph.source_edges.get(segment.source_id)
+        value = source.attributes.get("aeroway") if source is not None else None
+        aeroways.append(str(value) if value is not None else None)
+    return aeroways
+
+
+def classify_business_nodes(airport_graph: AirportGraph) -> None:
+    """Populate business annotations once for a newly built topology graph."""
+    parking: set[Hashable] = set()
+    runway_access: set[Hashable] = set()
+    for node in airport_graph.graph.nodes:
+        endpoint_types = _node_endpoint_aeroways(airport_graph, node)
+        if airport_graph.graph.degree(node) == 1 and endpoint_types == ["parking_position"]:
+            parking.add(node)
+        types = {value for value in endpoint_types if value is not None}
+        if "runway" in types and types.intersection({"taxiway", "parking_position"}):
+            runway_access.add(node)
+    airport_graph.parking_position_nodes = parking
+    airport_graph.runway_access_nodes = runway_access
 
 
 def _source_identifier(
@@ -459,9 +495,7 @@ def validate_edge_endpoints(
     records = (
         airport_graph.graph.edges(keys=True, data=True)
         if edge_ids is None
-        else (
-            (u, v, key, airport_graph.graph.edges[u, v, key]) for u, v, key in edge_ids
-        )
+        else ((u, v, key, airport_graph.graph.edges[u, v, key]) for u, v, key in edge_ids)
     )
     for u, v, key, data in records:
         geometry = data.get("geometry")
@@ -488,9 +522,7 @@ def validate_edge_sources(
     records = (
         airport_graph.graph.edges(keys=True, data=True)
         if edge_ids is None
-        else (
-            (u, v, key, airport_graph.graph.edges[u, v, key]) for u, v, key in edge_ids
-        )
+        else ((u, v, key, airport_graph.graph.edges[u, v, key]) for u, v, key in edge_ids)
     )
     for u, v, key, data in records:
         segments = edge_source_segments(data)
@@ -560,6 +592,11 @@ def _json_value(value: Any) -> Any:
     return str(value)
 
 
+def _stable_node_order(node: Hashable) -> tuple[str, str]:
+    """Order heterogeneous node identifiers without comparing their values."""
+    return type(node).__qualname__, repr(node)
+
+
 def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
     return {
         "schema_version": GRAPH_SCHEMA_VERSION,
@@ -592,6 +629,14 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
             for group in airport_graph.node_merge_groups.values()
         ],
         "node_snap_records": [_json_value(record) for record in airport_graph.node_snap_records],
+        "parking_position_nodes": [
+            _json_value(node)
+            for node in sorted(airport_graph.parking_position_nodes, key=_stable_node_order)
+        ],
+        "runway_access_nodes": [
+            _json_value(node)
+            for node in sorted(airport_graph.runway_access_nodes, key=_stable_node_order)
+        ],
         "source_edges": {
             source_id: {
                 "geometry": mapping(source.geometry),
@@ -739,7 +784,7 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         for item in document.get("node_snap_records", ())
     ]
     projection_value = document.get("projection", "UTM zone 50")
-    projection = UTM(zone=50) if projection_value == "UTM zone 50" else Proj(projection_value)
+    projection = Proj("EPSG:32650") if projection_value == "UTM zone 50" else Proj(projection_value)
     return AirportGraph(
         graph,
         projection,
@@ -748,5 +793,7 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         node_aliases=dict(document.get("node_aliases", ())),
         node_merge_groups=merge_groups,
         node_snap_records=snap_records,
+        parking_position_nodes=set(document.get("parking_position_nodes", ())),
+        runway_access_nodes=set(document.get("runway_access_nodes", ())),
         metadata=metadata,
     )
