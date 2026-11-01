@@ -43,7 +43,7 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
 
     assert [component["size"] for component in topology["components"]] == [2, 1]
     assert topology["parallel_pair_count"] == 1
-    assert len(topology["parallel_groups"][0]["edge_tokens"]) == 2
+    assert len(topology["parallel_groups"][0]["edge_ids"]) == 2
     isolated = next(
         feature for feature in state["nodes"]["features"] if feature["properties"]["degree"] == 0
     )
@@ -51,11 +51,11 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
     assert isolated["properties"]["radius"] == 5
     assert isolated["properties"]["parking_position_node"] is False
     assert isolated["properties"]["runway_access_node"] is False
-    assert isolated["properties"]["node_sort_key"] == ["str", "'isolated'"]
+    assert isolated["properties"]["id"] == {"type": "str", "value": "isolated"}
     edge = state["edges"]["features"][0]["properties"]
-    assert edge["u_node_sort_key"][0] == "str"
-    assert edge["v_node_sort_key"][0] == "str"
-    assert {edge["u_node_sort_key"][1], edge["v_node_sort_key"][1]} == {"'a'", "'b'"}
+    assert edge["u_id"]["type"] == "str"
+    assert edge["v_id"]["type"] == "str"
+    assert {edge["u_id"]["value"], edge["v_id"]["value"]} == {"a", "b"}
 
 
 def test_validation_colors_differ_for_incident_edges() -> None:

@@ -19,6 +19,7 @@ from airport_surface import (
     validate_edge_sources,
 )
 from airport_workbench import EditorSession
+from airport_workbench.editor import GraphObjectNotFound
 from path_map import MatchConfig, map_flight
 
 PROJECTION = Proj("EPSG:3857")
@@ -141,11 +142,13 @@ def test_degree_four_node_can_be_removed_with_independent_manual_pairings():
         source_id: source.geometry.wkb
         for source_id, source in session.airport_graph.source_edges.items()
     }
-    plan = session.node_deletion_plan(2)
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
     horizontal = pair_id(plan, {"1", "3"})
     vertical = pair_id(plan, {"4", "5"})
 
-    session.remove_node_with_pairs(2, [horizontal, vertical])
+    session.remove_node_with_pairs(
+        2, [horizontal, vertical], expected_revision=session.revision
+    )
 
     assert 2 not in session.graph
     assert session.graph.has_edge(1, 3)
@@ -165,7 +168,7 @@ def test_degree_four_node_can_be_removed_with_independent_manual_pairings():
     validate_edge_endpoints(session.airport_graph)
     validate_edge_sources(session.airport_graph)
 
-    session.undo()
+    session.undo(expected_revision=session.revision)
     assert 2 in session.graph
     assert session.graph.number_of_edges() == 4
 
@@ -174,7 +177,7 @@ def test_one_half_edge_can_be_reused_by_multiple_manual_pairings():
     graph = crossing_graph()
     graph.graph.remove_edge(2, 5, 0)
     session = EditorSession(graph)
-    plan = session.node_deletion_plan(2)
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
 
     session.remove_node_with_pairs(
         2,
@@ -183,6 +186,7 @@ def test_one_half_edge_can_be_reused_by_multiple_manual_pairings():
             pair_id(plan, {"1", "4"}),
             pair_id(plan, {"3", "4"}),
         ],
+        expected_revision=session.revision,
     )
 
     assert 2 not in session.graph
@@ -199,10 +203,11 @@ def test_one_half_edge_can_be_reused_by_multiple_manual_pairings():
 
 def test_composite_source_chain_survives_save_and_load(tmp_path: Path):
     session = EditorSession(crossing_graph())
-    plan = session.node_deletion_plan(2)
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
     session.remove_node_with_pairs(
         2,
         [pair_id(plan, {"1", "3"}), pair_id(plan, {"4", "5"})],
+        expected_revision=session.revision,
     )
     path = tmp_path / "simplified.json"
 
@@ -222,9 +227,11 @@ def test_connection_can_be_restored_across_multiple_source_edges():
     graph.graph.remove_node(2)
     session = EditorSession(graph)
 
-    candidates = session.connection_candidates(1, 3)
+    candidates = session.connection_candidates(1, 3, expected_revision=session.revision).value
     candidate = candidates[0]
-    session.restore_source_connection(1, 3, candidate["candidate_id"])
+    session.restore_source_connection(
+        1, 3, candidate["candidate_id"], expected_revision=session.revision
+    )
 
     data = next(iter(session.graph[1][3].values()))
     assert [segment.source_id for segment in edge_source_segments(data)] == ["left", "right"]
@@ -242,7 +249,7 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     )
     assert candidate["max_distance_m"] == pytest.approx(0.04, abs=1e-3)
 
-    session.merge_nodes([2, 6], canonical_node=2)
+    session.merge_nodes([2, 6], canonical_node=2, expected_revision=session.revision)
 
     assert 6 not in session.graph
     assert session.graph.degree(2) == 4
@@ -262,7 +269,7 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     assert 6 not in loaded.graph
     assert loaded.graph.degree(2) == 4
 
-    session.undo()
+    session.undo(expected_revision=session.revision)
     assert 6 in session.graph
     assert 6 not in session.airport_graph.node_aliases
     assert session.airport_graph.parking_position_nodes == {2}
@@ -294,8 +301,8 @@ def test_internal_osm_node_is_excluded_from_merge_candidates_and_rejected():
     session = EditorSession(graph)
 
     assert all(6 not in candidate["node_ids"] for candidate in session.merge_candidates())
-    with pytest.raises(ValueError, match="不在图中"):
-        session.merge_nodes([2, 6], canonical_node=2)
+    with pytest.raises(GraphObjectNotFound, match="节点不存在"):
+        session.merge_nodes([2, 6], canonical_node=2, expected_revision=session.revision)
 
 
 def test_manual_graph_node_can_be_a_merge_candidate_and_rewires_edges():
@@ -326,7 +333,7 @@ def test_manual_graph_node_can_be_a_merge_candidate_and_rewires_edges():
     )
     assert any(node["manual"] for node in candidate["nodes"])
 
-    session.merge_nodes([2, manual], canonical_node=2)
+    session.merge_nodes([2, manual], canonical_node=2, expected_revision=session.revision)
 
     assert manual not in session.graph
     assert session.graph.has_edge(2, 5)
@@ -355,8 +362,10 @@ def test_manual_snap_moves_graph_node_splits_target_and_preserves_sources(tmp_pa
         for source_id, source in session.airport_graph.source_edges.items()
     }
 
-    preview = session.manual_snap_preview(6, 4, 2, 0)
-    session.manual_snap_node_to_edge(6, 4, 2, 0)
+    preview = session.manual_snap_preview(
+        6, 4, 2, 0, expected_revision=session.revision
+    ).value
+    session.manual_snap_node_to_edge(6, 4, 2, 0, expected_revision=session.revision)
 
     assert preview["distance_m"] == pytest.approx(0.2, abs=1e-3)
     assert session.graph.degree(6) == 3
@@ -376,7 +385,7 @@ def test_manual_snap_moves_graph_node_splits_target_and_preserves_sources(tmp_pa
     assert loaded.graph.has_edge(4, 6)
     assert loaded.graph.has_edge(6, 2)
 
-    session.undo()
+    session.undo(expected_revision=session.revision)
     assert session.graph.nodes[6]["pos"] == pytest.approx(positions[6])
 
 
@@ -384,11 +393,11 @@ def test_unpaired_half_edges_require_explicit_discard_confirmation():
     graph = crossing_graph()
     graph.graph.remove_edge(2, 5, 0)
     session = EditorSession(graph)
-    plan = session.node_deletion_plan(2)
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
     selected = next(candidate["pair_id"] for candidate in plan["pair_candidates"])
 
     with pytest.raises(ValueError, match="未配对半边"):
-        session.remove_node_with_pairs(2, [selected])
+        session.remove_node_with_pairs(2, [selected], expected_revision=session.revision)
 
 
 def test_cross_source_pair_preserves_each_sources_traversal_direction():
@@ -404,9 +413,11 @@ def test_cross_source_pair_preserves_each_sources_traversal_direction():
     graph.graph.remove_edge(4, 2, 0)
     graph.graph.remove_edge(2, 5, 0)
     session = EditorSession(graph)
-    plan = session.node_deletion_plan(2)
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
 
-    session.remove_node_with_pairs(2, [pair_id(plan, {"1", "3"})])
+    session.remove_node_with_pairs(
+        2, [pair_id(plan, {"1", "3"})], expected_revision=session.revision
+    )
 
     merged = next(iter(session.graph.get_edge_data(1, 3).values()))
     assert edge_source_segments(merged) == (
@@ -420,12 +431,21 @@ def test_composite_edge_can_be_split_again_at_an_original_osm_node():
     session = EditorSession(crossing_graph())
     session.graph.remove_edge(4, 2, 0)
     session.graph.remove_edge(2, 5, 0)
-    plan = session.node_deletion_plan(2)
-    session.remove_node_with_pairs(2, [pair_id(plan, {"1", "3"})])
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
+    session.remove_node_with_pairs(
+        2, [pair_id(plan, {"1", "3"})], expected_revision=session.revision
+    )
     key = next(iter(session.graph.get_edge_data(1, 3)))
     split_position = session.airport_graph.get_source_node(2).position
 
-    session.split_source_edge(1, 3, key, *split_position, osm_node_id=2)
+    session.split_source_edge(
+        1,
+        3,
+        key,
+        *split_position,
+        osm_node_id=2,
+        expected_revision=session.revision,
+    )
 
     assert 2 in session.graph
     assert session.graph.has_edge(1, 2)
@@ -453,8 +473,10 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
     before = map_flight(graph, flight, config)
 
     session = EditorSession(graph)
-    plan = session.node_deletion_plan(2)
-    session.remove_node_with_pairs(2, [pair_id(plan, {"1", "3"})])
+    plan = session.node_deletion_plan(2, expected_revision=session.revision).value
+    session.remove_node_with_pairs(
+        2, [pair_id(plan, {"1", "3"})], expected_revision=session.revision
+    )
     after = map_flight(session.airport_graph, flight, config)
 
     assert after.total_length == pytest.approx(before.total_length, abs=1e-6)

@@ -18,11 +18,15 @@ let mode = "inspect", nodeLayer, edgeLayer, edgeGroup, previewLayer, endpointLay
 let splitValidation = false, currentState = null;
 let dataLayers = [];
 let nodeFeatures = [], fitted = false, savePath = "", firstNode = null;
-let mergeNodeTokens = [];
+let mergeNodeIds = [];
+let firstNodeRevision = null, mergeSelectionRevision = null;
 let nodeReviewSnapshot = [], nodeReviewIndex = -1, lastTopologyRevision = null, selectedNodeKey = null;
-function sortedNodeReviewSnapshot(features){return [...features].sort((left,right)=>{const a=left.properties.node_sort_key,b=right.properties.node_sort_key;return a[0].localeCompare(b[0])||a[1].localeCompare(b[1]);});}
-function nodeKey(value){const key=value?.properties?.node_sort_key??value;return JSON.stringify(key);}
-const nodeFeatureIndex = new Map(), nodeSearchIndex = new Map(), edgeSearchIndex = new Map(), edgeTokenIndex = new Map();
+let activeOperationRevision = null;
+function identityKey(value){return JSON.stringify(value);}
+function nodeKey(value){return identityKey(value?.properties?.id??value);}
+function edgeKey(value){return identityKey(value?.properties?.id??value);}
+function sortedNodeReviewSnapshot(features){return [...features].sort((a,b)=>nodeKey(a).localeCompare(nodeKey(b)));}
+const nodeFeatureIndex = new Map(), nodeSearchIndex = new Map(), edgeSearchIndex = new Map(), edgeIdentityIndex = new Map();
 const status = document.querySelector("#status"), busy = document.querySelector("#busy");
 const details = document.querySelector("#details"), detailsContent = document.querySelector("#details-content");
 const messages = {
@@ -34,22 +38,24 @@ const messages = {
   delete: "删除 / 简化 · 删除边只改拓扑；删除节点可人工选择半边重组"
 };
 
-function setStatus(message) { status.textContent = message; }
+let conflictNotice=false;
+function setStatus(message) { if(!conflictNotice)status.textContent = message; }
 function escapeHtml(value) { return String(value ?? "—").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[c]); }
 function normalizeId(value) { return String(value ?? "").trim().replace(/^['"]|['"]$/g, ""); }
 function edgePairKey(u, v) { return [normalizeId(u), normalizeId(v)].sort().join("|"); }
-async function readResponse(response) { const text = await response.text(); let value; try { value = text ? JSON.parse(text) : {}; } catch { value = {detail:text}; } if (!response.ok) throw new Error(value.detail || value.message || `HTTP ${response.status}`); return value; }
+async function readResponse(response) { const text = await response.text(); let value; try { value = text ? JSON.parse(text) : {}; } catch { value = {detail:text}; } if (!response.ok){const detail=value.detail||value.message||`HTTP ${response.status}`;const error=new Error(typeof detail==="object"?detail.message:detail);error.code=typeof detail==="object"?detail.code:null;throw error;} return value; }
 async function post(path, body, reload = false) {
   busy.classList.remove("hidden");
   try { const value = await readResponse(await fetch(path, {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)})); if (reload) await loadState(); return value; }
+  catch(error){if(error.code==="revision_conflict"){closeDetails();firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;conflictNotice=true;status.textContent="图已变更，请重新检查操作";try{await loadState();}catch{}throw error;}throw error;}
   finally { busy.classList.add("hidden"); }
 }
 function clearPreview() { if (previewLayer) { map.removeLayer(previewLayer); previewLayer = null; } }
 function clearEndpointHighlight() { if (endpointLayer) { map.removeLayer(endpointLayer); endpointLayer = null; } }
 function clearSelection() { if (selectionLayer) { map.removeLayer(selectionLayer); selectionLayer = null; } }
-function closeDetails() { selectedNodeKey=null;details.classList.add("hidden"); clearPreview(); clearEndpointHighlight(); clearSelection(); }
+function closeDetails() { selectedNodeKey=null;activeOperationRevision=null;details.classList.add("hidden"); clearPreview(); clearEndpointHighlight(); clearSelection(); }
 function showProperties(title, properties) {
-  const ignored = new Set(["token", "validation_color", "editable_attributes"]);
+  const ignored = new Set(["id", "u_id", "v_id", "validation_color", "editable_attributes"]);
   const rows = Object.entries(properties).filter(([key]) => !ignored.has(key)).map(([key,value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2><dl>${rows}</dl>`; details.classList.remove("hidden");
 }
@@ -59,11 +65,13 @@ function showNodeProperties(feature) {
   const readonly=currentState?.read_only||currentState?.flight_mode;
   detailsContent.insertAdjacentHTML("beforeend",`<section class="business-annotations"><h3>业务节点标注</h3><label><input id="node-parking-position" type="checkbox" ${properties.parking_position_node?"checked":""} ${readonly?"disabled":""}>停机位侧节点</label><label><input id="node-runway-access" type="checkbox" ${properties.runway_access_node?"checked":""} ${readonly?"disabled":""}>跑道进出节点</label></section>`);
   if(readonly)return;
-  const update=async()=>{const parking=document.querySelector("#node-parking-position"),runway=document.querySelector("#node-runway-access");parking.disabled=true;runway.disabled=true;try{const response=await post(`/api/nodes/${encodeURIComponent(properties.token)}/business-annotations`,{parking_position:parking.checked,runway_access:runway.checked},true);setStatus(response.message);}catch(error){const current=nodeFeatureIndex.get(selectedNodeKey);if(current)showNodeProperties(current);else closeDetails();setStatus(`标注更新失败：${error.message}`);}};
+  const formRevision=currentState.revision;
+  const update=async()=>{const parking=document.querySelector("#node-parking-position"),runway=document.querySelector("#node-runway-access");parking.disabled=true;runway.disabled=true;try{const response=await post("/api/nodes/business-annotations",{node:properties.id,parking_position:parking.checked,runway_access:runway.checked,expected_revision:formRevision},true);setStatus(response.message);}catch(error){const current=nodeFeatureIndex.get(selectedNodeKey);if(current)showNodeProperties(current);else closeDetails();setStatus(`标注更新失败：${error.message}`);}};
   document.querySelector("#node-parking-position").onchange=update;
   document.querySelector("#node-runway-access").onchange=update;
 }
-function showConfirmation(title, html, confirmText, onConfirm) {
+function showConfirmation(title, html, confirmText, onConfirm, revision) {
+  activeOperationRevision=revision;
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2>${html}<div class="attribute-actions"><button id="cancel-action" class="secondary-button">取消</button><button id="confirm-action" class="primary-button">${escapeHtml(confirmText)}</button></div>`;
   details.classList.remove("hidden");
   document.querySelector("#cancel-action").onclick = closeDetails;
@@ -72,7 +80,7 @@ function showConfirmation(title, html, confirmText, onConfirm) {
 function showGeometry(geometry, color = "#db2777") { clearPreview(); previewLayer = L.geoJSON({type:"Feature", geometry}, {pane:"previewPane", interactive:false, style:{color,weight:9,opacity:.92,lineCap:"round",lineJoin:"round"}}).addTo(map); }
 function highlightEdgeEndpoints(feature) {
   clearEndpointHighlight();
-  const markers=[feature.properties.u_node_sort_key,feature.properties.v_node_sort_key].map(identifier=>nodeFeatureIndex.get(nodeKey(identifier))).filter(Boolean).map(node=>{
+  const markers=[feature.properties.u_id,feature.properties.v_id].map(identifier=>nodeFeatureIndex.get(nodeKey(identifier))).filter(Boolean).map(node=>{
     const [longitude,latitude]=node.geometry.coordinates;
     return L.circleMarker([latitude,longitude],{pane:"selectionPane",radius:11,color:"#facc15",weight:4,fill:false,interactive:false});
   });
@@ -88,8 +96,8 @@ function selectEdge(feature, fit = false) {
 function selectNode(feature, fit = false) {
   clearSelection(); clearEndpointHighlight();
   const id=nodeKey(feature);selectedNodeKey=id;
-  const incident=currentState.edges.features.filter(edge=>nodeKey(edge.properties.u_node_sort_key)===id||nodeKey(edge.properties.v_node_sort_key)===id);
-  const neighbours=new Set(incident.map(edge=>nodeKey(edge.properties.u_node_sort_key)===id?nodeKey(edge.properties.v_node_sort_key):nodeKey(edge.properties.u_node_sort_key)));
+  const incident=currentState.edges.features.filter(edge=>nodeKey(edge.properties.u_id)===id||nodeKey(edge.properties.v_id)===id);
+  const neighbours=new Set(incident.map(edge=>nodeKey(edge.properties.u_id)===id?nodeKey(edge.properties.v_id):nodeKey(edge.properties.u_id)));
   const layersToShow=[];
   const seenGeometry=new Set();
   incident.forEach(edge=>{const geometryKey=JSON.stringify(edge.geometry);if(seenGeometry.has(geometryKey))return;seenGeometry.add(geometryKey);layersToShow.push(L.geoJSON({type:"Feature",geometry:edge.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:6,opacity:.82,lineCap:"round",lineJoin:"round"}}));});
@@ -107,32 +115,32 @@ function highlightMergeNodes(nodes) {
   if(markers.length) map.fitBounds(L.featureGroup(markers).getBounds(),{padding:[100,100],maxZoom:26});
 }
 
-async function previewRestore(start, end) {
+async function previewRestore(start, end, expectedRevision) {
   try {
-    const result = await post("/api/restore-options", {start, end});
+    const result = await post("/api/restore-options", {start,end,expected_revision:expectedRevision});
     if (!result.candidates.length) { firstNode = null; return setStatus("原始 OSM 来源网络中没有可靠的短路径候选"); }
     const options = result.candidates.map((candidate,index) => `<label class="source-option"><input type="radio" name="source-choice" value="${index}" ${index===0?"checked":""}><span>${escapeHtml(candidate.source_ids.join(" + "))}<br>OSM way ${escapeHtml(candidate.osm_way_ids.join(" + "))} · ${candidate.length_m.toFixed(2)} m</span></label>`).join("");
     showGeometry(result.candidates[0].geometry);
     showConfirmation("从 OSM 恢复连接", `<p>端点：${escapeHtml(result.current_endpoints.join(" — "))}</p><div class="source-options">${options}</div><p class="field-note">geometry 将从完整 SourceEdge 恢复，不会画直线。</p>`, "恢复连接", async () => {
       const index = Number(document.querySelector('input[name="source-choice"]:checked').value); const candidate = result.candidates[index];
-      closeDetails(); try { const response = await post("/api/restore-confirm", {start,end,candidate_id:candidate.candidate_id}, true); setStatus(response.message); } catch(error) { setStatus(`恢复失败：${error.message}`); }
-    });
+      closeDetails(); try { const response = await post("/api/restore-confirm", {start,end,candidate_id:candidate.candidate_id,expected_revision:result.revision}, true); setStatus(response.message); } catch(error) { setStatus(`恢复失败：${error.message}`); }
+    },result.revision);
     document.querySelectorAll('input[name="source-choice"]').forEach(input => input.onchange = () => showGeometry(result.candidates[Number(input.value)].geometry));
   } catch(error) { setStatus(`无法恢复：${error.message}`); }
-  firstNode = null;
+  firstNode = null;firstNodeRevision=null;
 }
 
 async function previewMerge(request) {
   try {
-    const result=await post("/api/merge-nodes-preview",request);
+    const result=await post("/api/merge-nodes-preview",{...request,expected_revision:request.expected_revision??currentState.revision});
     highlightMergeNodes(result.nodes);
-    const choices=result.nodes.map((node,index)=>`<label class="source-option"><input type="radio" name="merge-canonical" value="${index}" ${node.node_id===result.canonical_node_id?"checked":""}><span>${escapeHtml(node.node_id)} · ${node.manual?"人工图节点":"OSM 图节点"}，度 ${node.degree}<br>${escapeHtml(node.source_ids.join(" + ")||"无 OSM SourceEdge 归属")}</span></label>`).join("");
+    const choices=result.nodes.map((node,index)=>`<label class="source-option"><input type="radio" name="merge-canonical" value="${index}" ${identityKey(node.id)===identityKey(result.canonical_node_id)?"checked":""}><span>${escapeHtml(node.node_id)} · ${node.manual?"人工图节点":"OSM 图节点"}，度 ${node.degree}<br>${escapeHtml(node.source_ids.join(" + ")||"无 OSM SourceEdge 归属")}</span></label>`).join("");
     const warnings=result.warnings.map(item=>`<p class="warning">${escapeHtml(item)}</p>`).join("");
-    showConfirmation("合并节点预览",`<dl><dt>成员</dt><dd>${escapeHtml(result.node_ids.join(", "))}</dd><dt>最大距离</dt><dd>${result.max_distance_m.toFixed(3)} m</dd><dt>受影响边</dt><dd>${result.affected_edges.length}</dd><dt>原始来源</dt><dd>SourceEdge 不会修改</dd></dl><h3>选择规范节点</h3><div class="source-options">${choices}</div>${warnings}`,"确认合并",async()=>{
+    showConfirmation("合并节点预览",`<dl><dt>成员</dt><dd>${escapeHtml(result.nodes.map(node=>node.node_id).join(", "))}</dd><dt>最大距离</dt><dd>${result.max_distance_m.toFixed(3)} m</dd><dt>受影响边</dt><dd>${result.affected_edges.length}</dd><dt>原始来源</dt><dd>SourceEdge 不会修改</dd></dl><h3>选择规范节点</h3><div class="source-options">${choices}</div>${warnings}`,"确认合并",async()=>{
       const index=Number(document.querySelector('input[name="merge-canonical"]:checked').value);
-      const body={node_ids:result.node_ids,canonical_node_id:result.nodes[index].node_id};
-      closeDetails();try{const response=await post("/api/merge-nodes-confirm",body,true);mergeNodeTokens=[];setStatus(response.message);}catch(error){setStatus(`合并失败：${error.message}`);}
-    });
+      const body={node_ids:result.node_ids,canonical_node_id:result.nodes[index].id,expected_revision:result.revision};
+      closeDetails();try{const response=await post("/api/merge-nodes-confirm",body,true);mergeNodeIds=[];setStatus(response.message);}catch(error){setStatus(`合并失败：${error.message}`);}
+    },result.revision);
   } catch(error){setStatus(`无法合并：${error.message}`);}
 }
 
@@ -142,70 +150,70 @@ async function openMergeCandidates() {
     const rows=result.candidates.map((candidate,index)=>`<div class="merge-candidate"><strong>候选 ${index+1} · 最大距离 ${candidate.max_distance_m.toFixed(3)} m</strong><div class="candidate-nodes">${candidate.nodes.map((node,nodeIndex)=>`<button class="candidate-node secondary-button" data-candidate="${index}" data-node="${nodeIndex}">${escapeHtml(node.node_id)}</button>`).join("")}</div><button class="candidate-use primary-button" data-candidate="${index}">检查并合并</button></div>`).join("");
     detailsContent.innerHTML=`<h2>疑似重复图节点</h2><p class="field-note">只检查现有图节点（包括人工节点），不搜索尚未成为图节点的内部 OSM Node。列表只提供候选，不会自动合并。</p><div class="source-options">${rows||"<p>没有 0.5 米内的候选组</p>"}</div>`;details.classList.remove("hidden");
     document.querySelectorAll(".candidate-node").forEach(button=>button.onclick=()=>{const candidate=result.candidates[Number(button.dataset.candidate)];const node=candidate.nodes[Number(button.dataset.node)];highlightMergeNodes(candidate.nodes);map.setView([node.position[1],node.position[0]],Math.max(map.getZoom(),24));setStatus(`候选来源节点 ${node.node_id}`);});
-    document.querySelectorAll(".candidate-use").forEach(button=>button.onclick=()=>previewMerge({node_ids:result.candidates[Number(button.dataset.candidate)].node_ids}));
+    document.querySelectorAll(".candidate-use").forEach(button=>button.onclick=()=>previewMerge({node_ids:result.candidates[Number(button.dataset.candidate)].node_ids,expected_revision:result.revision}));
   }catch(error){setStatus(`无法读取合并候选：${error.message}`);}
 }
 
 function showManualMergeSelection() {
-  const selected=mergeNodeTokens.map(token=>nodeFeatures.find(feature=>feature.properties.token===token)).filter(Boolean);
+  const selected=mergeNodeIds.map(id=>nodeFeatureIndex.get(nodeKey(id))).filter(Boolean);
   highlightMergeNodes(selected.map(feature=>({position:feature.geometry.coordinates})));
   detailsContent.innerHTML=`<h2>手工合并节点</h2><p>已选择 ${selected.length} 个节点</p><div class="source-options">${selected.map(feature=>`<div class="source-choice">${escapeHtml(feature.properties.node_id)}</div>`).join("")}</div><div class="attribute-actions"><button id="clear-merge" class="secondary-button">清空选择</button><button id="preview-merge" class="primary-button" ${selected.length<2?"disabled":""}>停止选择并检查</button></div>`;details.classList.remove("hidden");
-  document.querySelector("#clear-merge").onclick=()=>{mergeNodeTokens=[];openMergeCandidates();clearSelection();};
-  document.querySelector("#preview-merge").onclick=()=>previewMerge({node_tokens:mergeNodeTokens});
+  document.querySelector("#clear-merge").onclick=()=>{mergeNodeIds=[];mergeSelectionRevision=null;openMergeCandidates();clearSelection();};
+  document.querySelector("#preview-merge").onclick=()=>previewMerge({node_ids:mergeNodeIds,expected_revision:mergeSelectionRevision});
 }
 
-async function previewEdgeDeletion(token) {
-  try { const result = await post("/api/delete-edge-preview", {token}); const sources=result.source_segments.map(segment=>`${escapeHtml(segment.source_id)} [${segment.source_start_m.toFixed(2)}, ${segment.source_end_m.toFixed(2)}]${segment.reversed?" 反向":""}`).join("<br>"); showConfirmation("删除派生边", `<dl><dt>边</dt><dd>${escapeHtml(result.edge)}</dd><dt>来源片段</dt><dd>${sources||"无"}</dd><dt>原始数据</dt><dd>SourceEdge 不会被删除</dd></dl>`, "删除派生边", async () => { closeDetails(); try { const response = await post("/api/delete-edge-confirm", {token}, true); setStatus(response.message); } catch(error) { setStatus(`删除失败：${error.message}`); } }); }
+async function previewEdgeDeletion(edge) {
+  try { const result = await post("/api/delete-edge-preview", {edge,expected_revision:currentState.revision}); const sources=result.source_segments.map(segment=>`${escapeHtml(segment.source_id)} [${segment.source_start_m.toFixed(2)}, ${segment.source_end_m.toFixed(2)}]${segment.reversed?" 反向":""}`).join("<br>"); showConfirmation("删除派生边", `<dl><dt>边</dt><dd>${escapeHtml(result.edge)}</dd><dt>来源片段</dt><dd>${sources||"无"}</dd><dt>原始数据</dt><dd>SourceEdge 不会被删除</dd></dl>`, "删除派生边", async () => { closeDetails(); try { const response = await post("/api/delete-edge-confirm", {edge,expected_revision:result.revision}, true); setStatus(response.message); } catch(error) { setStatus(`删除失败：${error.message}`); } },result.revision); }
   catch(error) { setStatus(`无法删除：${error.message}`); }
 }
 
-async function previewNodeDeletion(token) {
+async function previewNodeDeletion(node) {
   try {
-    const result = await post("/api/delete-node-preview", {token});
+    const result = await post("/api/delete-node-preview", {node,expected_revision:currentState.revision});
     const halves=result.half_edges.map(half=>`<div class="source-choice"><strong>${escapeHtml(half.half_id)} · 通向 ${escapeHtml(half.outer_node)}</strong><span>${escapeHtml(half.edge)}</span><span>${escapeHtml(half.source_ids.join(" + "))}</span></div>`).join("");
     const pairs=result.pair_candidates.map(pair=>`<label class="source-option pair-option" data-pair="${pair.pair_id}"><input type="checkbox" name="node-pair" value="${pair.pair_id}" ${pair.recommended?"checked":""}><span><strong>${escapeHtml(pair.endpoints.join(" ↔ "))}</strong><br>${escapeHtml(pair.source_ids.join(" + "))}<br>转角 ${pair.angle_degrees}°${pair.same_source?" · 同源":" · 跨来源"}</span></label>`).join("");
     const unpaired=result.recommended_unpaired.length?`<p class="warning">推荐方案仍有未配对半边：${escapeHtml(result.recommended_unpaired.join(", "))}</p>`:"";
     showConfirmation("删除节点并重组连接", `<p>节点 ${escapeHtml(result.node)} · ${result.half_edges.length} 条关联半边</p><h3>关联半边</h3><div class="source-options">${halves||"<p>无关联边</p>"}</div><h3>选择半边配对</h3><div class="source-options">${pairs||"<p>没有可配对的半边</p>"}</div><p id="pair-stats" class="field-note"></p>${unpaired}<label class="source-option"><input id="discard-unpaired" type="checkbox"><span>明确删除所有未配对半边（可能改变拓扑）</span></label><p class="field-note">同一条半边可以参加多组连接。新边会从有序 SourceSegment 链重建，不会画直线；原始 SourceEdge 不会修改。</p>`, "执行人工重组", async () => {
       const pair_ids=[...document.querySelectorAll('input[name="node-pair"]:checked')].map(input=>input.value); const discard_unpaired=document.querySelector("#discard-unpaired").checked;
-      closeDetails(); try { const response=await post("/api/delete-node-confirm", {token,pair_ids,discard_unpaired}, true); setStatus(response.message); } catch(error) { setStatus(`删除失败：${error.message}`); }
-    });
+      closeDetails(); try { const response=await post("/api/delete-node-confirm", {node,pair_ids,discard_unpaired,expected_revision:result.revision}, true); setStatus(response.message); } catch(error) { setStatus(`删除失败：${error.message}`); }
+    },result.revision);
     const updatePairStats=()=>{const checked=[...document.querySelectorAll('input[name="node-pair"]:checked')];const used=new Set();checked.forEach(input=>{const pair=result.pair_candidates.find(item=>item.pair_id===input.value);used.add(pair.left);used.add(pair.right);});const missing=result.half_edges.filter(half=>!used.has(half.half_id)).map(half=>half.half_id);document.querySelector("#pair-stats").textContent=`已选择 ${checked.length} 组连接 · 已使用 ${used.size}/${result.half_edges.length} 条半边${missing.length?` · 未使用：${missing.join(", ")}`:" · 无未使用半边"}`;};
     document.querySelectorAll(".pair-option").forEach(label=>{label.onmouseenter=()=>{const pair=result.pair_candidates.find(item=>item.pair_id===label.dataset.pair);showGeometry(pair.geometry,"#db2777");};label.querySelector("input").onchange=updatePairStats;});updatePairStats();
   } catch(error) { setStatus(`无法删除：${error.message}`); }
 }
 
-async function previewSplit(token, latlng) {
-  const body={edge:token,longitude:latlng.lng,latitude:latlng.lat};
+async function previewSplit(edge, latlng) {
+  const body={edge,longitude:latlng.lng,latitude:latlng.lat,expected_revision:currentState.revision};
   try {
     const result=await post("/api/split-source-preview",body);
-    const choices=result.candidates.map((candidate,index)=>`<label class="source-option"><input type="radio" name="split-node" value="${escapeHtml(candidate.canonical_node_id)}" ${index===0?"checked":""}><span>OSM Node ${escapeHtml(candidate.canonical_node_id)} · 距离 ${candidate.distance_m.toFixed(2)} m</span></label>`).join("");
+    const choices=result.candidates.map((candidate,index)=>`<label class="source-option"><input type="radio" name="split-node" value="${index}" ${index===0?"checked":""}><span>OSM Node ${escapeHtml(candidate.id.value)} · 距离 ${candidate.distance_m.toFixed(2)} m</span></label>`).join("");
     const manual=result.candidates.length?"":`<label class="source-option"><input type="radio" name="split-node" value="" checked><span>没有合适 OSM Node，创建负数 ID 人工节点</span></label>`;
     showConfirmation("补充图分割点", `<p class="field-note">在当前派生边中加入一个拓扑节点，并把该边按原始 SourceEdge 曲线切成两段；原始曲线本身不会改变。</p><dl><dt>命中来源</dt><dd>${escapeHtml(result.source_id)}</dd></dl><div class="source-options">${choices}${manual}</div>`, "确认切分", async()=>{
-      const selected=document.querySelector('input[name="split-node"]:checked'); const request={...body,osm_node_id:selected.value===""?null:Number(selected.value)};
+      const selected=document.querySelector('input[name="split-node"]:checked'); const request={...body,osm_node_id:selected.value===""?null:result.candidates[Number(selected.value)].id,expected_revision:result.revision};
       closeDetails(); try { const response=await post("/api/split-source-confirm",request,true); setStatus(response.message); } catch(error){setStatus(`切分失败：${error.message}`);}
-    });
+    },result.revision);
   } catch(error){setStatus(`无法切分：${error.message}`);}
 }
 
-async function previewManualSnap(node, edge) {
+async function previewManualSnap(node, edge, expectedRevision) {
   try {
-    const result=await post("/api/manual-snap-preview",{node,edge});
+    const result=await post("/api/manual-snap-preview",{node,edge,expected_revision:expectedRevision});
     showGeometry(result.connector_geometry,"#db2777");
     showConfirmation("人工吸附预览",`<dl><dt>节点</dt><dd>${escapeHtml(result.node)}</dd><dt>目标边</dt><dd>${escapeHtml(result.edge)}</dd><dt>移动距离</dt><dd>${result.distance_m.toFixed(3)} m</dd><dt>目标来源</dt><dd>${escapeHtml(result.target_source_id)}</dd><dt>来源位置</dt><dd>${result.target_station_m.toFixed(3)} m</dd><dt>原始数据</dt><dd>SourceEdge 不会修改</dd></dl><p class="field-note">确认后会移动图节点、重建它原有的关联边，并在目标来源区间切分派生边。</p>`,"确认人工吸附",async()=>{
-      closeDetails();try{const response=await post("/api/manual-snap-confirm",{node,edge},true);firstNode=null;setStatus(response.message);}catch(error){setStatus(`人工吸附失败：${error.message}`);}
-    });
-  }catch(error){firstNode=null;setStatus(`无法人工吸附：${error.message}`);}
+      closeDetails();try{const response=await post("/api/manual-snap-confirm",{node,edge,expected_revision:result.revision},true);firstNode=null;firstNodeRevision=null;setStatus(response.message);}catch(error){setStatus(`人工吸附失败：${error.message}`);}
+    },result.revision);
+  }catch(error){firstNode=null;firstNodeRevision=null;setStatus(`无法人工吸附：${error.message}`);}
 }
 
 function nodeClicked(feature,event) {
   L.DomEvent.stopPropagation(event); const p=feature.properties;
   selectNode(feature);
-  if(mode==="delete") return previewNodeDeletion(p.token);
-  if(mode==="restore") { if(!firstNode){firstNode=p.token;event.target.setStyle({radius:9,color:"#7e22ce",weight:4});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(firstNode===p.token)return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.token); }
-  if(mode==="snap") { firstNode=p.token;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
-  if(mode==="merge") { if(!mergeNodeTokens.includes(p.token))mergeNodeTokens.push(p.token);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeTokens.length} 个待合并节点`); }
+  if(mode==="delete") return previewNodeDeletion(p.id);
+  if(mode==="restore") { if(!firstNode){firstNode=p.id;firstNodeRevision=currentState.revision;event.target.setStyle({radius:9,color:"#7e22ce",weight:4});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(nodeKey(firstNode)===nodeKey(p.id))return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.id,firstNodeRevision); }
+  if(mode==="snap") { firstNode=p.id;firstNodeRevision=currentState.revision;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
+  if(mode==="merge") { if(!mergeNodeIds.length)mergeSelectionRevision=currentState.revision;if(!mergeNodeIds.some(id=>nodeKey(id)===nodeKey(p.id)))mergeNodeIds.push(p.id);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeIds.length} 个待合并节点`); }
 }
-function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); selectEdge(feature); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.token); if(mode==="split")return previewSplit(p.token,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.token);} }
+function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); selectEdge(feature); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.id); if(mode==="split")return previewSplit(p.id,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.id,firstNodeRevision);} }
 
 function renderNodes() {
   if(nodeLayer) { layers.removeLayer(nodeLayer); map.removeLayer(nodeLayer); }
@@ -216,8 +224,8 @@ function renderEdges(data) {
   if(edgeGroup){layers.removeLayer(edgeGroup);map.removeLayer(edgeGroup);}
   const casing=L.geoJSON(data.edges,{pane:"edgeCasingPane",interactive:false,style:{color:"rgba(255,255,255,.8)",weight:5,opacity:.65}});
   edgeSearchIndex.clear();
-  edgeTokenIndex.clear();
-  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:splitValidation?feature.properties.validation_color:"#9a684d",weight:splitValidation?3.2:2.6,opacity:splitValidation?.9:.72}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:.95}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeTokenIndex.set(feature.properties.token,{feature,layer});}});
+  edgeIdentityIndex.clear();
+  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:splitValidation?feature.properties.validation_color:"#9a684d",weight:splitValidation?3.2:2.6,opacity:splitValidation?.9:.72}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:.95}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
   edgeGroup=L.layerGroup([casing,edgeLayer]).addTo(map); layers.addOverlay(edgeGroup,`派生边 (${data.edge_count})`);
 }
 function renderReferenceLayers(data) {
@@ -234,6 +242,8 @@ function showNodeReviewPosition(fit=true){const feature=nodeReviewSnapshot[nodeR
 function startNodeReview(){if(!nodeFeatures.length)return setStatus("当前图没有可检查节点");nodeReviewSnapshot=sortedNodeReviewSnapshot(nodeFeatures);nodeReviewIndex=0;showNodeReviewPosition(true);}
 function moveNodeReview(delta){if(nodeReviewIndex<0)return;const target=nodeReviewIndex+delta;if(target<0||target>=nodeReviewSnapshot.length)return;nodeReviewIndex=target;showNodeReviewPosition(true);}
 async function loadState(){const data=await readResponse(await fetch("/api/state"));const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||data.read_only||data.flight_mode))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;document.body.classList.toggle("read-only",data.read_only);document.body.classList.toggle("flight-mode",data.flight_mode);document.title=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";document.querySelector(".brand-copy strong").textContent=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected)selectNode(selected);else closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边 · ${data.flight_count} 航班`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.read_only)setStatus("只读可视化 · 点击节点或派生边查看详情");if(data.flight_mode)setStatus("航班模式 · 选择最多 5 条航班进行比较");if(!fitted&&nodeLayer.getLayers().length){map.fitBounds(nodeLayer.getBounds(),{padding:[24,24]});fitted=true;}setTimeout(()=>map.invalidateSize(),0);}
+const loadStateCore=loadState;
+loadState=async function(){await loadStateCore();const staleOperation=activeOperationRevision!==null&&activeOperationRevision!==currentState.revision;const staleSelection=(firstNodeRevision!==null&&firstNodeRevision!==currentState.revision)||(mergeSelectionRevision!==null&&mergeSelectionRevision!==currentState.revision);if(staleOperation||staleSelection){closeDetails();firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;setStatus("图已变更，旧操作已失效，请重新检查");}};
 
 function renderTopologySummary(topology) {
   const metrics = [
@@ -245,17 +255,17 @@ function renderTopologySummary(topology) {
   ];
   document.querySelector("#topology-summary").innerHTML = metrics.map(([value,label,alert,action])=>`<button class="metric actionable ${alert?"alert":""}" data-topology-action="${action}" ${value?"":"disabled"}><strong>${value}</strong><span>${label}</span></button>`).join("");
   const componentRows=topology.components.map(item=>`<button class="topology-item" data-component="${item.index}"><span>分量 ${item.index}</span><small>${item.size} 个节点</small></button>`).join("");
-  const parallelRows=topology.parallel_groups.map((item,index)=>`<button class="topology-item" data-parallel="${index}"><span>${escapeHtml(item.u)} ↔ ${escapeHtml(item.v)}</span><small>${item.edge_tokens.length} 条边</small></button>`).join("");
+  const parallelRows=topology.parallel_groups.map((item,index)=>`<button class="topology-item" data-parallel="${index}"><span>${escapeHtml(item.u)} ↔ ${escapeHtml(item.v)}</span><small>${item.edge_ids.length} 条边</small></button>`).join("");
   document.querySelector("#topology-details").innerHTML=`<section class="topology-section"><h3>连通分量</h3><div class="topology-list">${componentRows||'<p class="topology-empty">无节点</p>'}</div></section><section class="topology-section"><h3>平行边</h3><div class="topology-list">${parallelRows||'<p class="topology-empty">未发现平行边</p>'}</div></section>`;
   const showNodes=(features,label)=>{clearSelection();if(!features.length)return setStatus(`${label}中没有节点`);const markers=features.map(feature=>{const [x,y]=feature.geometry.coordinates;return L.circleMarker([y,x],{pane:"selectionPane",radius:7,color:"#fff",fillColor:"#a34f6a",fillOpacity:.9,weight:2,interactive:false});});selectionLayer=L.layerGroup(markers).addTo(map);map.fitBounds(L.featureGroup(markers).getBounds(),{padding:[80,80],maxZoom:22});setStatus(`${label} · ${features.length} 个节点`);};
-  const showComponent=index=>{const item=topology.components.find(component=>component.index===index);if(item)showNodes(nodeFeatures.filter(feature=>item.node_tokens.includes(feature.properties.token)),`连通分量 ${index}`);};
-  const showParallel=index=>{const item=topology.parallel_groups[index];if(!item)return;clearSelection();clearEndpointHighlight();const features=item.edge_tokens.map(token=>edgeTokenIndex.get(token)?.feature).filter(Boolean);selectionLayer=L.geoJSON({type:"FeatureCollection",features},{pane:"selectionEdgePane",interactive:false,style:{color:"#765f7f",weight:8,opacity:.9}}).addTo(map);map.fitBounds(selectionLayer.getBounds(),{padding:[80,80],maxZoom:24});setStatus(`平行边 ${item.u} ↔ ${item.v} · ${features.length} 条`);};
+  const showComponent=index=>{const item=topology.components.find(component=>component.index===index);if(item){const ids=new Set(item.node_ids.map(nodeKey));showNodes(nodeFeatures.filter(feature=>ids.has(nodeKey(feature))),`连通分量 ${index}`);}};
+  const showParallel=index=>{const item=topology.parallel_groups[index];if(!item)return;clearSelection();clearEndpointHighlight();const features=item.edge_ids.map(id=>edgeIdentityIndex.get(edgeKey(id))?.feature).filter(Boolean);selectionLayer=L.geoJSON({type:"FeatureCollection",features},{pane:"selectionEdgePane",interactive:false,style:{color:"#765f7f",weight:8,opacity:.9}}).addTo(map);map.fitBounds(selectionLayer.getBounds(),{padding:[80,80],maxZoom:24});setStatus(`平行边 ${item.u} ↔ ${item.v} · ${features.length} 条`);};
   document.querySelectorAll("[data-component]").forEach(button=>button.onclick=()=>showComponent(Number(button.dataset.component)));
   document.querySelectorAll("[data-parallel]").forEach(button=>button.onclick=()=>showParallel(Number(button.dataset.parallel)));
   document.querySelectorAll("[data-topology-action]").forEach(button=>button.onclick=()=>{const action=button.dataset.topologyAction;if(action==="component-1")showComponent(1);else if(action==="components")showNodes(nodeFeatures,"全部连通分量");else if(action==="isolated")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===0),"度为 0 的节点");else if(action==="dangling")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===1),"度为 1 的节点");else if(action==="parallel"&&topology.parallel_groups.length)showParallel(0);});
 }
 
-document.querySelectorAll(".tool").forEach(button=>button.onclick=()=>{document.querySelectorAll(".tool").forEach(item=>item.classList.remove("active"));button.classList.add("active");mode=button.dataset.mode;firstNode=null;mergeNodeTokens=[];closeDetails();setStatus(messages[mode]);if(mode==="merge")openMergeCandidates();});
+document.querySelectorAll(".tool").forEach(button=>button.onclick=()=>{document.querySelectorAll(".tool").forEach(item=>item.classList.remove("active"));button.classList.add("active");mode=button.dataset.mode;firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;closeDetails();setStatus(messages[mode]);if(mode==="merge")openMergeCandidates();});
 document.querySelector("#close-details").onclick=closeDetails;
 document.querySelector("#search-toggle").onclick=event=>{document.querySelector("#search-panel").classList.toggle("hidden");event.currentTarget.classList.toggle("active");};
 document.querySelector("#topology-toggle").onclick=event=>{document.querySelector("#topology-panel").classList.toggle("hidden");event.currentTarget.classList.toggle("active");};
@@ -267,8 +277,9 @@ document.querySelector("#node-review-next").onclick=()=>moveNodeReview(1);
 document.querySelector("#node-review-end").onclick=()=>endNodeReview("逐点检查已结束；当前节点保持选中");
 document.querySelector("#search-node-button").onclick=()=>{const matches=nodeSearchIndex.get(normalizeId(document.querySelector("#search-node").value))||[];if(!matches.length)return setStatus("未找到该节点");if(matches.length>1)return setStatus("节点 ID 文本存在多种类型，请在地图上选择目标节点");selectNode(matches[0],true);setStatus(`已选中节点 ${matches[0].properties.node_id}`);};
 document.querySelector("#search-edge-button").onclick=()=>{const entries=edgeSearchIndex.get(edgePairKey(document.querySelector("#search-edge-u").value,document.querySelector("#search-edge-v").value));if(!entries?.length)return setStatus("未找到该组端点的派生边");selectEdge(entries[0].feature,true);setStatus(`已选中派生边；该组端点共有 ${entries.length} 条边`);};
-document.querySelector("#save").onclick=async()=>{try{const response=await post("/api/save",{},true);setStatus(response.message);}catch(error){setStatus(`保存失败：${error.message}`);}};
-document.querySelector("#undo").onclick=async()=>{try{const response=await post("/api/undo",{},true);setStatus(response.message);}catch(error){setStatus(`撤销失败：${error.message}`);}};
-document.querySelector("#finish").onclick=async()=>{const result=await readResponse(await fetch("/api/finish",{method:"POST"}));setStatus(result.message);};
+document.querySelector("#save").onclick=async()=>{try{const response=await post("/api/save",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`保存失败：${error.message}`);}};
+document.querySelector("#undo").onclick=async()=>{try{const response=await post("/api/undo",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`撤销失败：${error.message}`);}};
+document.querySelector("#finish").onclick=async()=>{try{const result=await post("/api/finish",{expected_revision:currentState.revision});setStatus(result.message);}catch(error){setStatus(`完成失败：${error.message}`);}};
+document.addEventListener("pointerdown",()=>{conflictNotice=false;},{capture:true});
 document.addEventListener("keydown",event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="z"){event.preventDefault();if(!document.querySelector("#undo").disabled)document.querySelector("#undo").click();}});
 loadState().catch(error=>setStatus(`载入失败：${error.message}`));

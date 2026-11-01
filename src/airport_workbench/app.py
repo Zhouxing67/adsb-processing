@@ -14,7 +14,7 @@ import networkx as nx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 
 from adsb import Flight
@@ -23,13 +23,18 @@ from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
     _json_value,
     load_graph,
-    save_graph,
-    validate_edge_endpoints,
-    validate_edge_sources,
 )
 
-from .editor import EditorSession
+from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightWorkbench
+from .identifiers import (
+    EdgeIdentity,
+    EncodedValue,
+    decode_edge,
+    decode_value,
+    encode_edge,
+    encode_value,
+)
 from .serializers import serialize_flights, serialize_paths
 
 if TYPE_CHECKING:
@@ -68,43 +73,51 @@ def _edge_colors(graph: Any) -> dict[tuple[Any, Any, Any], str]:
     return result
 
 
-class Token(BaseModel):
-    token: str
+class VersionedRequest(BaseModel):
+    expected_revision: StrictInt
 
 
-class RestoreRequest(BaseModel):
-    start: str
-    end: str
+class RestoreRequest(VersionedRequest):
+    start: EncodedValue
+    end: EncodedValue
     candidate_id: str | None = None
 
 
-class MergeNodesRequest(BaseModel):
-    node_ids: list[Any] = Field(default_factory=list)
-    node_tokens: list[str] = Field(default_factory=list)
-    canonical_node_id: Any | None = None
+class MergeNodesRequest(VersionedRequest):
+    node_ids: list[EncodedValue] = Field(default_factory=list)
+    canonical_node_id: EncodedValue | None = None
 
 
-class UpdatedAttributes(BaseModel):
-    token: str
+class UpdatedNodeAttributes(VersionedRequest):
+    node: EncodedValue
     attributes: dict[str, Any]
 
 
-class NodeDeletionRequest(BaseModel):
-    token: str
+class UpdatedEdgeAttributes(VersionedRequest):
+    edge: EdgeIdentity
+    attributes: dict[str, Any]
+
+
+class EdgeRequest(VersionedRequest):
+    edge: EdgeIdentity
+
+
+class NodeDeletionRequest(VersionedRequest):
+    node: EncodedValue
     pair_ids: list[str] = Field(default_factory=list)
     discard_unpaired: bool = False
 
 
-class SourceSplitRequest(BaseModel):
-    edge: str
+class SourceSplitRequest(VersionedRequest):
+    edge: EdgeIdentity
     longitude: float
     latitude: float
-    osm_node_id: Any | None = None
+    osm_node_id: EncodedValue | None = None
 
 
-class ManualSnapRequest(BaseModel):
-    node: str
-    edge: str
+class ManualSnapRequest(VersionedRequest):
+    node: EncodedValue
+    edge: EdgeIdentity
 
 
 class MatchFlightsRequest(BaseModel):
@@ -112,7 +125,8 @@ class MatchFlightsRequest(BaseModel):
     force: bool = False
 
 
-class BusinessNodeAnnotations(BaseModel):
+class BusinessNodeAnnotations(VersionedRequest):
+    node: EncodedValue
     parking_position: bool
     runway_access: bool
 
@@ -127,8 +141,6 @@ class BrowserState:
         self.session = session
         self.flights = tuple(flights)
         self.paths = tuple(paths)
-        self.nodes: dict[str, Any] = {}
-        self.edges: dict[str, tuple[Any, Any, Any]] = {}
 
     def state(
         self, can_finish: bool, save_path: FilePath, *, read_only: bool = False
@@ -152,12 +164,8 @@ class BrowserState:
             for v, keyed_edges in neighbours.items()
             if repr(u) <= repr(v) and len(keyed_edges) > 1
         ]
-        self.nodes = {}
-        self.edges = {}
         node_features = []
-        for index, (node, data) in enumerate(graph.nodes(data=True)):
-            token = f"n{index}"
-            self.nodes[token] = node
+        for node, data in graph.nodes(data=True):
             longitude, latitude = data["pos"][:2]
             degree = graph.degree(node)
             color = (
@@ -174,7 +182,7 @@ class BrowserState:
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
                     "properties": {
-                        "token": token,
+                        "id": encode_value(node),
                         "node_id": repr(node),
                         "longitude": longitude,
                         "latitude": latitude,
@@ -211,7 +219,6 @@ class BrowserState:
                                 (),
                             )
                         ),
-                        "node_sort_key": [type(node).__qualname__, repr(node)],
                         "color": color,
                         "radius": 5 if degree == 0 else 4 if degree == 1 else 2.75,
                     },
@@ -220,9 +227,7 @@ class BrowserState:
 
         edge_features = []
         edge_colors = _edge_colors(graph)
-        for index, (u, v, key, data) in enumerate(graph.edges(keys=True, data=True)):
-            token = f"e{index}"
-            self.edges[token] = (u, v, key)
+        for u, v, key, data in graph.edges(keys=True, data=True):
             geometry = data.get("geometry") or LineString(
                 [graph.nodes[u]["pos"][:2], graph.nodes[v]["pos"][:2]]
             )
@@ -231,12 +236,12 @@ class BrowserState:
                     "type": "Feature",
                     "geometry": mapping(geometry),
                     "properties": {
-                        "token": token,
+                        "id": encode_edge(u, v, key),
                         "edge_id": repr((u, v, key)),
                         "u": repr(u),
                         "v": repr(v),
-                        "u_node_sort_key": [type(u).__qualname__, repr(u)],
-                        "v_node_sort_key": [type(v).__qualname__, repr(v)],
+                        "u_id": encode_value(u),
+                        "v_id": encode_value(v),
                         "key": repr(key),
                         "validation_color": edge_colors[(u, v, key)],
                         "geometry_length_m": round(self.session.airport_graph.length(geometry), 2),
@@ -283,9 +288,7 @@ class BrowserState:
                     {
                         "index": index,
                         "size": len(members),
-                        "node_tokens": [
-                            token for token, node in self.nodes.items() if node in members
-                        ],
+                        "node_ids": [encode_value(node) for node in members],
                     }
                     for index, members in enumerate(components, start=1)
                 ],
@@ -293,11 +296,10 @@ class BrowserState:
                     {
                         "u": repr(u),
                         "v": repr(v),
-                        "edge_tokens": [
-                            token
-                            for token, edge in self.edges.items()
-                            if edge[2] in keys
-                            and ({edge[0], edge[1]} == {u, v})
+                        "edge_ids": [
+                            encode_edge(eu, ev, edge_key)
+                            for eu, ev, edge_key in graph.edges(keys=True)
+                            if edge_key in keys and ({eu, ev} == {u, v})
                         ],
                     }
                     for u, v, keys in parallel_groups
@@ -310,23 +312,6 @@ class BrowserState:
             "topology_revision": getattr(self.session, "topology_revision", 0),
             "save_path": str(save_path),
         }
-
-    def node(self, token: str) -> Any:
-        if token not in self.nodes:
-            raise HTTPException(409, "图已更新，请重试")
-        return self.nodes[token]
-
-    def edge(self, token: str) -> tuple[Any, Any, Any]:
-        if token not in self.edges:
-            raise HTTPException(409, "图已更新，请重试")
-        return self.edges[token]
-
-    def node_token(self, node: Any) -> str:
-        for token, value in self.nodes.items():
-            if value == node:
-                return token
-        raise HTTPException(409, "图已更新，请重试")
-
 
 def create_app(
     session: EditorSession,
@@ -358,6 +343,28 @@ def create_app(
     )
     flight_mode = bool(flights)
     app = FastAPI(title="Airport Graph Viewer" if read_only else "Airport Workbench")
+
+    @app.exception_handler(RevisionConflict)
+    async def revision_conflict_handler(_request: Request, error: RevisionConflict) -> JSONResponse:
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": {
+                    "code": "revision_conflict",
+                    "message": str(error),
+                    "current_revision": error.current_revision,
+                }
+            },
+        )
+
+    @app.exception_handler(GraphObjectNotFound)
+    async def object_not_found_handler(
+        _request: Request, error: GraphObjectNotFound
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=404,
+            content={"detail": {"code": "object_not_found", "message": str(error)}},
+        )
 
     @app.middleware("http")
     async def enforce_read_only(request: Request, call_next: Callable[..., Any]) -> Any:
@@ -482,12 +489,14 @@ def create_app(
 
     @app.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
-        start = browser.node(item.start)
-        end = browser.node(item.end)
+        start, end = decode_value(item.start), decode_value(item.end)
         if start == end:
             raise HTTPException(400, "起点和终点不能相同")
-        candidates = session.connection_candidates(start, end)
+        result = session.connection_candidates(
+            start, end, expected_revision=item.expected_revision
+        )
         return {
+            "revision": result.revision,
             "current_endpoints": [repr(start), repr(end)],
             "candidates": [
                 {
@@ -498,7 +507,7 @@ def create_app(
                     },
                     "geometry": mapping(candidate["geometry"]),
                 }
-                for candidate in candidates
+                for candidate in result.value
             ],
         }
 
@@ -506,134 +515,192 @@ def create_app(
     def restore_confirm(item: RestoreRequest) -> dict[str, Any]:
         if item.candidate_id is None:
             raise HTTPException(400, "必须选择一个来源路径")
-        start, end = browser.node(item.start), browser.node(item.end)
+        start, end = decode_value(item.start), decode_value(item.end)
         try:
-            key = session.restore_source_connection(start, end, item.candidate_id)
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        return {"message": f"已从原始来源路径恢复派生边，key={key!r}"}
-
-    @app.get("/api/merge-candidates")
-    def merge_candidates() -> dict[str, Any]:
-        return {"candidates": _json_value(session.merge_candidates())}
-
-    @app.post("/api/merge-nodes-preview")
-    def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
-        node_ids = item.node_ids or [browser.node(token) for token in item.node_tokens]
-        try:
-            return _json_value(
-                session.merge_nodes_preview(node_ids, item.canonical_node_id)
+            result = session.restore_source_connection(
+                start,
+                end,
+                item.candidate_id,
+                expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        return {
+            "message": f"已从原始来源路径恢复派生边，key={result.value!r}",
+            "revision": result.revision,
+        }
+
+    @app.get("/api/merge-candidates")
+    def merge_candidates() -> dict[str, Any]:
+        with session.lock:
+            candidates = session.merge_candidates()
+            payload = _json_value(candidates)
+            for raw, encoded in zip(candidates, payload):
+                encoded["node_ids"] = [encode_value(node) for node in raw["node_ids"]]
+                for raw_node, node in zip(raw["nodes"], encoded["nodes"]):
+                    node["id"] = encode_value(raw_node["node_id"])
+            return {
+                "revision": session.revision,
+                "candidates": payload,
+            }
+
+    @app.post("/api/merge-nodes-preview")
+    def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
+        node_ids = [decode_value(node) for node in item.node_ids]
+        canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
+        try:
+            result = session.merge_nodes_preview(
+                node_ids,
+                canonical,
+                expected_revision=item.expected_revision,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        value = _json_value(result.value)
+        value["revision"] = result.revision
+        value["node_ids"] = [encode_value(node) for node in result.value["node_ids"]]
+        value["canonical_node_id"] = encode_value(result.value["canonical_node_id"])
+        for encoded, node in zip(value["node_ids"], value["nodes"]):
+            node["id"] = encoded
+        return value
 
     @app.post("/api/merge-nodes-confirm")
     def merge_nodes_confirm(item: MergeNodesRequest) -> dict[str, Any]:
-        node_ids = item.node_ids or [browser.node(token) for token in item.node_tokens]
+        node_ids = [decode_value(node) for node in item.node_ids]
+        canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
         try:
-            canonical = session.merge_nodes(node_ids, item.canonical_node_id)
+            result = session.merge_nodes(
+                node_ids, canonical, expected_revision=item.expected_revision
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": f"已合并节点，规范节点为 {canonical!r}"}
-
-    @app.post("/api/delete-edge-preview")
-    def delete_edge_preview(item: Token) -> dict[str, Any]:
-        edge = browser.edge(item.token)
-        data = session.graph.edges[edge]
-        segments = edge_source_segments(data)
         return {
-            "edge": repr(edge),
-            "endpoints": [repr(edge[0]), repr(edge[1])],
-            "source_id": data.get("source_id"),
-            "source_interval": [data.get("source_start_m"), data.get("source_end_m")],
-            "source_segments": [
-                {
-                    "source_id": segment.source_id,
-                    "source_start_m": segment.source_start_m,
-                    "source_end_m": segment.source_end_m,
-                    "reversed": segment.reversed,
-                }
-                for segment in segments
-            ],
-            "source_preserved": True,
+            "message": f"已合并节点，规范节点为 {result.value!r}",
+            "revision": result.revision,
         }
 
+    @app.post("/api/delete-edge-preview")
+    def delete_edge_preview(item: EdgeRequest) -> dict[str, Any]:
+        result = session.derived_edge_removal_preview(
+            *decode_edge(item.edge), expected_revision=item.expected_revision
+        )
+        return {**result.value, "revision": result.revision}
+
     @app.post("/api/delete-edge-confirm")
-    def delete_edge_confirm(item: Token) -> dict[str, Any]:
-        edge = browser.edge(item.token)
-        session.remove_derived_edge(*edge)
-        return {"message": f"已删除派生边 {edge!r}，SourceEdge 保持不变"}
+    def delete_edge_confirm(item: EdgeRequest) -> dict[str, Any]:
+        edge = decode_edge(item.edge)
+        result = session.remove_derived_edge(
+            *edge, expected_revision=item.expected_revision
+        )
+        return {
+            "message": f"已删除派生边 {edge!r}，SourceEdge 保持不变",
+            "revision": result.revision,
+        }
 
     @app.post("/api/delete-node-preview")
-    def delete_node_preview(item: Token) -> dict[str, Any]:
-        return session.node_deletion_plan(browser.node(item.token))
+    def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
+        result = session.node_deletion_plan(
+            decode_value(item.node), expected_revision=item.expected_revision
+        )
+        return {**result.value, "revision": result.revision}
 
     @app.post("/api/delete-node-confirm")
     def delete_node_confirm(item: NodeDeletionRequest) -> dict[str, Any]:
-        node = browser.node(item.token)
+        node = decode_value(item.node)
         try:
-            session.remove_node_with_pairs(node, item.pair_ids, item.discard_unpaired)
+            result = session.remove_node_with_pairs(
+                node,
+                item.pair_ids,
+                item.discard_unpaired,
+                expected_revision=item.expected_revision,
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": f"已按所选来源策略删除节点 {node!r}"}
+        return {
+            "message": f"已按所选来源策略删除节点 {node!r}",
+            "revision": result.revision,
+        }
 
     @app.post("/api/split-source-preview")
     def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
         try:
-            return session.source_split_preview(
-                *browser.edge(item.edge), item.longitude, item.latitude
+            result = session.source_split_preview(
+                *decode_edge(item.edge),
+                item.longitude,
+                item.latitude,
+                expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        value = _json_value(result.value)
+        value["revision"] = result.revision
+        for candidate in value["candidates"]:
+            candidate["id"] = encode_value(candidate.pop("canonical_node_id"))
+        if value.get("recommended_node") is not None:
+            value["recommended_node"] = encode_value(value["recommended_node"])
+        return value
 
     @app.post("/api/split-source-confirm")
     def split_source_confirm(item: SourceSplitRequest) -> dict[str, Any]:
         try:
             node = session.split_source_edge(
-                *browser.edge(item.edge),
+                *decode_edge(item.edge),
                 item.longitude,
                 item.latitude,
-                item.osm_node_id,
+                decode_value(item.osm_node_id) if item.osm_node_id else None,
+                expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": f"已在 SourceEdge 上使用节点 {node!r} 切分"}
+        return {
+            "message": f"已在 SourceEdge 上使用节点 {node.value!r} 切分",
+            "revision": node.revision,
+        }
 
     @app.post("/api/manual-snap-preview")
     def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
-        node = browser.node(item.node)
-        edge = browser.edge(item.edge)
+        node = decode_value(item.node)
+        edge = decode_edge(item.edge)
         try:
-            return _json_value(session.manual_snap_preview(node, *edge))
+            result = session.manual_snap_preview(
+                node, *edge, expected_revision=item.expected_revision
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+        return {**_json_value(result.value), "revision": result.revision}
 
     @app.post("/api/manual-snap-confirm")
     def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
-        node = browser.node(item.node)
-        edge = browser.edge(item.edge)
+        node = decode_value(item.node)
+        edge = decode_edge(item.edge)
         try:
-            session.manual_snap_node_to_edge(node, *edge)
+            result = session.manual_snap_node_to_edge(
+                node, *edge, expected_revision=item.expected_revision
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": f"已将节点 {node!r} 人工接入目标边"}
+        return {
+            "message": f"已将节点 {node!r} 人工接入目标边",
+            "revision": result.revision,
+        }
 
     @app.post("/api/update-node")
-    def update_node(item: UpdatedAttributes) -> dict[str, Any]:
-        node = browser.node(item.token)
-        session.update_node_attributes(node, item.attributes)
-        return {"message": f"已更新节点 {node!r} 的属性"}
+    def update_node(item: UpdatedNodeAttributes) -> dict[str, Any]:
+        node = decode_value(item.node)
+        result = session.update_node_attributes(
+            node, item.attributes, expected_revision=item.expected_revision
+        )
+        return {"message": f"已更新节点 {node!r} 的属性", "revision": result.revision}
 
-    @app.post("/api/nodes/{token}/business-annotations")
-    def update_business_node_annotations(
-        token: str, item: BusinessNodeAnnotations
-    ) -> dict[str, Any]:
-        node = browser.node(token)
+    @app.post("/api/nodes/business-annotations")
+    def update_business_node_annotations(item: BusinessNodeAnnotations) -> dict[str, Any]:
+        node = decode_value(item.node)
         try:
-            session.set_business_node_annotations(
+            result = session.set_business_node_annotations(
                 node,
                 parking_position=item.parking_position,
                 runway_access=item.runway_access,
+                expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -641,45 +708,49 @@ def create_app(
             "message": f"已更新节点 {node!r} 的业务标注",
             "parking_position": item.parking_position,
             "runway_access": item.runway_access,
+            "revision": result.revision,
         }
 
     @app.post("/api/update-edge")
-    def update_edge(item: UpdatedAttributes) -> dict[str, Any]:
-        edge = browser.edge(item.token)
-        session.update_edge_attributes(*edge, item.attributes)
-        return {"message": f"已更新边 {edge!r} 的属性"}
+    def update_edge(item: UpdatedEdgeAttributes) -> dict[str, Any]:
+        edge = decode_edge(item.edge)
+        result = session.update_edge_attributes(
+            *edge, item.attributes, expected_revision=item.expected_revision
+        )
+        return {"message": f"已更新边 {edge!r} 的属性", "revision": result.revision}
 
     @app.post("/api/save")
-    def save() -> dict[str, Any]:
-        with session.lock:
-            validate_edge_endpoints(session.airport_graph)
-            validate_edge_sources(session.airport_graph)
-            output = save_graph(session.airport_graph, save_path)
+    def save(item: VersionedRequest) -> dict[str, Any]:
+        result = session.save(save_path, expected_revision=item.expected_revision)
+        output = result.value
         return {
             "message": (
                 f"已保存 {output} · {session.graph.number_of_nodes()} 节点 · "
                 f"{session.graph.number_of_edges()} 边"
-            )
+            ),
+            "revision": result.revision,
         }
 
     @app.post("/api/undo")
-    def undo() -> dict[str, Any]:
+    def undo(item: VersionedRequest) -> dict[str, Any]:
         try:
-            session.undo()
+            result = session.undo(expected_revision=item.expected_revision)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": "已撤销上一步操作"}
+        return {"message": "已撤销上一步操作", "revision": result.revision}
 
     @app.post("/api/finish")
-    def finish() -> dict[str, Any]:
+    def finish(item: VersionedRequest) -> dict[str, Any]:
         if on_finish is None:
             raise HTTPException(400, "当前为独立编辑模式")
-        with session.lock:
-            validate_edge_endpoints(session.airport_graph)
-            validate_edge_sources(session.airport_graph)
-            output = save_graph(session.airport_graph, save_path)
-        on_finish()
-        return {"message": f"已保存 {output}，编辑完成，正在返回 AirportGraph"}
+        result = session.finish(
+            save_path, on_finish, expected_revision=item.expected_revision
+        )
+        output = result.value
+        return {
+            "message": f"已保存 {output}，编辑完成，正在返回 AirportGraph",
+            "revision": result.revision,
+        }
 
     return app
 

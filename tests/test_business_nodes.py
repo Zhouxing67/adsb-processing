@@ -150,24 +150,24 @@ def test_manual_annotations_are_atomic_undoable_and_deleted_with_node() -> None:
     session = EditorSession(AirportGraph(graph, PROJECTION))
 
     session.set_business_node_annotations(
-        "node", parking_position=True, runway_access=True
+        "node", parking_position=True, runway_access=True, expected_revision=0
     )
     assert session.airport_graph.parking_position_nodes == {"node"}
     assert session.airport_graph.runway_access_nodes == {"node"}
     assert session.topology_revision == 0
 
-    session.undo()
+    session.undo(expected_revision=1)
     assert session.airport_graph.parking_position_nodes == set()
     assert session.airport_graph.runway_access_nodes == set()
     assert session.topology_revision == 0
 
     session.set_business_node_annotations(
-        "node", parking_position=True, runway_access=False
+        "node", parking_position=True, runway_access=False, expected_revision=2
     )
-    session.delete_node("node")
+    session.delete_node("node", expected_revision=3)
     assert session.airport_graph.parking_position_nodes == set()
     assert session.topology_revision == 1
-    session.undo()
+    session.undo(expected_revision=4)
     assert "node" in session.airport_graph.parking_position_nodes
     assert session.topology_revision == 2
 
@@ -179,8 +179,13 @@ def test_read_only_workbench_rejects_business_annotation_updates() -> None:
 
     with TestClient(app) as client:
         response = client.post(
-            "/api/nodes/n0/business-annotations",
-            json={"parking_position": True, "runway_access": False},
+            "/api/nodes/business-annotations",
+            json={
+                "node": {"type": "str", "value": "node"},
+                "parking_position": True,
+                "runway_access": False,
+                "expected_revision": 0,
+            },
         )
 
     assert response.status_code == 405
@@ -193,13 +198,18 @@ def test_workbench_annotation_endpoint_updates_state_and_undoes() -> None:
 
     with TestClient(app) as client:
         state = client.get("/api/state").json()
-        token = state["nodes"]["features"][0]["properties"]["token"]
+        node_id = state["nodes"]["features"][0]["properties"]["id"]
         response = client.post(
-            f"/api/nodes/{token}/business-annotations",
-            json={"parking_position": True, "runway_access": True},
+            "/api/nodes/business-annotations",
+            json={
+                "node": node_id,
+                "parking_position": True,
+                "runway_access": True,
+                "expected_revision": state["revision"],
+            },
         )
         updated = client.get("/api/state").json()
-        client.post("/api/undo")
+        client.post("/api/undo", json={"expected_revision": updated["revision"]})
         undone = client.get("/api/state").json()
 
     assert response.status_code == 200
