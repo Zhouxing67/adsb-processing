@@ -9,6 +9,7 @@ from typing import Any, Hashable, Mapping
 
 import networkx as nx
 from pyproj import Proj, Transformer
+from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
@@ -37,7 +38,7 @@ class SourceEdge:
     """An immutable complete OSM way or explicitly created manual source."""
 
     source_id: str
-    geometry: BaseGeometry
+    geometry: LineString
     source_type: str
     osm_way_id: Any = None
     osm_node_ids: tuple[Hashable, ...] = ()
@@ -94,46 +95,8 @@ def edge_source_segments(data: Mapping[str, Any]) -> tuple[SourceSegment, ...]:
 
 @dataclass(frozen=True, slots=True)
 class GraphMetadata:
-    airport: str = "ZBAA"
+    airport: str
     build_issues: tuple[str, ...] = ()
-
-
-@dataclass(frozen=True, slots=True)
-class NodeMergeGroup:
-    """One explicit decision that several graph nodes are one topology node."""
-
-    canonical_node_id: Hashable
-    member_node_ids: tuple[Hashable, ...]
-    original_positions: Mapping[Hashable, tuple[float, float]]
-    merge_type: str = "manual"
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "member_node_ids", tuple(self.member_node_ids))
-        object.__setattr__(
-            self,
-            "original_positions",
-            MappingProxyType(
-                {node: tuple(position[:2]) for node, position in self.original_positions.items()}
-            ),
-        )
-
-
-@dataclass(frozen=True, slots=True)
-class NodeSnapRecord:
-    """One explicit manual decision to move a graph node onto a source edge."""
-
-    node_id: Hashable
-    original_position: tuple[float, float]
-    snapped_position: tuple[float, float]
-    target_source_id: str
-    target_station_m: float
-    distance_m: float
-
-    def __post_init__(self) -> None:
-        object.__setattr__(self, "original_position", tuple(self.original_position[:2]))
-        object.__setattr__(self, "snapped_position", tuple(self.snapped_position[:2]))
-        object.__setattr__(self, "target_station_m", float(self.target_station_m))
-        object.__setattr__(self, "distance_m", float(self.distance_m))
 
 
 class AirportGraph:
@@ -149,8 +112,6 @@ class AirportGraph:
         source_nodes: Mapping[Hashable, SourceNode] | None = None,
         source_edges: Mapping[str, SourceEdge] | None = None,
         node_aliases: Mapping[Hashable, Hashable] | None = None,
-        node_merge_groups: Mapping[Hashable, NodeMergeGroup] | None = None,
-        node_snap_records: list[NodeSnapRecord] | tuple[NodeSnapRecord, ...] | None = None,
         parking_position_nodes: set[Hashable] | None = None,
         runway_access_nodes: set[Hashable] | None = None,
         metadata: GraphMetadata | None = None,
@@ -162,11 +123,9 @@ class AirportGraph:
         self.source_nodes = dict(source_nodes or {})
         self.source_edges = dict(source_edges or {})
         self.node_aliases = dict(node_aliases or {})
-        self.node_merge_groups = dict(node_merge_groups or {})
-        self.node_snap_records = list(node_snap_records or ())
         self.parking_position_nodes = set(parking_position_nodes or ())
         self.runway_access_nodes = set(runway_access_nodes or ())
-        self.metadata = metadata or GraphMetadata()
+        self.metadata = metadata
         missing_business_nodes = (
             self.parking_position_nodes | self.runway_access_nodes
         ).difference(self.graph.nodes)
@@ -216,8 +175,6 @@ class AirportGraph:
             source_nodes=self.source_nodes,
             source_edges=self.source_edges,
             node_aliases=self.node_aliases,
-            node_merge_groups=self.node_merge_groups,
-            node_snap_records=self.node_snap_records,
             parking_position_nodes=self.parking_position_nodes,
             runway_access_nodes=self.runway_access_nodes,
             metadata=self.metadata,

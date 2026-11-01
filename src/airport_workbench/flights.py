@@ -468,6 +468,3 @@ class FlightWorkbench:
     def _display_time(self, value: str) -> str:
         return pd.Timestamp(value).tz_convert(self.display_timezone).isoformat()
 
-
-def config_fingerprint(config: MatchConfig) -> str:
-    return hashlib.sha256(json.dumps(asdict(config), sort_keys=True).encode()).hexdigest()

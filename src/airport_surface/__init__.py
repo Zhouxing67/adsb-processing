@@ -17,8 +17,6 @@ from .graph import (
 from .models import (
     AirportGraph,
     GraphMetadata,
-    NodeMergeGroup,
-    NodeSnapRecord,
     SourceEdge,
     SourceNode,
     SourceSegment,
@@ -45,8 +43,6 @@ __all__ = [
     "AirportGraph",
     "DEFAULT_GRAPH_PATH",
     "GraphMetadata",
-    "NodeMergeGroup",
-    "NodeSnapRecord",
     "SourceEdge",
     "SourceNode",
     "SourceSegment",

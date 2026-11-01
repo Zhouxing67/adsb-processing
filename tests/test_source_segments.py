@@ -247,7 +247,6 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     assert 6 not in session.graph
     assert session.graph.degree(2) == 4
     assert session.airport_graph.node_aliases[6] == 2
-    assert session.airport_graph.node_merge_groups[2].member_node_ids == (2, 6)
     assert session.airport_graph.parking_position_nodes == {2}
     assert session.airport_graph.runway_access_nodes == {2}
     assert session.airport_graph.source_edges["vertical"].geometry.wkb == (
@@ -260,7 +259,8 @@ def test_nearby_source_nodes_are_candidates_and_manual_merge_rewires_edges(tmp_p
     save_graph(session.airport_graph, path)
     loaded = load_graph(path)
     assert loaded.node_aliases[6] == 2
-    assert loaded.node_merge_groups[2].original_positions[6] == pytest.approx(position(10, 0.04))
+    assert 6 not in loaded.graph
+    assert loaded.graph.degree(2) == 4
 
     session.undo()
     assert 6 in session.graph
@@ -331,7 +331,6 @@ def test_manual_graph_node_can_be_a_merge_candidate_and_rewires_edges():
     assert manual not in session.graph
     assert session.graph.has_edge(2, 5)
     assert session.airport_graph.node_aliases[manual] == 2
-    assert manual in session.airport_graph.node_merge_groups[2].member_node_ids
     validate_edge_endpoints(session.airport_graph)
     validate_edge_sources(session.airport_graph)
 
@@ -363,7 +362,6 @@ def test_manual_snap_moves_graph_node_splits_target_and_preserves_sources(tmp_pa
     assert session.graph.degree(6) == 3
     assert session.graph.has_edge(4, 6)
     assert session.graph.has_edge(6, 2)
-    assert session.airport_graph.node_snap_records[-1].node_id == 6
     assert {
         source_id: source.geometry.wkb
         for source_id, source in session.airport_graph.source_edges.items()
@@ -374,11 +372,12 @@ def test_manual_snap_moves_graph_node_splits_target_and_preserves_sources(tmp_pa
     path = tmp_path / "snapped.json"
     save_graph(session.airport_graph, path)
     loaded = load_graph(path)
-    assert loaded.node_snap_records[-1].distance_m == pytest.approx(0.2, abs=1e-3)
+    assert loaded.graph.nodes[6]["pos"] == pytest.approx(preview["snapped_position"])
+    assert loaded.graph.has_edge(4, 6)
+    assert loaded.graph.has_edge(6, 2)
 
     session.undo()
     assert session.graph.nodes[6]["pos"] == pytest.approx(positions[6])
-    assert not session.airport_graph.node_snap_records
 
 
 def test_unpaired_half_edges_require_explicit_discard_confirmation():

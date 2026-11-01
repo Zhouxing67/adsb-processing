@@ -21,8 +21,6 @@ from shapely.ops import substring
 from .models import (
     AirportGraph,
     GraphMetadata,
-    NodeMergeGroup,
-    NodeSnapRecord,
     SourceEdge,
     SourceNode,
     SourceSegment,
@@ -271,8 +269,6 @@ def _build_derived_graph(
         source_nodes=source_nodes,
         source_edges=source_edges,
         node_aliases=aliases,
-        node_merge_groups={},
-        node_snap_records=[],
         metadata=GraphMetadata(airport=airport),
     )
     issues = list(initial_issues)
@@ -617,19 +613,6 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
             [_json_value(alias), _json_value(canonical)]
             for alias, canonical in airport_graph.node_aliases.items()
         ],
-        "node_merge_groups": [
-            {
-                "canonical_node_id": _json_value(group.canonical_node_id),
-                "member_node_ids": _json_value(group.member_node_ids),
-                "original_positions": [
-                    [_json_value(node), _json_value(position)]
-                    for node, position in group.original_positions.items()
-                ],
-                "merge_type": group.merge_type,
-            }
-            for group in airport_graph.node_merge_groups.values()
-        ],
-        "node_snap_records": [_json_value(record) for record in airport_graph.node_snap_records],
         "parking_position_nodes": [
             _json_value(node)
             for node in sorted(airport_graph.parking_position_nodes, key=_stable_node_order)
@@ -764,26 +747,6 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         airport=document.get("airport", "ZBAA"),
         build_issues=tuple(document.get("build_issues", ())),
     )
-    merge_groups = {
-        item["canonical_node_id"]: NodeMergeGroup(
-            item["canonical_node_id"],
-            tuple(item["member_node_ids"]),
-            {node: tuple(position) for node, position in item["original_positions"]},
-            item.get("merge_type", "manual"),
-        )
-        for item in document.get("node_merge_groups", ())
-    }
-    snap_records = [
-        NodeSnapRecord(
-            item["node_id"],
-            tuple(item["original_position"]),
-            tuple(item["snapped_position"]),
-            item["target_source_id"],
-            item["target_station_m"],
-            item["distance_m"],
-        )
-        for item in document.get("node_snap_records", ())
-    ]
     projection_value = document.get("projection", "UTM zone 50")
     projection = Proj("EPSG:32650") if projection_value == "UTM zone 50" else Proj(projection_value)
     return AirportGraph(
@@ -792,8 +755,6 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         source_nodes=source_nodes,
         source_edges=source_edges,
         node_aliases=dict(document.get("node_aliases", ())),
-        node_merge_groups=merge_groups,
-        node_snap_records=snap_records,
         parking_position_nodes=set(document.get("parking_position_nodes", ())),
         runway_access_nodes=set(document.get("runway_access_nodes", ())),
         metadata=metadata,

@@ -20,8 +20,6 @@ from shapely.ops import nearest_points, substring, transform
 from adsb import Flight
 from airport_surface import (
     AirportGraph,
-    NodeMergeGroup,
-    NodeSnapRecord,
     SourceEdge,
     SourceNode,
     SourceSegment,
@@ -63,8 +61,6 @@ class EditorSession:
             source_nodes=airport_graph.source_nodes,
             source_edges=airport_graph.source_edges,
             node_aliases=airport_graph.node_aliases,
-            node_merge_groups=airport_graph.node_merge_groups,
-            node_snap_records=airport_graph.node_snap_records,
             parking_position_nodes=airport_graph.parking_position_nodes,
             runway_access_nodes=airport_graph.runway_access_nodes,
             metadata=airport_graph.metadata,
@@ -87,8 +83,6 @@ class EditorSession:
             source_nodes=current.source_nodes,
             source_edges=current.source_edges,
             node_aliases=current.node_aliases,
-            node_merge_groups=current.node_merge_groups,
-            node_snap_records=current.node_snap_records,
             parking_position_nodes=current.parking_position_nodes,
             runway_access_nodes=current.runway_access_nodes,
             metadata=current.metadata,
@@ -557,7 +551,6 @@ class EditorSession:
                 pos=original_positions[canonical],
                 source_type="osm" if merged_osm_ids else "manual",
                 osm_node_ids=merged_osm_ids,
-                merge_type="manual",
             )
             self.graph.add_node(canonical, **canonical_data)
             self.airport_graph.parking_position_nodes.difference_update(members)
@@ -592,7 +585,6 @@ class EditorSession:
                 if canonical in self.airport_graph.source_nodes
                 else {}
             )
-            attributes["manual_merge_original_positions"] = original_positions
             self.airport_graph.source_nodes[canonical] = SourceNode(
                 canonical,
                 original_positions[canonical],
@@ -608,9 +600,6 @@ class EditorSession:
             for member in members:
                 if member != canonical:
                     self.airport_graph.node_aliases[member] = canonical
-            self.airport_graph.node_merge_groups[canonical] = NodeMergeGroup(
-                canonical, members, original_positions, "manual"
-            )
             validate_edge_endpoints(self.airport_graph, edge_ids=added_edges)
             validate_edge_sources(self.airport_graph, edge_ids=added_edges)
         self._source_path_graph = self._build_source_path_graph()
@@ -1083,7 +1072,6 @@ class EditorSession:
 
     def manual_snap_node_to_edge(self, node: Any, u: Any, v: Any, key: Any) -> None:
         preview = self.manual_snap_preview(node, u, v, key)
-        original_position = tuple(self.graph.nodes[node]["pos"][:2])
         incident = [
             (eu, ev, edge_key)
             for eu, ev, edge_key in self.graph.edges(node, keys=True)
@@ -1113,16 +1101,6 @@ class EditorSession:
                     node,
                     int(preview["segment_index"]),
                     float(preview["target_station_m"]),
-                )
-            )
-            self.airport_graph.node_snap_records.append(
-                NodeSnapRecord(
-                    node,
-                    original_position,
-                    tuple(preview["snapped_position"]),
-                    preview["target_source_id"],
-                    preview["target_station_m"],
-                    preview["distance_m"],
                 )
             )
             validate_edge_endpoints(self.airport_graph, edge_ids=changed_edges)
