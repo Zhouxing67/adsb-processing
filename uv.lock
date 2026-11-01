@@ -7,7 +7,6 @@ name = "adsb-processing"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
-    { name = "cartes" },
     { name = "fastapi" },
     { name = "geopandas" },
     { name = "ipyleaflet" },
@@ -34,7 +33,6 @@ graph-build = [
 
 [package.metadata]
 requires-dist = [
-    { name = "cartes", specifier = ">=0.8.6" },
     { name = "fastapi", specifier = ">=0.141.1" },
     { name = "geopandas", specifier = ">=1.1.4" },
     { name = "ipyleaflet", specifier = ">=0.20.0" },

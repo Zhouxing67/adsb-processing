@@ -87,6 +87,7 @@ class Matcher:
         observations = _observations(self.airport_graph, flight)
         matched_observations: list[Point] = []
         layers: list[list[Candidate]] = []
+
         for index, point in enumerate(observations):
             candidates = self._candidates(index, point)
             if not candidates:

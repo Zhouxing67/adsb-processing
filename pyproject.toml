@@ -13,7 +13,6 @@ dependencies = [
     "networkx>=3.6.1",
     "shapely>=2.1",
     "pyproj>=3.7",
-    "cartes>=0.8.6",
     "osm2geojson==0.3.2",
     "fastapi>=0.141.1",
     "uvicorn>=0.53.0",

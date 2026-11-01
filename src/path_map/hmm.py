@@ -67,7 +67,8 @@ class NetworkRouter:
             weight="length",
         )
         edges = tuple(self._best_parallel_edge(u, v) for u, v in pairwise(nodes))
-        return sum(self.lengths[edge.from_, edge.to_, edge.key_] for edge in edges), edges
+        distance = sum(self.lengths[edge.from_, edge.to_, edge.key_] for edge in edges)
+        return distance, edges
 
     def transition(self, source: Candidate, target: Candidate) -> Transition | None:
         su, sv, sk = source.edge_id

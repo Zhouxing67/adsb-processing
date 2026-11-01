@@ -585,8 +585,9 @@ def _json_value(value: Any) -> Any:
         return {str(key): _json_value(item) for key, item in value.items()}
     if isinstance(value, (list, tuple)):
         return [_json_value(item) for item in value]
-    if hasattr(value, "item"):
-        return _json_value(value.item())
+    item = getattr(value, "item", None)
+    if callable(item):
+        return _json_value(item())
     if value is None or isinstance(value, (str, int, float, bool)):
         return value
     return str(value)
