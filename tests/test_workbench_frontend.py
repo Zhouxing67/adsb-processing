@@ -264,3 +264,197 @@ vm.createContext(context);vm.runInContext(source.slice(start,end),context);
 """
 
     subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_observation_location_waits_for_visible_map_and_uses_finite_zoom() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8"),lines=source.split(/\r?\n/);
+let zoom=null,invalidated=0,switched=false;
+const context={
+  Number,observationHighlight:null,
+  map:{
+    removeLayer(){},invalidateSize(){invalidated++;},getZoom(){return Infinity;},
+    setView(_point,value){zoom=value;}
+  },
+  L:{circleMarker(){return{addTo(){return {};}}}},
+  document:{querySelector(){return{disabled:true};}},
+  switchMainTab(tab){switched=tab==="map";},
+  requestAnimationFrame(callback){callback();}
+};
+vm.createContext(context);
+for(const name of ["observationCoordinate","locateObservation"]){
+  vm.runInContext(lines.find(line=>line.startsWith(`function ${name}`)),context);
+}
+context.locateObservation({longitude:116.5,latitude:40.1});
+if(!switched||invalidated!==1||zoom!==18){
+  throw new Error(`bad map transition ${switched}/${invalidated}/${zoom}`);
+}
+"""
+    subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_observation_detail_only_latest_request_can_render() -> None:
+    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    detail = source[source.index("async function showDetail") :]
+    detail = detail[: detail.index("async function selectFiltered")]
+
+    assert "const requestId=++detailRequest" in detail
+    assert "if(requestId!==detailRequest)return" in detail
+    assert "if(requestId===detailRequest)showFlightError" in detail
+    assert detail.index("if(requestId!==detailRequest)return") < detail.index(
+        "currentDetailKey=key"
+    )
+
+
+def test_delayed_observation_page_does_not_reopen_observations_tab() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8");
+const start=source.indexOf("async function showDetail");
+const end=source.indexOf("async function selectFiltered",start);
+let release,currentTab="map";
+const pending=new Promise(resolve=>{release=resolve;});
+const button={},content={scrollTop:0,innerHTML:"",
+  querySelector(){return button;},querySelectorAll(){return[];}};
+const simple={textContent:""};
+const context={
+  detailRequest:0,detailState:new Map(),currentDetailKey:null,
+  fetch(){return pending;},readResponse:async value=>value,
+  encodeURIComponent,STATUS_LABELS:{unmatched:"未匹配"},
+  escapeHtml:value=>String(value),observationCoordinate:()=>null,
+  showFlightError(message){throw new Error(message);},
+  switchMainTab(tab){currentTab=tab;},
+  document:{querySelector(selector){
+    if(selector==="#observations-content")return content;
+    return simple;
+  }}
+};
+vm.createContext(context);
+vm.runInContext(source.slice(start,end),context);
+(async()=>{
+  const request=context.showDetail("flight-a",2,false);
+  if(currentTab!=="observations")throw new Error("detail did not open immediately");
+  context.switchMainTab("map");
+  release({
+    summary:{flight_number:"A",flight_id:"a",movement_type:"arrival",
+      point_count:0,start_time:"",end_time:""},
+    match:{status:"unmatched"},observation_columns:[],observations:[],
+    inconsistent_fields:{},observation_page:2,observation_pages:2,
+    observation_total:0
+  });
+  await request;
+  if(currentTab!=="map")throw new Error("delayed response reopened observations");
+})().catch(error=>{console.error(error);process.exit(1);});
+"""
+    subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_flight_location_messages_distinguish_geometry_states() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8"),lines=source.split(/\r?\n/);
+const messages=[],mapSelection=new Map(),geometries=new Map();
+const context={
+  mapSelection,geometries,messages,
+  setStatus(message){messages.push(message);},applyFocus(){},
+  map:{fitBounds(){throw new Error("unexpected fit");}},
+  L:{latLngBounds(){return{extend(){},isValid(){return false;}}}}
+};
+vm.createContext(context);
+for(const name of ["boundsFor","focusFlight"]){
+  vm.runInContext(lines.find(line=>line.startsWith(`function ${name}`)),context);
+}
+mapSelection.set("loading",{state:"loading"});
+mapSelection.set("error",{state:"error"});
+mapSelection.set("empty",{state:"empty"});
+context.focusFlight("loading");context.focusFlight("error");context.focusFlight("empty");
+const expected=["该航班轨迹正在加载","该航班轨迹加载失败，可点击重试","该航班没有有效坐标"];
+if(JSON.stringify(messages)!==JSON.stringify(expected))throw new Error(JSON.stringify(messages));
+"""
+    subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_narrow_details_switches_to_and_back_from_topology_panel() -> None:
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("Node.js is required for frontend behavior tests")
+    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    source_text = source_path.read_text(encoding="utf-8")
+    observer_wiring = (
+        'new ResizeObserver(refreshMapLayout).observe(document.querySelector(".workspace"))'
+    )
+    assert observer_wiring in source_text
+    script = r"""
+const fs=require("fs"),vm=require("vm");
+const source=fs.readFileSync(process.argv[1],"utf8"),lines=source.split(/\r?\n/);
+const classes=initial=>({
+  values:new Set(initial),contains(v){return this.values.has(v);},
+  add(v){this.values.add(v);},remove(v){this.values.delete(v);},
+  toggle(v,force){force?this.add(v):this.remove(v);}
+});
+const topologyPanel={classList:classes([])};
+const details={classList:classes(["hidden"])};
+const topologyBack={classList:classes(["hidden"])};
+const toggle={classList:classes([])};
+let invalidations=0;
+const context={
+  topologyPanel,details,topologyBack,narrowDetailsReturnToTopology:false,
+  topologyInspectionActive:false,topologyPreviousNodeVisibility:false,
+  currentState:{flight_mode:true},nodeLayer:null,edgeGroup:null,renderEdges(){},
+  window:{matchMedia(){return{matches:true};}},requestAnimationFrame(callback){callback();},
+  map:{invalidateSize(){invalidations++;}},
+  document:{querySelector(selector){if(selector==="#topology-toggle")return toggle;}}
+};
+vm.createContext(context);
+const names=["refreshMapLayout","isNarrowLayout","shouldSwapTopologyPanel",
+  "setTopologyInspection","openDetails","returnToTopology"];
+for(const name of names){
+  vm.runInContext(lines.find(line=>line.startsWith(`function ${name}`)),context);
+}
+context.openDetails();
+if(topologyPanel.classList.contains("hidden")===false||
+   details.classList.contains("hidden")||
+   topologyBack.classList.contains("hidden")){
+  throw new Error("details did not replace topology");
+}
+context.returnToTopology();
+if(topologyPanel.classList.contains("hidden")||
+   !details.classList.contains("hidden")){
+  throw new Error("return did not restore topology");
+}
+if(invalidations!==2)throw new Error(`expected two map resizes, got ${invalidations}`);
+"""
+    subprocess.run([node, "-e", script, str(source_path)], check=True)
+
+
+def test_initial_view_and_flight_topology_styles_are_wired() -> None:
+    source = Path("src/airport_workbench/static/app.js").read_text(encoding="utf-8")
+
+    initial_fit = (
+        "if(!fitted){const nodeBounds=nodeLayer.getBounds(),"
+        "edgeBounds=edgeLayer.getBounds()"
+    )
+    assert initial_fit in source
+    assert "if(!data.flight_mode&&!fitted" not in source
+    assert 'color:splitValidation?feature.properties.validation_color' in source
+    assert "flightMode&&!topologyInspectionActive?3:2.8" in source
+    assert "Math.max(Number(p.radius)||0,4)" in source
+    swap_rule = (
+        "function shouldSwapTopologyPanel(){return "
+        "Boolean(currentState?.flight_mode)||isNarrowLayout();}"
+    )
+    assert swap_rule in source
+    assert "setTopologyInspection(opening)" in source

@@ -456,11 +456,42 @@ def create_app(
             raise HTTPException(400, str(error)) from error
 
     @app.get("/api/flights/{flight_key}")
-    def flight_detail(flight_key: str) -> dict[str, Any]:
+    def flight_detail(
+        flight_key: str,
+        observation_page: int = 1,
+        observation_page_size: int = 100,
+        all_fields: bool = False,
+    ) -> dict[str, Any]:
         try:
-            return flight_workbench.detail(flight_key)
+            return flight_workbench.detail(
+                flight_key,
+                observation_page=observation_page,
+                observation_page_size=observation_page_size,
+                all_fields=all_fields,
+            )
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
+        except (ValueError, CataloguePageOutOfRange) as error:
+            raise HTTPException(400, str(error)) from error
+
+    @app.get("/api/flight-selection")
+    def flight_selection(
+        q: str = "",
+        movement_type: str | None = None,
+        match_status: str | None = None,
+        min_points: int = 0,
+        max_points: int | None = None,
+    ) -> dict[str, Any]:
+        try:
+            return flight_workbench.filtered_keys(
+                query=q,
+                movement_type=movement_type,
+                status=match_status,
+                min_points=min_points,
+                max_points=max_points,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
 
     @app.get("/api/flights/{flight_key}/geometry")
     def flight_geometry(flight_key: str) -> dict[str, Any]:
@@ -479,13 +510,8 @@ def create_app(
             raise HTTPException(400, str(error)) from error
 
     @app.get("/api/matches")
-    def match_status() -> dict[str, Any]:
-        current_graph_id = flight_workbench.sync_graph()
-        with flight_workbench.lock:
-            return {
-                "graph_id": current_graph_id,
-                "items": [result.public() for result in flight_workbench.results.values()],
-            }
+    def match_status(task_id: list[str] | None = None) -> dict[str, Any]:
+        return flight_workbench.task_status(task_id)
 
     @app.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:

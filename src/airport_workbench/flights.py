@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import math
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -21,7 +20,7 @@ from path_map import MapMatchingError, MatchConfig, Matcher, Path
 from .serializers import flight_geojson, path_geojson
 
 MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed", "stale"}
-MAX_SELECTED_FLIGHTS = 5
+MAX_MAP_FLIGHTS = 10
 BUSINESS_FIELD_NAMES = {
     "flight_id",
     "flight_number",
@@ -141,6 +140,14 @@ class MatchResultItem:
         }
 
 
+@dataclass(slots=True)
+class MatchTask:
+    task_id: str
+    flight_keys: tuple[str, ...]
+    created_at: str
+    results: dict[str, dict[str, Any]]
+
+
 class FlightWorkbench:
     """Own catalogue, result cache and one serial worker for a workbench session."""
 
@@ -175,6 +182,7 @@ class FlightWorkbench:
         self.flights: dict[str, Flight] = {}
         self.items: dict[str, FlightCatalogItem] = {}
         self.results: dict[str, MatchResultItem] = {}
+        self.tasks: dict[str, MatchTask] = {}
         source_values = list(sources or ())
         movement_values = list(movement_types or ())
         for index, flight in enumerate(flights):
@@ -235,6 +243,9 @@ class FlightWorkbench:
                     result.error = "机场图已变更；结果基于旧图快照，需重新匹配"
                     result.error_kind = "stale_graph"
                     result.updated_at = self._now()
+                    self._snapshot_task_result(
+                        result.flight_key, result.task_id, only_if_active=True
+                    )
             return current
 
     def catalogue(
@@ -264,21 +275,13 @@ class FlightWorkbench:
             raise ValueError(
                 f"max_points must not exceed dataset maximum {self.dataset_max_points}"
             )
-        needle = query.strip().casefold()
         rows = []
         with self.lock:
-            for key, item in self.items.items():
+            for key in self._filtered_keys(
+                query, movement_type, status, min_points, effective_max
+            ):
+                item = self.items[key]
                 result = self.results[key]
-                matches_id = needle in str(item.flight_id).casefold()
-                matches_number = needle in str(item.flight_number or "").casefold()
-                if needle and not matches_id and not matches_number:
-                    continue
-                if movement_type and movement_type != item.movement_type:
-                    continue
-                if status and status != result.status:
-                    continue
-                if not min_points <= item.point_count <= effective_max:
-                    continue
                 row = asdict(item)
                 row["start_time"] = self._display_time(item.start_time)
                 row["end_time"] = self._display_time(item.end_time)
@@ -300,7 +303,7 @@ class FlightWorkbench:
             "dataset_max_points": self.dataset_max_points,
             "min_points": min_points,
             "max_points": effective_max,
-            "max_selected": MAX_SELECTED_FLIGHTS,
+            "max_map_flights": MAX_MAP_FLIGHTS,
             "graph_id": self._graph_id,
             "time": {
                 "input_semantics": self.input_time_semantics,
@@ -308,8 +311,36 @@ class FlightWorkbench:
             },
         }
 
-    def detail(self, flight_key: str) -> dict[str, Any]:
+    def filtered_keys(
+        self,
+        *,
+        query: str = "",
+        movement_type: str | None = None,
+        status: str | None = None,
+        min_points: int = 0,
+        max_points: int | None = None,
+    ) -> dict[str, Any]:
+        """Return the fixed key set matching the currently committed filters."""
+        self.sync_graph()
+        effective_max = self.dataset_max_points if max_points is None else max_points
+        self._validate_filters(status, min_points, effective_max)
+        with self.lock:
+            keys = self._filtered_keys(
+                query, movement_type, status, min_points, effective_max
+            )
+        return {"flight_keys": keys, "count": len(keys)}
+
+    def detail(
+        self,
+        flight_key: str,
+        *,
+        observation_page: int = 1,
+        observation_page_size: int = 100,
+        all_fields: bool = False,
+    ) -> dict[str, Any]:
         flight = self._flight(flight_key)
+        if observation_page < 1 or not 1 <= observation_page_size <= 500:
+            raise ValueError("observation page must be >= 1 and page size between 1 and 500")
         fields: dict[str, Any] = {}
         inconsistent: dict[str, list[Any]] = {}
         for column in flight.data.columns:
@@ -325,6 +356,22 @@ class FlightWorkbench:
                 inconsistent[column] = values
             else:
                 fields[column] = None
+        records = flight.data.to_dict(orient="records")
+        observation_total = len(records)
+        observation_pages = ceil(observation_total / observation_page_size) if records else 0
+        if observation_pages and observation_page > observation_pages:
+            raise CataloguePageOutOfRange(observation_page, observation_pages)
+        start = (observation_page - 1) * observation_page_size
+        default_names = self._observation_columns(flight.data.columns)
+        column_names = list(flight.data.columns) if all_fields else default_names
+        observations = []
+        for offset, row in enumerate(records[start : start + observation_page_size], start=start):
+            observations.append(
+                {
+                    "record_index": offset + 1,
+                    **{name: _scalar(row.get(name)) for name in column_names},
+                }
+            )
         return {
             "summary": {
                 **asdict(self.items[flight_key]),
@@ -333,10 +380,13 @@ class FlightWorkbench:
             },
             "fields": fields,
             "inconsistent_fields": inconsistent,
-            "observations": [
-                {name: _scalar(value) for name, value in row.items()}
-                for row in flight.data.to_dict(orient="records")
-            ],
+            "observations": observations,
+            "observation_columns": ["record_index", *column_names],
+            "observation_page": observation_page if observation_pages else 0,
+            "observation_pages": observation_pages,
+            "observation_total": observation_total,
+            "observation_page_size": observation_page_size,
+            "all_fields": all_fields,
             "match": self.results[flight_key].public(),
         }
 
@@ -356,17 +406,21 @@ class FlightWorkbench:
 
     def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
         keys = list(dict.fromkeys(flight_keys))
-        if not 1 <= len(keys) <= MAX_SELECTED_FLIGHTS:
-            raise ValueError("每次必须选择 1～5 条航班")
+        if not keys:
+            raise ValueError("至少选择一条航班")
         for key in keys:
             self._flight(key)
         snapshot_id = self.sync_graph()
         task_id = hashlib.sha256(f"{snapshot_id}:{keys}:{self._now()}".encode()).hexdigest()[:20]
         config = asdict(self.match_config)
         pending = []
+        skipped: list[dict[str, str]] = []
         with self.lock:
             for key in keys:
                 result = self.results[key]
+                if result.status in {"queued", "matching"}:
+                    skipped.append({"flight_key": key, "reason": "already_running"})
+                    continue
                 cache_hit = (
                     not force
                     and result.status == "success"
@@ -374,6 +428,7 @@ class FlightWorkbench:
                     and result.config == config
                 )
                 if cache_hit:
+                    skipped.append({"flight_key": key, "reason": "current_success"})
                     continue
                 result.graph_id = snapshot_id
                 result.config = config
@@ -384,9 +439,107 @@ class FlightWorkbench:
                 result.task_id = task_id
                 result.updated_at = self._now()
                 pending.append(key)
+            self.tasks[task_id] = MatchTask(
+                task_id,
+                tuple(pending),
+                self._now(),
+                {key: self.results[key].public() for key in pending},
+            )
         if pending:
             self.executor.submit(self._run, task_id, snapshot_id, tuple(pending))
-        return {"task_id": task_id, "flight_keys": keys, "queued": pending}
+        return {
+            "task_id": task_id,
+            "requested_count": len(keys),
+            "queued": pending,
+            "queued_count": len(pending),
+            "skipped": skipped,
+            "skipped_count": len(skipped),
+        }
+
+    def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
+        """Return compact progress without catalogue rows or geometry."""
+        self.sync_graph()
+        wanted = set(task_ids or ())
+        with self.lock:
+            tasks = [
+                task for task_id, task in self.tasks.items() if not wanted or task_id in wanted
+            ]
+            payload = []
+            for task in tasks:
+                statuses = [task.results[key]["status"] for key in task.flight_keys]
+                counts = {name: statuses.count(name) for name in MATCH_STATUSES}
+                payload.append(
+                    {
+                        "task_id": task.task_id,
+                        "flight_keys": list(task.flight_keys),
+                        "total": len(task.flight_keys),
+                        "waiting": counts["queued"],
+                        "running": counts["matching"],
+                        "success": counts["success"],
+                        "failed": counts["failed"] + counts["stale"],
+                        "complete": not any(
+                            status in {"queued", "matching"} for status in statuses
+                        ),
+                        "items": [dict(task.results[key]) for key in task.flight_keys],
+                    }
+                )
+        return {"graph_id": self._graph_id, "tasks": payload}
+
+    def _validate_filters(self, status: str | None, min_points: int, max_points: int) -> None:
+        if status and status not in MATCH_STATUSES:
+            raise ValueError("unknown match status")
+        if min_points < 0 or max_points < 0:
+            raise ValueError("point limits must be non-negative integers")
+        if min_points > max_points:
+            raise ValueError("min_points must not be greater than max_points")
+        if max_points > self.dataset_max_points:
+            raise ValueError(
+                f"max_points must not exceed dataset maximum {self.dataset_max_points}"
+            )
+
+    def _filtered_keys(
+        self,
+        query: str,
+        movement_type: str | None,
+        status: str | None,
+        min_points: int,
+        max_points: int,
+    ) -> list[str]:
+        needle = query.strip().casefold()
+        keys = []
+        for key, item in self.items.items():
+            result = self.results[key]
+            if needle and needle not in str(item.flight_id).casefold() and needle not in str(
+                item.flight_number or ""
+            ).casefold():
+                continue
+            if movement_type and movement_type != item.movement_type:
+                continue
+            if status and status != result.status:
+                continue
+            if min_points <= item.point_count <= max_points:
+                keys.append(key)
+        return keys
+
+    @staticmethod
+    def _observation_columns(columns: Iterable[Any]) -> list[Any]:
+        available = list(columns)
+        aliases = (
+            ("timestamp", "time"),
+            ("longitude", "lon"),
+            ("latitude", "lat"),
+            ("altitude", "altitude_ft", "height"),
+            ("ground_speed", "groundspeed", "speed"),
+            ("heading", "track", "course"),
+            ("vertical_speed", "vertical_rate", "verticalspeed"),
+        )
+        selected = []
+        lower = {str(name).casefold(): name for name in available}
+        for group in aliases:
+            match = next((lower[name] for name in group if name in lower), None)
+            if match is not None and match not in selected:
+                selected.append(match)
+        return selected
 
     def _run(self, task_id: str, snapshot_id: str, keys: tuple[str, ...]) -> None:
         # The matcher is built for this graph version once per submitted batch.
@@ -407,6 +560,7 @@ class FlightWorkbench:
                     continue
                 result.status = "matching"
                 result.updated_at = self._now()
+                self._snapshot_task_result(key, task_id)
             try:
                 path = matcher.map_flight(self.flights[key])
             except MapMatchingError as error:
@@ -448,6 +602,7 @@ class FlightWorkbench:
             result.error = error
             result.error_kind = error_kind
             result.updated_at = self._now()
+            self._snapshot_task_result(key, task_id)
 
     def _fail_pending(self, keys: Sequence[str], task_id: str, error: str) -> None:
         with self.lock:
@@ -458,6 +613,19 @@ class FlightWorkbench:
                     result.error = error
                     result.error_kind = "system"
                     result.updated_at = self._now()
+                    self._snapshot_task_result(key, task_id)
+
+    def _snapshot_task_result(
+        self, key: str, task_id: str | None, *, only_if_active: bool = False
+    ) -> None:
+        """Copy the latest flight result into its owning task's immutable history."""
+        if task_id is None:
+            return
+        task = self.tasks.get(task_id)
+        if task is not None and key in task.results:
+            if only_if_active and task.results[key]["status"] not in {"queued", "matching"}:
+                return
+            task.results[key] = self.results[key].public()
 
     def _flight(self, flight_key: str) -> Flight:
         try:

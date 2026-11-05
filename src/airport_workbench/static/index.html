@@ -32,7 +32,12 @@
     <button class="tool danger" data-mode="delete"><span>×</span><em>删除 / 简化</em></button>
   </nav>
   <main class="workspace">
-    <div id="map" aria-label="机场工作台地图"></div>
+    <nav class="main-tabs" aria-label="航班主视图"><button id="map-tab" class="active">地图</button><button id="observations-tab">观测记录</button></nav>
+    <section id="map-view" class="main-view"><div id="map" aria-label="机场工作台地图"></div></section>
+    <section id="observations-view" class="main-view observations-view hidden">
+      <header class="observations-header"><div><small>当前查看航班</small><h2 id="observations-title">尚未选择航班</h2><p id="observations-summary" class="field-note"></p></div><div><button id="clear-observation-highlight" class="secondary-button" disabled>清除地图定位点</button></div></header>
+      <div id="observations-content" class="observations-content"><p class="field-note">请从航班目录点击“详情”。</p></div>
+    </section>
     <div class="map-overlay-stack">
       <div class="legend panel">
         <span><i class="dot node-dot"></i>普通节点</span><span><i class="business-legend">P</i>停机位侧</span><span><i class="business-legend runway">R</i>跑道进出</span><span><i class="line edge-line"></i>派生边</span>
@@ -63,15 +68,16 @@
         <div class="point-filter"><span>观测点数</span><input id="flight-min-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最小观测点数"><span>～</span><input id="flight-max-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最大观测点数"><button id="apply-point-filter" class="secondary-button">应用</button><button id="reset-point-filter" class="text-button">重置点数</button></div>
         <p id="flight-query-error" class="field-error hidden" role="alert"></p>
       </div>
-      <section class="selected-section"><div class="section-title"><strong id="selection-count">已选择 0/5</strong><span>A～E 固定色槽</span></div><div id="selected-flights" class="selected-flights"></div></section>
+      <section class="selected-section match-selection"><div class="section-title"><strong id="selection-count">待匹配 0 条</strong><span>可跨页选择</span></div><div class="selection-actions"><button id="select-page" class="secondary-button">选择本页</button><button id="select-filtered" class="secondary-button">选择全部筛选结果</button><button id="clear-match-selection" class="text-button">清空</button></div><p class="field-note">选择可能包含当前列表之外的航班。</p></section>
+      <section class="selected-section map-selection"><div class="section-title"><strong id="map-selection-count">地图展示 0/10</strong><span>A～J 固定色槽</span></div><div id="selected-flights" class="selected-flights"></div><div class="selection-actions"><button id="clear-map-selection" class="text-button">清空地图展示</button><button id="fit-selected" class="secondary-button">定位全部</button></div></section>
+      <section id="match-progress" class="match-progress hidden"><strong>批量任务</strong><span id="match-progress-text"></span></section>
       <p id="flight-time-note" class="field-note"></p><div id="flight-error" class="warning hidden"></div><div id="overlap-notice" class="warning hidden"></div>
       <div id="flight-list" class="flight-list"></div>
-      <div class="flight-sidebar-footer"><div class="pager"><button id="flight-prev" class="secondary-button">上一页</button><span id="flight-page"></span><div class="page-jump"><input id="flight-page-input" type="number" min="1" step="1" inputmode="numeric" aria-label="跳转页码"><button id="flight-page-jump" class="secondary-button">跳转</button></div><button id="flight-next" class="secondary-button">下一页</button></div><p id="flight-page-error" class="field-error hidden" role="alert"></p><div class="footer-actions"><button id="fit-selected" class="secondary-button">定位所选</button><button id="match-selected" class="primary-button" disabled>匹配所选航班</button></div></div>
+      <div class="flight-sidebar-footer"><div class="pager"><button id="flight-prev" class="secondary-button">上一页</button><span id="flight-page"></span><div class="page-jump"><input id="flight-page-input" type="number" min="1" step="1" inputmode="numeric" aria-label="跳转页码"><button id="flight-page-jump" class="secondary-button">跳转</button></div><button id="flight-next" class="secondary-button">下一页</button></div><p id="flight-page-error" class="field-error hidden" role="alert"></p><div class="footer-actions"><button id="match-selected" class="primary-button" disabled>匹配所选航班</button></div></div>
     </div>
-    <div id="flight-detail-view" class="flight-view hidden"><div class="flight-detail-header"><button id="back-to-flights" class="secondary-button">← 返回列表</button><h2 id="flight-detail-title">航班详情</h2></div><div id="flight-detail-body" class="flight-detail-body"></div></div>
   </aside>
   <aside id="details" class="details panel hidden">
-    <button id="close-details" class="panel-close" aria-label="关闭">×</button><div id="details-content"></div>
+    <button id="back-to-topology" class="secondary-button panel-back hidden">← 返回拓扑检查</button><button id="close-details" class="panel-close" aria-label="关闭">×</button><div id="details-content"></div>
   </aside>
   <div id="status" class="status panel">查看模式 · 点击图层要素查看详情</div>
   <div id="busy" class="busy hidden"><span></span></div>
