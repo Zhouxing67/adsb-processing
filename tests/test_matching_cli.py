@@ -174,12 +174,16 @@ def test_dispatch_passes_same_custom_config_without_running_other_mode(
             "--workbench",
             "--max-candidates",
             "9",
-            "--search-radius",
+            "--candidate-radius",
             "25",
             "--gps-sigma",
             "7",
             "--transition-beta",
             "12",
+            "--max-transition-turn-angle-deg",
+            "140",
+            "--turn-tangent-sample-m",
+            "8",
         ]
     )
 
@@ -187,9 +191,11 @@ def test_dispatch_passes_same_custom_config_without_running_other_mode(
     assert calls[0][0] == "workbench"
     config = calls[0][2]
     assert config.max_candidates == 9
-    assert config.search_radius == 25
+    assert config.candidate_radius == 25
     assert config.gps_sigma == 7
     assert config.transition_beta == 12
+    assert config.max_transition_turn_angle_deg == 140
+    assert config.turn_tangent_sample_m == 8
 
 
 def test_default_dispatch_runs_batch_only(monkeypatch: pytest.MonkeyPatch) -> None:

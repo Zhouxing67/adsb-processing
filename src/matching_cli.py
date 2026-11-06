@@ -23,10 +23,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--arrivals", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--departures", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--input-timezone", default="UTC")
-    parser.add_argument("--search-radius", type=float, default=40.0)
-    parser.add_argument("--max-candidates", type=int, default=6)
+    parser.add_argument("--candidate-radius", type=float, default=120.0)
+    parser.add_argument("--max-candidates", type=int, default=16)
     parser.add_argument("--gps-sigma", type=float, default=10.0)
     parser.add_argument("--transition-beta", type=float, default=20.0)
+    parser.add_argument("--max-transition-turn-angle-deg", type=float, default=150.0)
+    parser.add_argument("--turn-tangent-sample-m", type=float, default=10.0)
     parser.add_argument("--output", type=Path, default=argparse.SUPPRESS)
     parser.add_argument("--limit", type=int, default=argparse.SUPPRESS)
     parser.add_argument("--host", default=argparse.SUPPRESS)
@@ -72,10 +74,12 @@ def _validate_timezone(value: str, option: str) -> None:
 
 def _match_config(args: argparse.Namespace) -> MatchConfig:
     return MatchConfig(
-        search_radius=args.search_radius,
+        candidate_radius=args.candidate_radius,
         max_candidates=args.max_candidates,
         gps_sigma=args.gps_sigma,
         transition_beta=args.transition_beta,
+        max_transition_turn_angle_deg=args.max_transition_turn_angle_deg,
+        turn_tangent_sample_m=args.turn_tangent_sample_m,
     )
 
 

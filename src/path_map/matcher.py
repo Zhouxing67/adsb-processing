@@ -27,23 +27,27 @@ class MapMatchingError(ValueError):
 
 @dataclass(frozen=True, slots=True)
 class MatchConfig:
-    search_radius: float = 40.0
-    max_search_radius: float = 120.0
-    max_candidates: int = 40
+    candidate_radius: float = 120.0
+    max_candidates: int = 16
     gps_sigma: float = 10.0
     transition_beta: float = 20.0
+    max_transition_turn_angle_deg: float = 150.0
+    turn_tangent_sample_m: float = 10.0
 
     def __post_init__(self) -> None:
         distances = (
-            self.search_radius,
-            self.max_search_radius,
+            self.candidate_radius,
             self.gps_sigma,
             self.transition_beta,
+            self.turn_tangent_sample_m,
         )
         if any(not math.isfinite(value) or value <= 0 for value in distances):
             raise ValueError("Distance parameters must be finite and positive")
-        if self.max_search_radius < self.search_radius:
-            raise ValueError("max_search_radius must not be smaller than search_radius")
+        if (
+            not math.isfinite(self.max_transition_turn_angle_deg)
+            or not 0 < self.max_transition_turn_angle_deg <= 180
+        ):
+            raise ValueError("max_transition_turn_angle_deg must be finite and in (0, 180]")
         if isinstance(self.max_candidates, bool) or not isinstance(self.max_candidates, int):
             raise ValueError("max_candidates must be a positive integer")
         if self.max_candidates < 1:
@@ -77,7 +81,12 @@ class Matcher:
         self.airport_graph = airport_graph
         self.config = config or MatchConfig()
         self.index = CandidateIndex(airport_graph)
-        self.router = NetworkRouter(airport_graph, self.index)
+        self.router = NetworkRouter(
+            airport_graph,
+            self.index,
+            max_transition_turn_angle_deg=self.config.max_transition_turn_angle_deg,
+            turn_tangent_sample_m=self.config.turn_tangent_sample_m,
+        )
 
     def map_flight(
         self,
@@ -124,22 +133,16 @@ class Matcher:
         return Path(self.airport_graph, edges)
 
     def _candidates(self, observation_index: int, point: Point) -> list[Candidate]:
-        """Find candidates, expanding the radius only when none are found."""
-        radius = self.config.search_radius
-        while True:
-            candidates = self.index.candidates(
-                observation_index,
-                point,
-                radius,
-                self.config.max_candidates,
-            )
-            if candidates or radius >= self.config.max_search_radius:
-                if any(candidate.edge_id[0] == candidate.edge_id[1] for candidate in candidates):
-                    raise MapMatchingError(
-                        "Map matching candidates on self-loop edges are not supported"
-                    )
-                return candidates
-            radius = min(radius * 2, self.config.max_search_radius)
+        """Find the nearest candidates in one complete-radius spatial query."""
+        candidates = self.index.candidates(
+            observation_index,
+            point,
+            self.config.candidate_radius,
+            self.config.max_candidates,
+        )
+        if any(candidate.edge_id[0] == candidate.edge_id[1] for candidate in candidates):
+            raise MapMatchingError("Map matching candidates on self-loop edges are not supported")
+        return candidates
 
 
 def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:

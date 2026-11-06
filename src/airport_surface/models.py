@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Hashable, Mapping
+from typing import Any, Hashable, Mapping, Self
 
 import networkx as nx
 from pyproj import Proj, Transformer
@@ -98,6 +98,10 @@ class GraphMetadata:
     airport: str
     build_issues: tuple[str, ...] = ()
 
+    @classmethod
+    def unknown_airport(cls) -> Self:
+        return cls(airport="UNKNOWN")
+
 
 class AirportGraph:
     """Airport topology, projection helpers, and authoritative source registries."""
@@ -125,7 +129,7 @@ class AirportGraph:
         self.node_aliases = dict(node_aliases or {})
         self.parking_position_nodes = set(parking_position_nodes or ())
         self.runway_access_nodes = set(runway_access_nodes or ())
-        self.metadata = metadata
+        self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
         missing_business_nodes = (
             self.parking_position_nodes | self.runway_access_nodes
         ).difference(self.graph.nodes)

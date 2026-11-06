@@ -469,7 +469,7 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
             }
         )
     )
-    config = MatchConfig(search_radius=5, max_candidates=4, gps_sigma=2, transition_beta=5)
+    config = MatchConfig(candidate_radius=5, max_candidates=4, gps_sigma=2, transition_beta=5)
     before = map_flight(graph, flight, config)
 
     session = EditorSession(graph)

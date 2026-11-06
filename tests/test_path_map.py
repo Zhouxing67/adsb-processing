@@ -6,11 +6,12 @@ import networkx as nx
 import pandas as pd
 import pytest
 from pyproj import Proj, Transformer
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 from adsb import Flight
 from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from path_map import MapMatchingError, MatchConfig, Matcher, Path, PathGraphMismatch, PathRecord
+from path_map.candidates import Candidate
 
 
 def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
@@ -49,7 +50,7 @@ def test_reusing_matcher_does_not_mutate_graph_or_change_result():
     )
     matcher = Matcher(
         airport_graph,
-        MatchConfig(search_radius=3, max_candidates=3, gps_sigma=2, transition_beta=5),
+        MatchConfig(candidate_radius=3, max_candidates=3, gps_sigma=2, transition_beta=5),
     )
     original_nodes = tuple(airport_graph.graph.nodes)
     original_edges = tuple(airport_graph.graph.edges(keys=True))
@@ -80,8 +81,7 @@ def robust_matcher(airport_graph: AirportGraph) -> Matcher:
     return Matcher(
         airport_graph,
         MatchConfig(
-            search_radius=3,
-            max_search_radius=30,
+            candidate_radius=30,
             max_candidates=10,
             gps_sigma=5,
             transition_beta=10,
@@ -122,7 +122,7 @@ def test_consecutive_observations_without_candidates_are_skipped():
     assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
 
 
-def test_candidate_radius_expands_when_initial_radius_finds_nothing():
+def test_candidate_radius_finds_candidates_across_the_complete_range():
     airport_graph, to_wgs84 = straight_airport_graph()
     flight = make_flight(
         to_wgs84,
@@ -132,6 +132,63 @@ def test_candidate_radius_expands_when_initial_radius_finds_nothing():
     path = robust_matcher(airport_graph).map_flight(flight)
 
     assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
+
+
+def test_candidate_search_queries_once_with_complete_radius():
+    airport_graph, _ = straight_airport_graph()
+    matcher = robust_matcher(airport_graph)
+    calls = []
+
+    class RecordingIndex:
+        def candidates(self, observation_index, point, radius, maximum):
+            calls.append((observation_index, point, radius, maximum))
+            return []
+
+    matcher.index = RecordingIndex()
+    point = Point(450_001, 4_428_000)
+
+    assert matcher._candidates(7, point) == []
+    assert calls == [(7, point, 30, 10)]
+
+
+def test_complete_radius_keeps_farther_candidate_when_near_candidate_exists():
+    airport_graph, _ = straight_airport_graph()
+    matcher = robust_matcher(airport_graph)
+
+    candidates = matcher._candidates(0, Point(450_001, 4_428_000))
+
+    assert [candidate.edge_id for candidate in candidates] == [
+        ("A", "B", "AB"),
+        ("B", "C", "BC"),
+    ]
+    assert [candidate.distance for candidate in candidates] == pytest.approx([0, 9])
+
+
+def test_candidate_search_respects_max_candidates_after_distance_sorting():
+    airport_graph, _ = straight_airport_graph()
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=30, max_candidates=1))
+
+    candidates = matcher._candidates(0, Point(450_001, 4_428_000))
+
+    assert len(candidates) == 1
+    assert candidates[0].edge_id == ("A", "B", "AB")
+
+
+def test_self_loop_candidate_check_is_preserved():
+    airport_graph, _ = straight_airport_graph()
+    matcher = robust_matcher(airport_graph)
+    matcher.index = type(
+        "SelfLoopIndex",
+        (),
+        {
+            "candidates": lambda self, *_args: [
+                Candidate(0, ("A", "A", "loop"), 0, Point(0, 0), 0, 0)
+            ]
+        },
+    )()
+
+    with pytest.raises(MapMatchingError, match="self-loop"):
+        matcher._candidates(0, Point(0, 0))
 
 
 def test_all_observations_without_candidates_still_fail():
@@ -159,7 +216,19 @@ def test_one_observation_with_candidates_still_fails():
 @pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
 def test_distance_configuration_must_be_finite_and_positive(value):
     with pytest.raises(ValueError, match="finite and positive"):
-        MatchConfig(search_radius=value)
+        MatchConfig(candidate_radius=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, 181, float("inf"), float("nan")])
+def test_turn_angle_configuration_must_be_finite_and_bounded(value):
+    with pytest.raises(ValueError, match="max_transition_turn_angle_deg"):
+        MatchConfig(max_transition_turn_angle_deg=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_turn_sample_configuration_must_be_finite_and_positive(value):
+    with pytest.raises(ValueError, match="finite and positive"):
+        MatchConfig(turn_tangent_sample_m=value)
 
 
 @pytest.mark.parametrize("value", [True, 0, -1, 1.5])

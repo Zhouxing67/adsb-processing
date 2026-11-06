@@ -27,7 +27,7 @@ def main() -> None:
         airport_graph,
         flight,
         MatchConfig(
-            search_radius=60.0,
+            candidate_radius=60.0,
             max_candidates=5,
             gps_sigma=15.0,
             transition_beta=25.0,

@@ -18,7 +18,7 @@ flights = load_data("data/ADS-B/more_15_arr.csv", MovementType.ARRIVAL)
 path = map_flight(
     airport_graph,
     flight,
-    MatchConfig(search_radius=40, max_candidates=6, gps_sigma=10),
+    MatchConfig(candidate_radius=120, max_candidates=16, gps_sigma=10),
 )
 print(path.edge_ids)  # directed (u, v, key) tuples
 print(path.total_length)  # metres
@@ -29,6 +29,11 @@ nearby projected edge geometries. Gaussian distance emissions and an exponential
 penalty on `abs(network_distance - observation_distance)` are decoded with
 Viterbi in log space. Candidate-to-candidate network distance includes both edge
 fractions and all shortest-path intermediate edges.
+
+Each observation performs one complete `candidate_radius` query and keeps at most
+`max_candidates` edges by distance. Endpoint-route choices whose internal local turn
+exceeds `max_transition_turn_angle_deg` are rejected before distance minimization;
+the tangent is sampled from directed projected geometry near the shared node.
 
 `Path` references its `AirportGraph`, retains traversal direction, parallel-edge
 keys, loops, and reversals, and exposes a WGS84 geometry. `PathRecord` is its

@@ -60,12 +60,14 @@ uv run python src/__main__.py --limit 10
 | `--output` | `outputs/path_map` | 运行目录的父目录。 |
 | `--limit` | 不限制 | 每批最多处理的航班数。 |
 | `--input-timezone` | `UTC` | 解释 CSV 中无时区的时间；已有时区的时间转换为 UTC。 |
-| `--search-radius` | 40 | 初始候选搜索半径，米。 |
-| `--max-candidates` | 6 | 每个观测的候选数量上限。 |
+| `--candidate-radius` | 120 | 每个观测单次查询的完整候选半径，米。 |
+| `--max-candidates` | 16 | 每个观测的候选数量上限。 |
 | `--gps-sigma` | 10 | 观测距离误差参数，米。 |
 | `--transition-beta` | 20 | 转移距离误差参数，米。 |
+| `--max-transition-turn-angle-deg` | 150 | 单次 Transition 内允许的最大局部转角，度。 |
+| `--turn-tangent-sample-m` | 10 | 公共节点两侧局部切线的采样长度，米。 |
 
-最大搜索半径使用 MatchConfig 默认的 120 米，统一 CLI 没有对应参数，两种模式都使用该默认值。
+候选查询不会逐步扩圈；每个观测只查询一次完整半径，并按距离保留前 `max_candidates` 个。
 
 ### 输出文件
 
@@ -157,8 +159,8 @@ uv run python src/__main__.py `
 |---|---|---|
 | 航班文件参数 | `--arrivals`、`--departures` | 相同 |
 | 匹配范围 | 自动处理所选数据集，可按类限制数量 | 由用户选择，每次 1～5 条 |
-| 候选数量默认值 | 6 | 6 |
-| 匹配参数调整 | 半径、候选数、σ、β | 相同 |
+| 候选数量默认值 | 16 | 16 |
+| 匹配参数调整 | 半径、候选数、σ、β、局部转角阈值和切线采样长度 | 相同 |
 | 无时区时间解释 | `--input-timezone` | 相同 |
 | 结果持久化 | 图快照、路径、航班结果和统计文件 | 会话内结果，无批量文件自动导出 |
 
