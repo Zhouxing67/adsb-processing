@@ -74,5 +74,5 @@ FROM (SELECT flight_id, COUNT(*) AS sample_num
       FROM main.adsb_202406_dep
       GROUP BY flight_id);
 
-SELECT COUNT(*) * 0.8  FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_arr)
-SELECT COUNT(*) * 0.6 FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_dep)
+SELECT COUNT(*) * 0.85  FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_arr);
+SELECT COUNT(*) * 0.65 FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_dep)

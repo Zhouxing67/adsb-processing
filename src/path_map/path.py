@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from itertools import pairwise
 from typing import Any, Hashable, Iterator, Sequence
 
 from shapely.geometry import LineString
@@ -25,6 +26,9 @@ class DirectedEdge:
     @property
     def id(self) -> tuple[Hashable, Hashable, Hashable]:
         return self.from_, self.to_, self.key_
+
+    def reversed_edge(self) -> DirectedEdge:
+        return DirectedEdge(self.to_, self.from_, self.key_)
 
 
 class Path(Sequence[DirectedEdge]):
@@ -78,7 +82,7 @@ class Path(Sequence[DirectedEdge]):
                 )
             if not self.airport_graph.graph.has_edge(edge.from_, edge.to_, edge.key_):
                 raise ValueError(f"Unknown graph edge: {(edge.from_, edge.to_, edge.key_)!r}")
-        for left, right in zip(self._edges, self._edges[1:]):
+        for left, right in pairwise(self._edges):
             if left.to_ != right.from_:
                 raise ValueError(f"Discontinuous path between {left!r} and {right!r}")
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 from dataclasses import dataclass, field
+from itertools import islice
 from pathlib import Path
 from typing import Any
 
@@ -86,18 +87,7 @@ class Flights:
 
     def iterate(self, limit: int | None = None) -> Iterator[Flight]:
         """Yield flights in deterministic ID order."""
-        invalid_limit = limit is not None and (
-            not isinstance(limit, int) or isinstance(limit, bool) or limit < 0
-        )
-        if invalid_limit:
-            raise ValueError("limit must be a non-negative integer or None")
-        if limit == 0:
-            return
-        for index, (_flight_id, frame) in enumerate(
-            self.data.groupby("flight_id", sort=True, dropna=False)
-        ):
-            if limit is not None and index >= limit:
-                break
+        for _, frame in islice(self.data.groupby("flight_id", dropna=False), limit):
             yield Flight(frame)
 
     def __iter__(self) -> Iterator[Flight]:

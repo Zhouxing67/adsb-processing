@@ -20,7 +20,7 @@ COPY (
         FROM main.adsb_202406_arr
         GROUP BY flight_id
         ORDER BY COUNT(*) DESC
-        Limit 1000
+        Limit 13928
     )
     ORDER BY flight_id, "timestamp"
 )
@@ -35,7 +35,7 @@ COPY (
         FROM main.adsb_202406_dep
         GROUP BY flight_id
         ORDER BY COUNT(*) DESC
-        Limit 1000
+        Limit 9763
     )
     ORDER BY flight_id, "timestamp"
 )

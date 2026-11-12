@@ -15,7 +15,7 @@ from adsb import Flight, Flights
 from airport_surface import AirportGraph
 
 from .candidates import Candidate, CandidateIndex
-from .hmm import NetworkRouter, viterbi
+from .hmm import NetworkRouter, Transition, viterbi
 from .path import DirectedEdge, Path
 
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ class MatchConfig:
     max_candidates: int = 16
     gps_sigma: float = 10.0
     transition_beta: float = 20.0
-    max_transition_turn_angle_deg: float = 150.0
+    max_transition_turn_angle_deg: float = 120.0
     turn_tangent_sample_m: float = 10.0
 
     def __post_init__(self) -> None:
@@ -76,10 +76,10 @@ class Matcher:
     def __init__(
         self,
         airport_graph: AirportGraph,
-        config: MatchConfig | None = None,
+        config: MatchConfig  = MatchConfig(),
     ) -> None:
         self.airport_graph = airport_graph
-        self.config = config or MatchConfig()
+        self.config = config
         self.index = CandidateIndex(airport_graph)
         self.router = NetworkRouter(
             airport_graph,
@@ -173,7 +173,7 @@ def _append_transition_edges(
     output.extend(edges[start:])
 
 
-def _recover(transitions: list, first: Candidate) -> list[DirectedEdge]:
+def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEdge]:
     if not transitions:
         u, v, key = first.edge_id
         return [DirectedEdge(u, v, key)]
@@ -186,7 +186,7 @@ def _recover(transitions: list, first: Candidate) -> list[DirectedEdge]:
 def map_flight(
     AG: AirportGraph,
     f: Flight,
-    config: MatchConfig | None = None,
+    config: MatchConfig = MatchConfig(),
 ) -> Path:
     """Match ADS-B observations to a continuous airport-network path with an HMM."""
     return Matcher(AG, config).map_flight(f)
@@ -195,7 +195,7 @@ def map_flight(
 def map_flights(
     airport_graph: AirportGraph,
     flights: Flights,
-    config: MatchConfig | None = None,
+    config: MatchConfig = MatchConfig(),
 ) -> BatchMatchResult:
     """Match every flight independently without stopping on matching failures."""
     matches: list[tuple[Any, Path]] = []
