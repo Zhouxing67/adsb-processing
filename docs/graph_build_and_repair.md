@@ -154,3 +154,20 @@ uv run python src/__main__.py `
 被错误地解析到另一版本的机场图上。
 
 后台批量匹配、结果文件和 Workbench 交互匹配的详细步骤见 [路径匹配运行说明](path_matching_run.md)。
+
+
+## 界面预览
+
+启动任一 Workbench 服务后，访问 `/preview` 可使用新版界面，原入口 `/` 保留。
+预览入口复用相同的会话、机场图和匹配 API；编辑模式的保存目标由启动参数决定。
+React 与 Ant Design 当前通过固定版本的 CDN 模块加载，需要联网。
+
+前端职责：
+
+- `static/app.js`：共用地图、编辑操作和图状态逻辑，两种入口均加载此文件。
+- `static/flights-v2.js`：共用航班查询、匹配与观测记录逻辑。
+- `static/preview.js`：React 外壳、图标、侧栏与宽度管理。
+- `static/preview-flights.js`：预览版航班表格、选择工具栏与拖放分屏。
+- `static/preview.css`：预览版设计 token 和布局。
+
+预览版不维护独立的地图业务副本。航班预览层复用已有查询、选择和匹配函数。

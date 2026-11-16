@@ -374,6 +374,22 @@ def create_app(
     def index() -> FileResponse:
         return FileResponse(STATIC_DIRECTORY / "index.html", headers=NO_CACHE_HEADERS)
 
+    @app.get("/preview")
+    def design_preview() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "preview.html", headers=NO_CACHE_HEADERS)
+
+    @app.get("/preview.css")
+    def preview_stylesheet() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "preview.css", media_type="text/css", headers=NO_CACHE_HEADERS)
+
+    @app.get("/preview-flights.js")
+    def preview_flights_javascript() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "preview-flights.js", media_type="text/javascript", headers=NO_CACHE_HEADERS)
+
+    @app.get("/preview.js")
+    def preview_javascript() -> FileResponse:
+        return FileResponse(STATIC_DIRECTORY / "preview.js", media_type="text/javascript", headers=NO_CACHE_HEADERS)
+
     @app.get("/app.css")
     def stylesheet() -> FileResponse:
         return FileResponse(

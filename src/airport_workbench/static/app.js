@@ -66,7 +66,7 @@ function closeDetails() { selectedNodeKey=null;activeOperationRevision=null;narr
 function returnToTopology(){narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");topologyPanel.classList.remove("hidden");document.querySelector("#topology-toggle").classList.add("active");setTopologyInspection(true);refreshMapLayout();}
 function showProperties(title, properties) {
   const ignored = new Set(["id", "u_id", "v_id", "validation_color", "editable_attributes"]);
-  const rows = Object.entries(properties).filter(([key]) => !ignored.has(key)).map(([key,value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(value)}</dd>`).join("");
+  const rows = Object.entries(properties).filter(([key]) => !ignored.has(key)).map(([key,value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(typeof value==="object"?JSON.stringify(value,null,2):typeof value==="number"&&!Number.isInteger(value)?Number(value.toFixed(key==="longitude"||key==="latitude"?7:3)):value)}</dd>`).join("");
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2><dl>${rows}</dl>`; openDetails();
 }
 function showNodeProperties(feature) {
@@ -85,19 +85,19 @@ function showConfirmation(title, html, confirmText, onConfirm, revision) {
   document.querySelector("#cancel-action").onclick = closeDetails;
   document.querySelector("#confirm-action").onclick = onConfirm;
 }
-function showGeometry(geometry, color = "#db2777") { clearPreview(); previewLayer = L.geoJSON({type:"Feature", geometry}, {pane:"previewPane", interactive:false, style:{color,weight:9,opacity:.92,lineCap:"round",lineJoin:"round"}}).addTo(map); }
+function showGeometry(geometry, color = "#2563eb") { clearPreview(); previewLayer = L.geoJSON({type:"Feature", geometry}, {pane:"previewPane", interactive:false, style:{color,weight:4,opacity:.9,lineCap:"round",lineJoin:"round"}}).addTo(map); }
 function highlightEdgeEndpoints(feature) {
   clearEndpointHighlight();
   const markers=[feature.properties.u_id,feature.properties.v_id].map(identifier=>nodeFeatureIndex.get(nodeKey(identifier))).filter(Boolean).map(node=>{
     const [longitude,latitude]=node.geometry.coordinates;
-    return L.circleMarker([latitude,longitude],{pane:"selectionPane",radius:11,color:"#facc15",weight:4,fill:false,interactive:false});
+    return L.circleMarker([latitude,longitude],{pane:"selectionPane",radius:5,color:"#fff",weight:2,fillColor:"#2563eb",fillOpacity:1,interactive:false});
   });
   endpointLayer=L.layerGroup(markers).addTo(map);
 }
 function selectEdge(feature, fit = false) {
   selectedNodeKey=null;
   clearSelection(); highlightEdgeEndpoints(feature);
-  selectionLayer=L.geoJSON({type:"Feature",geometry:feature.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#7e22ce",weight:10,opacity:.9}}).addTo(map);
+  selectionLayer=L.geoJSON({type:"Feature",geometry:feature.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:4,opacity:1,lineCap:"round",lineJoin:"round"}}).addTo(map);
   if(fit) map.fitBounds(selectionLayer.getBounds(),{padding:[80,80],maxZoom:24});
   showProperties(`派生边 ${feature.properties.edge_id}`,feature.properties);
 }
@@ -108,17 +108,17 @@ function selectNode(feature, fit = false) {
   const neighbours=new Set(incident.map(edge=>nodeKey(edge.properties.u_id)===id?nodeKey(edge.properties.v_id):nodeKey(edge.properties.u_id)));
   const layersToShow=[];
   const seenGeometry=new Set();
-  incident.forEach(edge=>{const geometryKey=JSON.stringify(edge.geometry);if(seenGeometry.has(geometryKey))return;seenGeometry.add(geometryKey);layersToShow.push(L.geoJSON({type:"Feature",geometry:edge.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:6,opacity:.82,lineCap:"round",lineJoin:"round"}}));});
-  neighbours.forEach(neighbour=>{const item=nodeFeatureIndex.get(neighbour);if(item){const [x,y]=item.geometry.coordinates;layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:7,color:"#fff",fillColor:"#0891b2",fillOpacity:1,weight:3,interactive:false}));}});
+  incident.forEach(edge=>{const geometryKey=JSON.stringify(edge.geometry);if(seenGeometry.has(geometryKey))return;seenGeometry.add(geometryKey);layersToShow.push(L.geoJSON({type:"Feature",geometry:edge.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:3,opacity:.75,lineCap:"round",lineJoin:"round"}}));});
+  neighbours.forEach(neighbour=>{const item=nodeFeatureIndex.get(neighbour);if(item){const [x,y]=item.geometry.coordinates;layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:4,color:"#fff",fillColor:"#6683a5",fillOpacity:1,weight:1.5,interactive:false}));}});
   const [x,y]=feature.geometry.coordinates;
-  layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:14,color:"#2563eb",fill:false,opacity:.45,weight:2,interactive:false}));
+  layersToShow.push(L.circleMarker([y,x],{pane:"selectionPane",radius:8,color:"#fff",fillColor:"#2563eb",fillOpacity:1,opacity:1,weight:2.5,interactive:false}));
   selectionLayer=L.layerGroup(layersToShow).addTo(map);
   if(fit) map.setView([y,x],Math.max(map.getZoom(),22));
   showNodeProperties(feature);
 }
 function highlightMergeNodes(nodes) {
   clearSelection();
-  const markers=nodes.map((node,index)=>{const [x,y]=node.position;return L.circleMarker([y,x],{pane:"selectionPane",radius:index===0?13:11,color:"#7e22ce",fillColor:index===0?"#facc15":"#22d3ee",fillOpacity:1,weight:4,interactive:false});});
+  const markers=nodes.map((node,index)=>{const [x,y]=node.position;return L.circleMarker([y,x],{pane:"selectionPane",radius:index===0?8:6,color:"#fff",fillColor:index===0?"#2563eb":"#6485ad",fillOpacity:1,weight:2,interactive:false});});
   selectionLayer=L.layerGroup(markers).addTo(map);
   if(markers.length) map.fitBounds(L.featureGroup(markers).getBounds(),{padding:[100,100],maxZoom:26});
 }
@@ -183,7 +183,7 @@ async function openMergeCandidates() {
   try {
     const result=await readResponse(await fetch("/api/merge-candidates"));
     const rows=result.candidates.map((candidate,index)=>`<div class="merge-candidate"><strong>候选 ${index+1} · 最大距离 ${candidate.max_distance_m.toFixed(3)} m</strong><div class="candidate-nodes">${candidate.nodes.map((node,nodeIndex)=>`<button class="candidate-node secondary-button" data-candidate="${index}" data-node="${nodeIndex}">${escapeHtml(node.node_id)}</button>`).join("")}</div><button class="candidate-use primary-button" data-candidate="${index}">检查并合并</button></div>`).join("");
-    detailsContent.innerHTML=`<h2>疑似重复图节点</h2><p class="field-note">只检查现有图节点（包括人工节点），不搜索尚未成为图节点的内部 OSM Node。列表只提供候选，不会自动合并。</p><div class="source-options">${rows||"<p>没有 0.5 米内的候选组</p>"}</div>`;openDetails();
+    detailsContent.innerHTML=`<h2>疑似重复图节点</h2><p class="field-note">候选距离 ≤ 0.5 m</p><div class="source-options">${rows||"<p>没有 0.5 米内的候选组</p>"}</div>`;openDetails();
     document.querySelectorAll(".candidate-node").forEach(button=>button.onclick=()=>{const candidate=result.candidates[Number(button.dataset.candidate)];const node=candidate.nodes[Number(button.dataset.node)];highlightMergeNodes(candidate.nodes);map.setView([node.position[1],node.position[0]],Math.max(map.getZoom(),24));setStatus(`候选来源节点 ${node.node_id}`);});
     document.querySelectorAll(".candidate-use").forEach(button=>button.onclick=()=>previewMerge({node_ids:result.candidates[Number(button.dataset.candidate)].node_ids,expected_revision:result.revision}));
   }catch(error){setStatus(`无法读取合并候选：${error.message}`);}
@@ -245,7 +245,7 @@ function nodeClicked(feature,event) {
   if(mode==="draw")return drawingNodeClicked(feature);
   selectNode(feature);
   if(mode==="delete") return previewNodeDeletion(p.id);
-  if(mode==="restore") { if(!firstNode){firstNode=p.id;firstNodeRevision=currentState.revision;event.target.setStyle({radius:9,color:"#7e22ce",weight:4});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(nodeKey(firstNode)===nodeKey(p.id))return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.id,firstNodeRevision); }
+  if(mode==="restore") { if(!firstNode){firstNode=p.id;firstNodeRevision=currentState.revision;event.target.setStyle({radius:6,color:"#2563eb",weight:2});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(nodeKey(firstNode)===nodeKey(p.id))return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.id,firstNodeRevision); }
   if(mode==="snap") { firstNode=p.id;firstNodeRevision=currentState.revision;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
   if(mode==="merge") { if(!mergeNodeIds.length)mergeSelectionRevision=currentState.revision;if(!mergeNodeIds.some(id=>nodeKey(id)===nodeKey(p.id)))mergeNodeIds.push(p.id);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeIds.length} 个待合并节点`); }
 }
