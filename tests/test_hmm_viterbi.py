@@ -17,6 +17,7 @@ from path_map.hmm import (
 )
 from path_map.matcher import _append_transition_edges
 from path_map.path import DirectedEdge
+from path_map.transition_constraints import LocalTurnConstraint
 
 
 def make_candidate(layer: int, state: int, distance: float) -> Candidate:
@@ -83,9 +84,17 @@ def test_viterbi_can_choose_farther_candidates_when_near_transition_turn_is_ille
     graph.add_edge("C", "D", key="far", geometry=LineString([(0, 20), (10, 20)]))
     edge_ids = [("A", "O", "near-source"), ("O", "B", "near-target"), ("C", "D", "far")]
     lines = [graph.edges[edge]["geometry"] for edge in edge_ids]
-    router = NetworkRouter(
-        SimpleNamespace(graph=graph), SimpleNamespace(edge_ids=edge_ids, lines=lines)
+    airport_graph = SimpleNamespace(graph=graph)
+    directed_lines = {}
+    for edge, line in zip(edge_ids, lines):
+        u, v, key = edge
+        directed_lines[edge] = line
+        directed_lines[(v, u, key)] = LineString(reversed(line.coords))
+    index = SimpleNamespace(edge_ids=edge_ids, lines=lines, directed_lines=directed_lines)
+    constraint = LocalTurnConstraint(
+        index, max_angle_deg=150, tangent_sample_m=10
     )
+    router = NetworkRouter(airport_graph, index, constraints=(constraint,))
     near_source = Candidate(0, edge_ids[0], 0, Point(-5, 0), 5, 0.5)
     near_target = Candidate(1, edge_ids[1], 0, Point(-5, 0.5), 5, 0.5)
     far_source = Candidate(0, edge_ids[2], 2, Point(2, 20), 2, 0.2)

@@ -4,7 +4,7 @@ from path_map import map_flight
 
 
 def main():
-    flights = Flights.from_file(r"data\ADS-B\more_15_arr.csv")
+    flights = Flights.from_file(r"data\ADS-B\failed.csv")
     graph = load_graph(r"data\graphs\zbaa_final.json")
 
 

@@ -7,8 +7,8 @@ import pytest
 from airport_surface import load_graph
 from path_map import MatchConfig, Matcher, MovementType, load_data
 from path_map.candidates import CandidateIndex
-from path_map.hmm import NetworkRouter
 from path_map.path import DirectedEdge
+from path_map.transition_constraints import LocalTurnConstraint
 
 ROOT = Path(__file__).resolve().parents[1]
 GRAPH_FILE = ROOT / "data" / "graphs" / "zbaa_final.json"
@@ -28,14 +28,18 @@ def target_case():
 
 def test_target_turn_is_measured_from_local_directed_tangents(target_case):
     airport_graph, _flight = target_case
-    router = NetworkRouter(airport_graph, CandidateIndex(airport_graph))
+    constraint = LocalTurnConstraint(
+        CandidateIndex(airport_graph),
+        max_angle_deg=150,
+        tangent_sample_m=10,
+    )
     incoming = DirectedEdge(244881041, 244881044, 0)
     outgoing = DirectedEdge(244881044, 1055651195, 0)
 
-    angle = router._turn_angle(incoming, outgoing)
+    angle = constraint.turn_angle(incoming, outgoing)
 
     assert angle == pytest.approx(169.952391, abs=1e-6)
-    assert router._contains_illegal_turn((incoming, outgoing))
+    assert not constraint.accepts((incoming, outgoing))
 
 
 def test_target_flight_never_returns_the_prohibited_turn(target_case):

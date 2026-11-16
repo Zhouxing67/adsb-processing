@@ -8,9 +8,10 @@ from shapely.geometry import LineString, Point
 from path_map.candidates import Candidate
 from path_map.hmm import NetworkRouter
 from path_map.path import DirectedEdge
+from path_map.transition_constraints import LocalTurnConstraint
 
 
-def turn_router(
+def turn_constraint(
     angle_deg: float,
     *,
     threshold: float = 150.0,
@@ -29,12 +30,17 @@ def turn_router(
     index = SimpleNamespace(
         edge_ids=[("A", "O", "in"), ("O", "B", "out")],
         lines=[LineString(incoming_coords), LineString(outgoing_coords)],
+        directed_lines={
+            ("A", "O", "in"): LineString(incoming_coords),
+            ("O", "A", "in"): LineString(reversed(incoming_coords)),
+            ("O", "B", "out"): LineString(outgoing_coords),
+            ("B", "O", "out"): LineString(reversed(outgoing_coords)),
+        },
     )
-    return NetworkRouter(
-        SimpleNamespace(graph=graph),
+    return LocalTurnConstraint(
         index,
-        max_transition_turn_angle_deg=threshold,
-        turn_tangent_sample_m=sample_m,
+        max_angle_deg=threshold,
+        tangent_sample_m=sample_m,
     )
 
 
@@ -144,9 +150,7 @@ def test_same_edge_direct_travel_competes_with_shorter_endpoint_detour():
             LineString([(5, 0), (10, 0)]),
         ],
     )
-    router = NetworkRouter(
-        SimpleNamespace(graph=graph), index, max_transition_turn_angle_deg=180
-    )
+    router = NetworkRouter(SimpleNamespace(graph=graph), index)
 
     transition = router.transition(
         candidate(("A", "B", "main"), 10),
@@ -226,17 +230,17 @@ def test_shared_node_zero_distance_transition_adds_no_partial_edges():
     [(0, False), (90, False), (149, False), (150, False), (151, True), (179.9, True)],
 )
 def test_local_turn_angle_threshold(angle, illegal):
-    router = turn_router(angle)
+    constraint = turn_constraint(angle)
 
-    assert router._contains_illegal_turn(
+    assert constraint.accepts(
         [DirectedEdge("A", "O", "in"), DirectedEdge("O", "B", "out")]
-    ) is illegal
+    ) is not illegal
 
 
 def test_reverse_directed_edge_uses_reverse_local_tangent():
-    router = turn_router(90)
+    constraint = turn_constraint(90)
 
-    angle = router._turn_angle(
+    angle = constraint.turn_angle(
         DirectedEdge("B", "O", "out"), DirectedEdge("O", "A", "in")
     )
 
@@ -244,41 +248,41 @@ def test_reverse_directed_edge_uses_reverse_local_tangent():
 
 
 def test_curved_edge_uses_local_tangent_instead_of_endpoint_chord():
-    router = turn_router(
+    constraint = turn_constraint(
         0,
         threshold=30,
         sample_m=0.5,
         outgoing_coords=[(0, 0), (2, 0), (20, 20)],
     )
 
-    assert not router._contains_illegal_turn(
+    assert constraint.accepts(
         [DirectedEdge("A", "O", "in"), DirectedEdge("O", "B", "out")]
     )
 
 
 def test_short_edges_use_their_available_length_for_tangent():
-    router = turn_router(
+    constraint = turn_constraint(
         90,
         sample_m=10,
         incoming_coords=[(-1, 0), (0, 0)],
         outgoing_coords=[(0, 0), (0, 2)],
     )
 
-    assert router._turn_angle(
+    assert constraint.turn_angle(
         DirectedEdge("A", "O", "in"), DirectedEdge("O", "B", "out")
     ) == pytest.approx(90)
 
 
 def test_degenerate_tangent_is_skipped_without_error(caplog):
-    router = turn_router(0)
-    router.incoming_tangents[("A", "O", "in")] = None
+    constraint = turn_constraint(0)
+    constraint.incoming_tangents[("A", "O", "in")] = None
 
-    assert not router._contains_illegal_turn(
+    assert constraint.accepts(
         [DirectedEdge("A", "O", "in"), DirectedEdge("O", "B", "out")]
     )
 
 
-def test_illegal_endpoint_choice_does_not_hide_legal_alternative(monkeypatch):
+def test_illegal_endpoint_choice_does_not_hide_legal_alternative():
     graph = nx.MultiGraph()
     graph.add_edge("A", "B", key="source", geometry=LineString([(0, 0), (10, 0)]))
     graph.add_edge("B", "C", key="target", geometry=LineString([(10, 0), (20, 0)]))
@@ -286,26 +290,27 @@ def test_illegal_endpoint_choice_does_not_hide_legal_alternative(monkeypatch):
         edge_ids=[("A", "B", "source"), ("B", "C", "target")],
         lines=[LineString([(0, 0), (10, 0)]), LineString([(10, 0), (20, 0)])],
     )
-    router = NetworkRouter(SimpleNamespace(graph=graph), index)
-    checked = 0
+    class RejectFirst:
+        def __init__(self):
+            self.checked = 0
 
-    def reject_first(edges):
-        nonlocal checked
-        checked += 1
-        return checked == 1
+        def accepts(self, _edges):
+            self.checked += 1
+            return self.checked != 1
 
-    monkeypatch.setattr(router, "_contains_illegal_turn", reject_first)
+    constraint = RejectFirst()
+    router = NetworkRouter(SimpleNamespace(graph=graph), index, constraints=(constraint,))
 
     transition = router.transition(
         candidate(("A", "B", "source"), 5, 10),
         candidate(("B", "C", "target"), 5, 10),
     )
 
-    assert checked == 4
+    assert constraint.checked == 4
     assert transition is not None
 
 
-def test_transition_returns_none_when_every_endpoint_choice_is_illegal(monkeypatch):
+def test_transition_returns_none_when_every_endpoint_choice_is_illegal():
     graph = nx.MultiGraph()
     graph.add_edge("A", "B", key="source", geometry=LineString([(0, 0), (10, 0)]))
     graph.add_edge("B", "C", key="target", geometry=LineString([(10, 0), (20, 0)]))
@@ -313,8 +318,11 @@ def test_transition_returns_none_when_every_endpoint_choice_is_illegal(monkeypat
         edge_ids=[("A", "B", "source"), ("B", "C", "target")],
         lines=[LineString([(0, 0), (10, 0)]), LineString([(10, 0), (20, 0)])],
     )
-    router = NetworkRouter(SimpleNamespace(graph=graph), index)
-    monkeypatch.setattr(router, "_contains_illegal_turn", lambda _edges: True)
+    class RejectAll:
+        def accepts(self, _edges):
+            return False
+
+    router = NetworkRouter(SimpleNamespace(graph=graph), index, constraints=(RejectAll(),))
 
     assert router.transition(
         candidate(("A", "B", "source"), 5, 10),

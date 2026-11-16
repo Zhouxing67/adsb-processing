@@ -11,11 +11,13 @@ from .matcher import (
     map_flights,
 )
 from .path import DirectedEdge, Path, PathGraphMismatch, PathRecord
+from .transition_constraints import LocalTurnConstraint, TransitionConstraint
 
 __all__ = [
     "DirectedEdge",
     "BatchMatchResult",
     "MapMatchingError",
+    "LocalTurnConstraint",
     "MatchFailure",
     "Matcher",
     "MatchConfig",
@@ -23,6 +25,7 @@ __all__ = [
     "Path",
     "PathGraphMismatch",
     "PathRecord",
+    "TransitionConstraint",
     "load_data",
     "map_flight",
     "map_flights",

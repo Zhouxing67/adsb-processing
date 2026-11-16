@@ -34,6 +34,10 @@ Each observation performs one complete `candidate_radius` query and keeps at mos
 `max_candidates` edges by distance. Endpoint-route choices whose internal local turn
 exceeds `max_transition_turn_angle_deg` are rejected before distance minimization;
 the tangent is sampled from directed projected geometry near the shared node.
+`NetworkRouter` only builds candidate-to-candidate choices, applies injected generic
+transition constraints, and selects the shortest accepted choice. The directed geometry
+cache and turn-angle policy belong to `LocalTurnConstraint`, which `Matcher` constructs
+from `MatchConfig`.
 
 `Path` references its `AirportGraph`, retains traversal direction, parallel-edge
 keys, loops, and reversals, and exposes a WGS84 geometry. `PathRecord` is its

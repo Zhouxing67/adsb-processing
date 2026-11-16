@@ -11,6 +11,8 @@ from shapely.geometry import LineString, Point
 
 from airport_surface import AirportGraph
 
+from .path import EdgeId
+
 
 @dataclass(frozen=True, slots=True)
 class Candidate:
@@ -19,7 +21,7 @@ class Candidate:
     # 观测点（索引）（ADS_B点）
     observation_index: int
     # 对应的AirportGraph的一条边
-    edge_id: tuple[Hashable, Hashable, Hashable]
+    edge_id: EdgeId
     # 观测点到边的距离
     distance: float
     # 该位置距离边起点多远；
@@ -37,16 +39,21 @@ class CandidateIndex:
 
     def __init__(self, airport_graph: AirportGraph) -> None:
         self.airport_graph = airport_graph
-        self.edge_ids: list[tuple[Hashable, Hashable, Hashable]] = []
+        self.directed_lines: dict[EdgeId, LineString] = {}
+        self.edge_ids: list[EdgeId] = []
         self.lines: list[LineString] = []
         for u, v, key, data in airport_graph.graph.edges(keys=True, data=True):
             line = airport_graph.project_shape(data["geometry"])
             if not isinstance(line, LineString):
                 raise ValueError(f"Edge {(u, v, key)} geometry must be a LineString")
+            line = self._orient_from_node(line, u)
+            edge = (u, v, key)
+            reverse = (v, u, key)
+            self.directed_lines[edge] = line
+            self.directed_lines[reverse] = LineString(reversed(line.coords))
             if line.is_empty or line.length == 0:
                 continue
-            line = self._orient_from_node(line, u)
-            self.edge_ids.append((u, v, key))
+            self.edge_ids.append(edge)
             self.lines.append(line)
         if not self.lines:
             raise ValueError("Airport graph has no non-empty edge geometries")

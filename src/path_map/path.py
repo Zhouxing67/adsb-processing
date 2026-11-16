@@ -10,6 +10,8 @@ from shapely.geometry import LineString
 
 from airport_surface import AirportGraph, graph_id
 
+type EdgeId = tuple[Hashable, Hashable, Hashable]
+
 
 @dataclass(frozen=True, slots=True)
 class DirectedEdge:
@@ -24,7 +26,7 @@ class DirectedEdge:
     key_: Hashable
 
     @property
-    def id(self) -> tuple[Hashable, Hashable, Hashable]:
+    def id(self) -> EdgeId:
         return self.from_, self.to_, self.key_
 
     def reversed_edge(self) -> DirectedEdge:
@@ -41,7 +43,7 @@ class Path(Sequence[DirectedEdge]):
     def __init__(
         self,
         airport_graph: AirportGraph,
-        edges: Sequence[DirectedEdge | tuple[Hashable, Hashable, Hashable]],
+        edges: Sequence[DirectedEdge | EdgeId],
     ) -> None:
         self.airport_graph = airport_graph
         self._edges = tuple(e if isinstance(e, DirectedEdge) else DirectedEdge(*e) for e in edges)
@@ -62,7 +64,7 @@ class Path(Sequence[DirectedEdge]):
         return self._edges
 
     @property
-    def edge_ids(self) -> tuple[tuple[Hashable, Hashable, Hashable], ...]:
+    def edge_ids(self) -> tuple[EdgeId, ...]:
         """返回每条边的完整标识 ``(from_, to_, key_)``。"""
         return tuple(edge.id for edge in self)
 

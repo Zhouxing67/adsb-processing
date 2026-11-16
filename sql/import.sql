@@ -1,4 +1,7 @@
 --- 导入PEK机场的边界数据 ---
+INSTALL spatial;
+LOAD spatial;
+
 CREATE
 OR REPLACE TABLE airport_boundary AS
 SELECT *

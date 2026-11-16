@@ -28,3 +28,6 @@ outputs/
 *.duckdb
 *.duckdb.wal
 .duckdb_temp/
+
+#pytest
+*.pytest*

@@ -17,6 +17,7 @@ from airport_surface import AirportGraph
 from .candidates import Candidate, CandidateIndex
 from .hmm import NetworkRouter, Transition, viterbi
 from .path import DirectedEdge, Path
+from .transition_constraints import LocalTurnConstraint
 
 logger = logging.getLogger(__name__)
 
@@ -81,11 +82,15 @@ class Matcher:
         self.airport_graph = airport_graph
         self.config = config
         self.index = CandidateIndex(airport_graph)
+        turn_constraint = LocalTurnConstraint(
+            self.index,
+            max_angle_deg=self.config.max_transition_turn_angle_deg,
+            tangent_sample_m=self.config.turn_tangent_sample_m,
+        )
         self.router = NetworkRouter(
             airport_graph,
             self.index,
-            max_transition_turn_angle_deg=self.config.max_transition_turn_angle_deg,
-            turn_tangent_sample_m=self.config.turn_tangent_sample_m,
+            constraints=(turn_constraint,),
         )
 
     def map_flight(
@@ -164,15 +169,6 @@ def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
     x, y = ag.project.transform(frame.longitude.to_numpy(), frame.latitude.to_numpy())
     return [Point(float(px), float(py)) for px, py in zip(x, y)]
 
-
-def _append_transition_edges(
-    output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]
-) -> None:
-    """Join transitions, collapsing only continued travel on their shared boundary edge."""
-    start = 1 if output and edges and output[-1] == edges[0] else 0
-    output.extend(edges[start:])
-
-
 def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEdge]:
     if not transitions:
         u, v, key = first.edge_id
@@ -181,6 +177,13 @@ def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEd
     for transition in transitions:
         _append_transition_edges(output, transition.edges)
     return output
+
+def _append_transition_edges(
+    output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]
+) -> None:
+    """Join transitions, collapsing only continued travel on their shared boundary edge."""
+    start = 1 if output and edges and output[-1] == edges[0] else 0
+    output.extend(edges[start:])
 
 
 def map_flight(
