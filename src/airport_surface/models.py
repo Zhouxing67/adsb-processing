@@ -129,6 +129,7 @@ class AirportGraph:
         source_edges: Mapping[str, SourceEdge] | None = None,
         node_aliases: Mapping[Hashable, Hashable] | None = None,
         metadata: GraphMetadata | None = None,
+        stand_groups: tuple[dict[str, Any], ...] = (),
     ) -> None:
         self.graph = graph
         self.projection = projection
@@ -138,6 +139,8 @@ class AirportGraph:
         self.source_edges = dict(source_edges or {})
         self.node_aliases = dict(node_aliases or {})
         self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
+        # Preserve existing serialized groups as opaque metadata; no active grouping pipeline.
+        self.stand_groups = deepcopy(tuple(stand_groups))
         self.initialize_semantic_defaults()
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
@@ -228,4 +231,5 @@ class AirportGraph:
             source_edges=self.source_edges,
             node_aliases=self.node_aliases,
             metadata=self.metadata,
+            stand_groups=deepcopy(self.stand_groups),
         )

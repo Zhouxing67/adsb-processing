@@ -268,6 +268,7 @@ function renderEdges(data) {
   edgeGroup=L.layerGroup([casing,edgeLayer]);if(wasVisible)edgeGroup.addTo(map);layers.addOverlay(edgeGroup,`派生边 (${data.edge_count})`);
 }
 function renderReferenceLayers(data) {
+
   dataLayers.forEach(layer => { layers.removeLayer(layer); map.removeLayer(layer); }); dataLayers=[];
   const flightColors=["#0066cc","#00a878","#7b2cbf","#e76f00","#008c9e","#c03664","#5c7c19","#5f4bb6"];
   const pathColors=["#d00040","#6a00a8","#005f73","#b23a00","#2b6f3e","#8f2d56","#3a0ca3","#9c5700"];

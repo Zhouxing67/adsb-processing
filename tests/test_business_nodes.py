@@ -12,7 +12,6 @@ from airport_surface import (
     AirportGraph,
     SourceEdge,
     SourceSegment,
-    enrich_airport_semantics,
     load_graph,
     save_graph,
 )
@@ -79,13 +78,6 @@ def business_graph() -> AirportGraph:
     edge("composite-start", "composite-access", "composite-taxi", "composite-runway")
     edge("composite-access", "composite-apron", "composite-parking")
     return AirportGraph(graph, PROJECTION, source_edges=sources)
-
-
-def test_new_interface_excludes_parking_only_runway_connection():
-    graph = enrich_airport_semantics(business_graph())
-    interfaces = {n for n, d in graph.graph.nodes(data=True)
-                  if d["node_type"] == "runway_interface"}
-    assert interfaces == {"access"}
 
 
 def test_old_collections_are_verified_then_ignored(tmp_path):

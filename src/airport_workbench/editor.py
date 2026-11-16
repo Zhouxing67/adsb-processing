@@ -26,7 +26,6 @@ from airport_surface import (
     SourceNode,
     SourceSegment,
     edge_source_segments,
-    enrich_airport_semantics,
 )
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
@@ -34,7 +33,6 @@ from airport_surface.graph import (
     compact_source_segments,
     geometry_from_source_interval,
     geometry_from_source_segments,
-    graph_id,
     rebuild_source_edges,
     reverse_source_segments,
     save_graph,
@@ -127,6 +125,7 @@ class EditorSession:
             source_edges=airport_graph.source_edges,
             node_aliases=airport_graph.node_aliases,
             metadata=airport_graph.metadata,
+            stand_groups=airport_graph.stand_groups,
         )
         self._history: list[tuple[AirportGraph, bool]] = []
         self.revision = 0
@@ -147,6 +146,7 @@ class EditorSession:
             source_edges=current.source_edges,
             node_aliases=current.node_aliases,
             metadata=current.metadata,
+            stand_groups=current.stand_groups,
         )
 
     @property
@@ -218,12 +218,7 @@ class EditorSession:
             self._check_revision(expected_revision)
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
-            enriched = enrich_airport_semantics(self.airport_graph)
-            changed = graph_id(enriched) != graph_id(self.airport_graph)
-            output = save_graph(enriched, path)
-            self.airport_graph = enriched
-            if changed:
-                self.revision += 1
+            output = save_graph(self.airport_graph, path)
             return CommandResult(output, self.revision)
 
     def finish(
@@ -238,12 +233,7 @@ class EditorSession:
             self._check_revision(expected_revision)
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
-            enriched = enrich_airport_semantics(self.airport_graph)
-            changed = graph_id(enriched) != graph_id(self.airport_graph)
-            output = save_graph(enriched, path)
-            self.airport_graph = enriched
-            if changed:
-                self.revision += 1
+            output = save_graph(self.airport_graph, path)
             on_finish()
             return CommandResult(output, self.revision)
 
