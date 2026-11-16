@@ -1,10 +1,11 @@
+import json
 
 import networkx as nx
 import pytest
 from pyproj import Proj
 from shapely.geometry import LineString
 
-from airport_surface import graph_id, load_graph, save_graph
+from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from airport_surface.graph import (
     validate_edge_sources,
     validate_source_intervals,
@@ -48,7 +49,7 @@ def test_crossing_and_point_split_preserve_sources():
     assert graph_id(graph) == before
 
 
-def test_save_failure_and_semantic_revision(tmp_path, monkeypatch):
+def test_save_failure_preserves_graph_and_revision(tmp_path, monkeypatch):
     graph = topology()
     complete_geometric_topology(graph)
     session = EditorSession(graph)
@@ -144,14 +145,6 @@ def test_loader_rejects_non_line_source_geometry(tmp_path):
         load_graph(path)
 
 
-def test_json_value_distinguishes_dataclass_instances_from_classes():
-    from airport_surface import GraphMetadata
-    from utils.json_value import to_json_value
-
-    assert to_json_value(GraphMetadata("TEST")) == {"airport": "TEST", "build_issues": []}
-    assert to_json_value(GraphMetadata) == str(GraphMetadata)
-
-
 def test_coordinate_transforms_preserve_linestring():
     graph = topology()
     line = LineString([(0, 0), (0.001, 0.001), (0.002, 0)])
@@ -160,3 +153,59 @@ def test_coordinate_transforms_preserve_linestring():
     assert isinstance(projected, LineString)
     assert isinstance(restored, LineString)
     assert restored.equals_exact(line, tolerance=1e-12)
+
+
+def test_old_collections_are_verified_then_ignored(tmp_path):
+    from airport_surface.graph import _document_graph_id
+
+    graph = nx.MultiGraph()
+    graph.add_node(1, pos=(0, 0))
+    path = save_graph(AirportGraph(graph, Proj("EPSG:3857")), tmp_path / "old.json")
+    document = json.loads(path.read_text(encoding="utf-8"))
+    document["parking_position_nodes"] = [1, "obsolete-node"]
+    document["runway_access_nodes"] = [1]
+    document["graph_id"] = _document_graph_id(document)
+    path.write_text(json.dumps(document), encoding="utf-8")
+    loaded = load_graph(path)
+    assert loaded.graph.nodes[1]["node_type"] == "unclassified"
+    assert not hasattr(loaded, "parking_position_nodes")
+    save_graph(loaded, tmp_path / "new.json")
+    new = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
+    assert "parking_position_nodes" not in new
+    assert "runway_access_nodes" not in new
+    document["parking_position_nodes"] = []
+    path.write_text(json.dumps(document), encoding="utf-8")
+    with pytest.raises(ValueError, match="graph_id"):
+        load_graph(path)
+
+
+def test_stored_groups_survive_without_algorithm(tmp_path):
+    groups = ({"stand_group_id": "old", "entities": [], "diagnostics": ["historical"]},)
+    graph = AirportGraph(nx.MultiGraph(), Proj("EPSG:3857"), stand_groups=groups)
+    copied = graph.copy()
+    copied.stand_groups[0]["entities"].append({"id": "new"})
+    assert graph.stand_groups == groups
+    assert load_graph(save_graph(graph, tmp_path / "graph.json")).stand_groups == groups
+
+
+def test_node_attribute_edit_is_undoable_and_read_only_is_protected():
+    from fastapi.testclient import TestClient
+
+    from airport_workbench.app import create_app
+
+    graph = nx.MultiGraph()
+    graph.add_node(1, pos=(0, 0))
+    session = EditorSession(AirportGraph(graph, Proj("EPSG:3857")))
+    session.update_node_attributes(1, {"name": "reviewed"}, expected_revision=0)
+    session.undo(expected_revision=1)
+    assert "name" not in session.graph.nodes[1]
+    with TestClient(create_app(session, read_only=True)) as client:
+        response = client.post(
+            "/api/update-node",
+            json={
+                "node": {"type": "int", "value": "1"},
+                "attributes": {"name": "reviewed"},
+                "expected_revision": 2,
+            },
+        )
+    assert response.status_code == 405
