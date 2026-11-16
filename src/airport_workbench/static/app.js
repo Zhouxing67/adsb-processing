@@ -35,6 +35,7 @@ const topologyPanel = document.querySelector("#topology-panel"), topologyBack = 
 const messages = {
   inspect: "查看模式 · 点击节点或派生边查看来源信息",
   split: "补充分割点 · 点击派生边上的正确位置；优先复用附近的原始 OSM Node",
+  draw: "直接绘制连接 · 选择起点，点击地图添加形状点，再选择终点",
   restore: "恢复来源连接 · 依次点击两个图节点，从原始 SourceEdge 网络恢复曲线",
   merge: "合并节点 · 从候选列表选择，或连续点击节点后停止选择",
   snap: "人工吸附到边 · 先选误差节点，再选它本应接入的派生边",
@@ -72,12 +73,10 @@ function showNodeProperties(feature) {
   const properties=feature.properties;
   showProperties(`节点 ${properties.node_id}`,properties);
   const readonly=currentState?.read_only||currentState?.flight_mode;
-  detailsContent.insertAdjacentHTML("beforeend",`<section class="business-annotations"><h3>业务节点标注</h3><label><input id="node-parking-position" type="checkbox" ${properties.parking_position_node?"checked":""} ${readonly?"disabled":""}>停机位侧节点</label><label><input id="node-runway-access" type="checkbox" ${properties.runway_access_node?"checked":""} ${readonly?"disabled":""}>跑道进出节点</label></section>`);
   if(readonly)return;
   const formRevision=currentState.revision;
-  const update=async()=>{const parking=document.querySelector("#node-parking-position"),runway=document.querySelector("#node-runway-access");parking.disabled=true;runway.disabled=true;try{const response=await post("/api/nodes/business-annotations",{node:properties.id,parking_position:parking.checked,runway_access:runway.checked,expected_revision:formRevision},true);setStatus(response.message);}catch(error){const current=nodeFeatureIndex.get(selectedNodeKey);if(current)showNodeProperties(current);else closeDetails();setStatus(`标注更新失败：${error.message}`);}};
-  document.querySelector("#node-parking-position").onchange=update;
-  document.querySelector("#node-runway-access").onchange=update;
+  detailsContent.insertAdjacentHTML("beforeend", `<button id="portal-lock">${properties.is_manual_lock?"解锁门户":"锁定为 Group_Portal"}</button>`);
+  document.querySelector("#portal-lock").onclick=async()=>{try{await post("/api/update-node",{node:properties.id,attributes:{...properties.editable_attributes,node_type:properties.is_manual_lock?"unclassified":"group_portal",is_manual_lock:!properties.is_manual_lock},expected_revision:formRevision},true);}catch(error){setStatus(error.message);}};
 }
 function showConfirmation(title, html, confirmText, onConfirm, revision) {
   activeOperationRevision=revision;
@@ -122,6 +121,33 @@ function highlightMergeNodes(nodes) {
   const markers=nodes.map((node,index)=>{const [x,y]=node.position;return L.circleMarker([y,x],{pane:"selectionPane",radius:index===0?13:11,color:"#7e22ce",fillColor:index===0?"#facc15":"#22d3ee",fillOpacity:1,weight:4,interactive:false});});
   selectionLayer=L.layerGroup(markers).addTo(map);
   if(markers.length) map.fitBounds(L.featureGroup(markers).getBounds(),{padding:[100,100],maxZoom:26});
+}
+
+let drawing = null;
+function cancelDrawing(){drawing=null;clearPreview();closeDetails();}
+function renderDrawing(){
+  if(!drawing)return;
+  const coordinates=[drawing.start.geometry.coordinates,...drawing.points];
+  if(drawing.end)coordinates.push(drawing.end.geometry.coordinates);
+  if(coordinates.length>1)showGeometry({type:"LineString",coordinates});else clearPreview();
+  detailsContent.innerHTML=`<h2>直接绘制连接</h2><p>已添加 ${drawing.points.length} 个形状点。${drawing.end?"检查线路后确认添加。":"点击地图添加形状点，点击节点选择终点。"}</p><label>类型 <select id="draw-type"><option value="taxiway">滑行道</option><option value="runway">跑道</option><option value="parking_position">机位线</option></select></label><label>编号 <input id="draw-ref" placeholder="可选"></label><p>中间形状点及沿途交叉不会自动连接其他线路。</p><button id="draw-back">撤回最后一点</button><button id="draw-cancel">取消绘制</button><button id="draw-confirm" ${drawing.end?"":"disabled"}>确认添加</button>`;
+  openDetails();
+  document.querySelector("#draw-back").onclick=()=>{if(drawing.end)drawing.end=null;else drawing.points.pop();renderDrawing();};
+  document.querySelector("#draw-cancel").onclick=cancelDrawing;
+  document.querySelector("#draw-confirm").onclick=async()=>{
+    const request={start:drawing.start.properties.id,end:drawing.end.properties.id,intermediate_points:drawing.points,expected_revision:drawing.revision,aeroway:document.querySelector("#draw-type").value,ref:document.querySelector("#draw-ref").value||null};
+    document.querySelector("#draw-confirm").disabled=true;
+    try{const result=await post("/api/draw-connection",request,true);cancelDrawing();setStatus(result.message);}
+    catch(error){cancelDrawing();setStatus(`补线失败：${error.message}，请重新绘制`);}
+  };
+}
+map.on("click",event=>{if(mode!=="draw"||!drawing||drawing.end)return;drawing.points.push([event.latlng.lng,event.latlng.lat]);renderDrawing();});
+function drawingNodeClicked(feature){
+  if(currentState.read_only||currentState.flight_mode)return;
+  if(!drawing)drawing={start:feature,points:[],end:null,revision:currentState.revision};
+  else if(nodeKey(drawing.start)===nodeKey(feature))return setStatus("两个端点不能相同");
+  else drawing.end=feature;
+  renderDrawing();
 }
 
 async function previewRestore(start, end, expectedRevision) {
@@ -216,17 +242,18 @@ async function previewManualSnap(node, edge, expectedRevision) {
 
 function nodeClicked(feature,event) {
   L.DomEvent.stopPropagation(event); const p=feature.properties;
+  if(mode==="draw")return drawingNodeClicked(feature);
   selectNode(feature);
   if(mode==="delete") return previewNodeDeletion(p.id);
   if(mode==="restore") { if(!firstNode){firstNode=p.id;firstNodeRevision=currentState.revision;event.target.setStyle({radius:9,color:"#7e22ce",weight:4});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(nodeKey(firstNode)===nodeKey(p.id))return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.id,firstNodeRevision); }
   if(mode==="snap") { firstNode=p.id;firstNodeRevision=currentState.revision;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
   if(mode==="merge") { if(!mergeNodeIds.length)mergeSelectionRevision=currentState.revision;if(!mergeNodeIds.some(id=>nodeKey(id)===nodeKey(p.id)))mergeNodeIds.push(p.id);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeIds.length} 个待合并节点`); }
 }
-function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); selectEdge(feature); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.id); if(mode==="split")return previewSplit(p.id,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.id,firstNodeRevision);} }
+function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); if(mode==="draw"){if(drawing&&!drawing.end){drawing.points.push([event.latlng.lng,event.latlng.lat]);renderDrawing();}return;} selectEdge(feature); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.id); if(mode==="split")return previewSplit(p.id,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.id,firstNodeRevision);} }
 
 function renderNodes() {
   if(nodeLayer) { layers.removeLayer(nodeLayer); map.removeLayer(nodeLayer); }
-  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>{const p=feature.properties;if(!p.parking_position_node&&!p.runway_access_node)return L.circleMarker(latlng,{pane:"nodesPane",radius:Math.max(Number(p.radius)||0,4),color:"rgba(255,255,255,.9)",fillColor:p.color,fillOpacity:.9,weight:1.5});const labels=`${p.parking_position_node?"P":""}${p.runway_access_node?"R":""}`;const kind=p.parking_position_node&&p.runway_access_node?"dual":p.runway_access_node?"runway":"";return L.marker(latlng,{pane:"nodesPane",icon:L.divIcon({className:`business-node-icon ${kind}`,html:labels,iconSize:[p.parking_position_node&&p.runway_access_node?22:17,17]})});},onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
+  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>{const p=feature.properties;if(p.node_type==="group_portal"||p.node_type==="runway_interface")return L.marker(latlng,{pane:"nodesPane",icon:L.divIcon({className:`business-node-icon ${p.node_type}`,html:p.node_type==="group_portal"?"G":"R",iconSize:[20,20]})});return L.circleMarker(latlng,{pane:"nodesPane",radius:Math.max(Number(p.radius)||0,4),color:"rgba(255,255,255,.9)",fillColor:p.color,fillOpacity:.9,weight:1.5});},onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
   if(!currentState?.flight_mode||topologyInspectionActive)nodeLayer.addTo(map); layers.addOverlay(nodeLayer,`图节点 (${nodeFeatures.length})`);
 }
 function renderEdges(data) {
@@ -237,7 +264,7 @@ function renderEdges(data) {
   const casing=L.geoJSON(data.edges,{pane:"edgeCasingPane",interactive:false,style:{color:"rgba(255,255,255,.8)",weight:flightMode&&!inspection?4.5:5,opacity:flightMode&&!inspection?.58:.65}});
   edgeSearchIndex.clear();
   edgeIdentityIndex.clear();
-  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:splitValidation?feature.properties.validation_color:flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
+  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:splitValidation?feature.properties.validation_color:feature.properties.edge_zone==="stand_group_internal"?"#8b5cf6":flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
   edgeGroup=L.layerGroup([casing,edgeLayer]);if(wasVisible)edgeGroup.addTo(map);layers.addOverlay(edgeGroup,`派生边 (${data.edge_count})`);
 }
 function renderReferenceLayers(data) {
@@ -277,7 +304,7 @@ function renderTopologySummary(topology) {
   document.querySelectorAll("[data-topology-action]").forEach(button=>button.onclick=()=>{const action=button.dataset.topologyAction;if(action==="component-1")showComponent(1);else if(action==="components")showNodes(nodeFeatures,"全部连通分量");else if(action==="isolated")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===0),"度为 0 的节点");else if(action==="dangling")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===1),"度为 1 的节点");else if(action==="parallel"&&topology.parallel_groups.length)showParallel(0);});
 }
 
-document.querySelectorAll(".tool").forEach(button=>button.onclick=()=>{document.querySelectorAll(".tool").forEach(item=>item.classList.remove("active"));button.classList.add("active");mode=button.dataset.mode;firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;closeDetails();setStatus(messages[mode]);if(mode==="merge")openMergeCandidates();});
+document.querySelectorAll(".tool").forEach(button=>button.onclick=()=>{document.querySelectorAll(".tool").forEach(item=>item.classList.remove("active"));button.classList.add("active");cancelDrawing();mode=button.dataset.mode;firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;closeDetails();setStatus(messages[mode]);if(mode==="merge")openMergeCandidates();});
 document.querySelector("#close-details").onclick=closeDetails;
 topologyBack.onclick=returnToTopology;
 document.querySelector("#search-toggle").onclick=event=>{document.querySelector("#search-panel").classList.toggle("hidden");event.currentTarget.classList.toggle("active");};

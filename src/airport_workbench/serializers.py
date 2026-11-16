@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import math
-from datetime import date, datetime
 from typing import Any, Sequence
 
 import pandas as pd
@@ -11,25 +9,7 @@ from shapely.geometry import LineString, Point, mapping
 
 from adsb import Flight
 from path_map import Path
-
-
-def _json_value(value: Any) -> Any:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, (str, int, float, bool)):
-        return value
-    if isinstance(value, (datetime, date, pd.Timestamp)):
-        return value.isoformat()
-    if hasattr(value, "item"):
-        return _json_value(value.item())
-    return str(value)
+from utils.json_value import to_json_value
 
 
 def flight_geojson(
@@ -49,7 +29,7 @@ def flight_geojson(
             continue
         coordinate = [float(longitude), float(latitude)]
         coordinates.append(coordinate)
-        properties = {name: _json_value(value) for name, value in row.items()}
+        properties = {name: to_json_value(value) for name, value in row.items()}
         properties.update(
             kind="observation", sequence=sequence, flight_index=index, flight_key=flight_key
         )

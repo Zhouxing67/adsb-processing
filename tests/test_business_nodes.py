@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 
 import networkx as nx
 import pytest
@@ -13,8 +12,7 @@ from airport_surface import (
     AirportGraph,
     SourceEdge,
     SourceSegment,
-    classify_business_nodes,
-    graph_id,
+    enrich_airport_semantics,
     load_graph,
     save_graph,
 )
@@ -83,141 +81,47 @@ def business_graph() -> AirportGraph:
     return AirportGraph(graph, PROJECTION, source_edges=sources)
 
 
-def test_business_node_classification_uses_degree_and_endpoint_segments() -> None:
-    airport_graph = business_graph()
-
-    classify_business_nodes(airport_graph)
-
-    assert airport_graph.parking_position_nodes == {"park", "composite-apron"}
-    assert airport_graph.runway_access_nodes == {"access", "composite-access"}
-    assert "taxi-end" not in airport_graph.parking_position_nodes
-    assert "runway-other" not in airport_graph.parking_position_nodes
-    assert "runway-mid" not in airport_graph.runway_access_nodes
+def test_new_interface_excludes_parking_only_runway_connection():
+    graph = enrich_airport_semantics(business_graph())
+    interfaces = {n for n, d in graph.graph.nodes(data=True)
+                  if d["node_type"] == "runway_interface"}
+    assert interfaces == {"access"}
 
 
-def test_business_annotations_copy_save_load_and_graph_identity(tmp_path: Path) -> None:
+def test_old_collections_are_verified_then_ignored(tmp_path):
+    from airport_surface.graph import _document_graph_id
+
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(0.0, 0.0))
-    graph.add_node("mixed", pos=(1.0, 0.0))
-    airport_graph = AirportGraph(
-        graph,
-        PROJECTION,
-        parking_position_nodes={1, "mixed"},
-        runway_access_nodes={"mixed"},
-    )
-    before = graph_id(airport_graph)
-    copied = airport_graph.copy()
-    copied.parking_position_nodes.remove(1)
-
-    assert 1 in airport_graph.parking_position_nodes
-    assert graph_id(copied) != before
-
-    path = tmp_path / "business.json"
-    save_graph(airport_graph, path)
+    graph.add_node(1, pos=(0, 0))
+    path = save_graph(AirportGraph(graph, PROJECTION), tmp_path / "old.json")
     document = json.loads(path.read_text(encoding="utf-8"))
-    assert document["parking_position_nodes"] == [1, "mixed"]
-    loaded = load_graph(path)
-    assert loaded.parking_position_nodes == {1, "mixed"}
-    assert loaded.runway_access_nodes == {"mixed"}
-
-
-def test_legacy_graph_defaults_to_empty_annotations_and_invalid_reference_fails(
-    tmp_path: Path,
-) -> None:
-    graph = nx.MultiGraph()
-    graph.add_node("only", pos=(0.0, 0.0))
-    path = tmp_path / "legacy.json"
-    save_graph(AirportGraph(graph, PROJECTION), path)
-    document = json.loads(path.read_text(encoding="utf-8"))
-    document.pop("graph_id")
-    document.pop("parking_position_nodes")
-    document.pop("runway_access_nodes")
+    document["parking_position_nodes"] = [1, "obsolete-node"]
+    document["runway_access_nodes"] = [1]
+    document["graph_id"] = _document_graph_id(document)
     path.write_text(json.dumps(document), encoding="utf-8")
-
     loaded = load_graph(path)
-    assert loaded.parking_position_nodes == set()
-    assert loaded.runway_access_nodes == set()
-
-    document["parking_position_nodes"] = ["missing"]
+    assert loaded.graph.nodes[1]["node_type"] == "unclassified"
+    assert not hasattr(loaded, "parking_position_nodes")
+    save_graph(loaded, tmp_path / "new.json")
+    new = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
+    assert "parking_position_nodes" not in new
+    assert "runway_access_nodes" not in new
+    document["parking_position_nodes"] = []
     path.write_text(json.dumps(document), encoding="utf-8")
-    with pytest.raises(ValueError, match="unknown graph nodes"):
+    with pytest.raises(ValueError, match="graph_id"):
         load_graph(path)
 
 
-def test_manual_annotations_are_atomic_undoable_and_deleted_with_node() -> None:
+def test_semantic_edit_is_undoable_and_read_only_is_protected():
     graph = nx.MultiGraph()
-    graph.add_node("node", pos=(0.0, 0.0))
+    graph.add_node(1, pos=(0, 0))
     session = EditorSession(AirportGraph(graph, PROJECTION))
-
-    session.set_business_node_annotations(
-        "node", parking_position=True, runway_access=True, expected_revision=0
-    )
-    assert session.airport_graph.parking_position_nodes == {"node"}
-    assert session.airport_graph.runway_access_nodes == {"node"}
-    assert session.topology_revision == 0
-
+    session.update_node_attributes(1, {"node_type": "group_portal", "is_manual_lock": True},
+                                   expected_revision=0)
     session.undo(expected_revision=1)
-    assert session.airport_graph.parking_position_nodes == set()
-    assert session.airport_graph.runway_access_nodes == set()
-    assert session.topology_revision == 0
-
-    session.set_business_node_annotations(
-        "node", parking_position=True, runway_access=False, expected_revision=2
-    )
-    session.delete_node("node", expected_revision=3)
-    assert session.airport_graph.parking_position_nodes == set()
-    assert session.topology_revision == 1
-    session.undo(expected_revision=4)
-    assert "node" in session.airport_graph.parking_position_nodes
-    assert session.topology_revision == 2
-
-
-def test_read_only_workbench_rejects_business_annotation_updates() -> None:
-    graph = nx.MultiGraph()
-    graph.add_node("node", pos=(0.0, 0.0))
-    app = create_app(EditorSession(AirportGraph(graph, PROJECTION)), read_only=True)
-
-    with TestClient(app) as client:
-        response = client.post(
-            "/api/nodes/business-annotations",
-            json={
-                "node": {"type": "str", "value": "node"},
-                "parking_position": True,
-                "runway_access": False,
-                "expected_revision": 0,
-            },
-        )
-
+    assert session.graph.nodes[1]["node_type"] == "unclassified"
+    with TestClient(create_app(session, read_only=True)) as client:
+        response = client.post("/api/update-node", json={
+            "node": {"type": "int", "value": "1"},
+            "attributes": {"node_type": "group_portal"}, "expected_revision": 2})
     assert response.status_code == 405
-
-
-def test_workbench_annotation_endpoint_updates_state_and_undoes() -> None:
-    graph = nx.MultiGraph()
-    graph.add_node("node", pos=(0.0, 0.0))
-    app = create_app(EditorSession(AirportGraph(graph, PROJECTION)))
-
-    with TestClient(app) as client:
-        state = client.get("/api/state").json()
-        node_id = state["nodes"]["features"][0]["properties"]["id"]
-        response = client.post(
-            "/api/nodes/business-annotations",
-            json={
-                "node": node_id,
-                "parking_position": True,
-                "runway_access": True,
-                "expected_revision": state["revision"],
-            },
-        )
-        updated = client.get("/api/state").json()
-        client.post("/api/undo", json={"expected_revision": updated["revision"]})
-        undone = client.get("/api/state").json()
-
-    assert response.status_code == 200
-    properties = updated["nodes"]["features"][0]["properties"]
-    assert properties["parking_position_node"] is True
-    assert properties["runway_access_node"] is True
-    assert updated["topology_revision"] == state["topology_revision"]
-    undone_properties = undone["nodes"]["features"][0]["properties"]
-    assert undone_properties["parking_position_node"] is False
-    assert undone_properties["runway_access_node"] is False
-    assert undone["topology_revision"] == state["topology_revision"]

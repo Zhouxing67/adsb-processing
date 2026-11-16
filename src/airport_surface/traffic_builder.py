@@ -3,22 +3,325 @@
 from __future__ import annotations
 
 import math
-from typing import Any
+from collections import Counter, defaultdict
+from copy import deepcopy
+from typing import Any, Hashable, Mapping
 
+import networkx as nx
+import numpy as np
 from pyproj import CRS, Proj
+from shapely import STRtree
+from shapely.geometry import LineString, Point
+from shapely.geometry.base import BaseGeometry
 
 from .graph import (
-    _build_derived_graph,
-    _canonicalize_source_nodes,
-    _extract_sources,
-    _geometric_crossing_issues,
-    _node_attributes_from_osm,
-    classify_business_nodes,
+    ENDPOINT_TOLERANCE_M,
+    rebuild_source_edges,
+    source_boundaries,
     validate_edge_endpoints,
     validate_edge_sources,
     validate_source_intervals,
 )
-from .models import AirportGraph
+from .models import AirportGraph, GraphMetadata, SourceEdge, SourceNode, SourceSegment
+
+
+def _source_identifier(
+    registry: Mapping[str, SourceEdge], way_id: Any, u: Any, v: Any, key: Any
+) -> str:
+    preferred = f"osm-way-{way_id}" if way_id is not None else f"osm-edge-{u}-{v}-{key}"
+    if preferred not in registry:
+        return preferred
+    index = 2
+    while f"{preferred}-{index}" in registry:
+        index += 1
+    return f"{preferred}-{index}"
+
+
+def _source_attributes(data: Mapping[str, Any]) -> dict[str, Any]:
+    excluded = {
+        "geometry",
+        "first",
+        "last",
+        "id_",
+        "nodes",
+        "source_id",
+        "source_type",
+        "source_start_m",
+        "source_end_m",
+        "split_from",
+    }
+    return {name: deepcopy(value) for name, value in data.items() if name not in excluded}
+
+
+def _extract_sources(
+    raw_graph: nx.MultiGraph,
+) -> tuple[dict[str, SourceEdge], dict[Hashable, tuple[float, float]], list[str]]:
+    source_edges: dict[str, SourceEdge] = {}
+    node_positions: dict[Hashable, tuple[float, float]] = {}
+    issues: list[str] = []
+    for u, v, key, data in raw_graph.edges(keys=True, data=True):
+        geometry = data.get("geometry")
+        if not isinstance(geometry, LineString) or geometry.is_empty:
+            issues.append(f"raw edge {(u, v, key)!r} has no non-empty LineString")
+            continue
+        raw_node_ids = data.get("nodes")
+        node_ids = tuple(
+            raw_node_ids
+            if raw_node_ids is not None
+            else (data.get("first", u), data.get("last", v))
+        )
+        coordinates = tuple(tuple(coordinate[:2]) for coordinate in geometry.coords)
+        if len(node_ids) != len(coordinates):
+            issues.append(
+                f"raw edge {(u, v, key)!r} has {len(node_ids)} OSM nodes but "
+                f"{len(coordinates)} geometry coordinates"
+            )
+            continue
+        for node_id, coordinate in zip(node_ids, coordinates):
+            previous = node_positions.setdefault(node_id, coordinate)
+            if previous != coordinate:
+                issues.append(f"OSM node {node_id!r} has inconsistent coordinates")
+        way_id = data.get("id_", data.get("osm_way_id"))
+        source_id = _source_identifier(source_edges, way_id, u, v, key)
+        source_edges[source_id] = SourceEdge(
+            source_id,
+            geometry,
+            "osm",
+            way_id,
+            node_ids,
+            _source_attributes(data),
+        )
+    return source_edges, node_positions, issues
+
+
+def _canonicalize_source_nodes(
+    node_positions: Mapping[Hashable, tuple[float, float]],
+    node_attributes: Mapping[Hashable, Mapping[str, Any]] | None = None,
+) -> tuple[dict[Hashable, SourceNode], dict[Hashable, Hashable]]:
+    groups: dict[tuple[float, float], list[Hashable]] = defaultdict(list)
+    for node_id, position in node_positions.items():
+        groups[position].append(node_id)
+    source_nodes: dict[Hashable, SourceNode] = {}
+    aliases: dict[Hashable, Hashable] = {}
+    node_attributes = node_attributes or {}
+    for position, node_ids in groups.items():
+        canonical = node_ids[0]
+        attributes = {
+            "osm_node_attributes": {
+                str(node_id): deepcopy(dict(node_attributes.get(node_id, {})))
+                for node_id in node_ids
+            }
+        }
+        source_nodes[canonical] = SourceNode(canonical, position, tuple(node_ids), attributes)
+        aliases.update({node_id: canonical for node_id in node_ids if node_id != canonical})
+    return source_nodes, aliases
+
+
+def _topology_nodes(
+    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
+) -> set[Hashable]:
+    node_sources: dict[Hashable, set[str]] = defaultdict(set)
+    repeated: set[Hashable] = set()
+    endpoints: set[Hashable] = set()
+    for source_id, source in source_edges.items():
+        canonical = [aliases.get(node, node) for node in source.osm_node_ids]
+        endpoints.update((canonical[0], canonical[-1]))
+        repeated.update(node for node, count in Counter(canonical).items() if count > 1)
+        for node in set(canonical):
+            node_sources[node].add(source_id)
+    shared = {node for node, sources in node_sources.items() if len(sources) > 1}
+    return endpoints | shared | repeated
+
+
+def _geometric_crossing_issues(
+    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
+) -> list[str]:
+    identifiers = list(source_edges)
+    geometries = [source_edges[identifier].geometry for identifier in identifiers]
+    if not geometries:
+        return []
+    tree = STRtree(geometries)
+    issues: list[str] = []
+    for left_index, left_geometry in enumerate(geometries):
+        for raw_right_index in np.asarray(tree.query(left_geometry)).tolist():
+            right_index = int(raw_right_index)
+            if right_index <= left_index:
+                continue
+            left_id, right_id = identifiers[left_index], identifiers[right_index]
+            left_nodes = {aliases.get(node, node) for node in source_edges[left_id].osm_node_ids}
+            right_nodes = {aliases.get(node, node) for node in source_edges[right_id].osm_node_ids}
+            intersection = left_geometry.intersection(geometries[right_index])
+            if left_geometry.equals(geometries[right_index]):
+                issues.append(f"sources {left_id!r} and {right_id!r} have duplicate geometry")
+                continue
+            if intersection.is_empty or left_nodes & right_nodes:
+                continue
+            issues.append(
+                f"sources {left_id!r} and {right_id!r} intersect geometrically "
+                "without a shared OSM node"
+            )
+    return issues
+
+
+def _node_attributes_from_osm(osm: Any) -> dict[Hashable, dict[str, Any]]:
+    """Extract available OSM node tags without making them topology evidence."""
+    frame = osm.parse()
+    if not {"type_", "id_"} <= set(frame.columns):
+        return {}
+    excluded = {
+        "_parent",
+        "id_",
+        "type_",
+        "geometry",
+        "latitude",
+        "longitude",
+        "nodes",
+    }
+    attributes: dict[Hashable, dict[str, Any]] = {}
+    for _index, row in frame.loc[frame["type_"] == "node"].iterrows():
+        attributes[row["id_"]] = {
+            name: value
+            for name, value in row.items()
+            if name not in excluded
+            and value is not None
+            and not (isinstance(value, float) and math.isnan(value))
+        }
+    return attributes
+
+
+def _cumulative_distances(graph: AirportGraph, geometry: LineString) -> list[float]:
+    projected = graph.project_shape(geometry)
+    distances = [0.0]
+    for left, right in zip(projected.coords, projected.coords[1:]):
+        distances.append(distances[-1] + Point(left).distance(Point(right)))
+    return distances
+
+
+def _build_derived_graph(
+    source_edges: Mapping[str, SourceEdge],
+    source_nodes: Mapping[Hashable, SourceNode],
+    aliases: Mapping[Hashable, Hashable],
+    projection: Any,
+    airport: str,
+    initial_issues: list[str],
+) -> AirportGraph:
+    graph = nx.MultiGraph()
+    topology_nodes = _topology_nodes(source_edges, aliases)
+    for node_id in topology_nodes:
+        source_node = source_nodes[node_id]
+        graph.add_node(
+            node_id,
+            pos=source_node.position,
+            source_type="osm",
+            osm_node_ids=source_node.osm_node_ids,
+        )
+    airport_graph = AirportGraph(
+        graph,
+        projection,
+        source_nodes=source_nodes,
+        source_edges=source_edges,
+        node_aliases=aliases,
+        metadata=GraphMetadata(airport=airport),
+    )
+    issues = list(initial_issues)
+    for source_id, source in source_edges.items():
+        original_nodes = source.osm_node_ids
+        canonical_nodes = tuple(aliases.get(node, node) for node in original_nodes)
+        coordinates = tuple(source.geometry.coords)
+        distances = _cumulative_distances(airport_graph, source.geometry)
+        split_indices = [
+            index
+            for index, node_id in enumerate(canonical_nodes)
+            if index in {0, len(canonical_nodes) - 1} or node_id in topology_nodes
+        ]
+        for start_index, end_index in zip(split_indices, split_indices[1:]):
+            first, last = canonical_nodes[start_index], canonical_nodes[end_index]
+            geometry = LineString(coordinates[start_index : end_index + 1])
+            data = dict(source.attributes)
+            data.update(
+                geometry=geometry,
+                first=first,
+                last=last,
+                source_id=source_id,
+                source_type=source.source_type,
+                source_start_m=distances[start_index],
+                source_end_m=distances[end_index],
+                osm_node_ids=original_nodes[start_index : end_index + 1],
+                source_segments=(
+                    SourceSegment(source_id, distances[start_index], distances[end_index]),
+                ),
+            )
+            graph.add_edge(first, last, **data)
+            if first == last:
+                issues.append(f"source {source_id!r} produced self-loop at node {first!r}")
+            if airport_graph.length(geometry) <= ENDPOINT_TOLERANCE_M:
+                issues.append(f"source {source_id!r} produced a zero-length derived edge")
+    airport_graph.metadata = GraphMetadata(
+        airport=airport,
+        build_issues=tuple(issues),
+    )
+    return airport_graph
+
+
+def complete_geometric_topology(airport_graph: AirportGraph) -> None:
+    """Split source intervals at geometric intersections and existing Point entities.
+
+    Source geometries remain immutable. Collinear overlaps retain parallel edges.
+    This is a build-only operation, never part of semantic enrichment.
+    """
+    identifiers = list(airport_graph.source_edges)
+    lines = [
+        airport_graph.project_shape(airport_graph.source_edges[s].geometry) for s in identifiers
+    ]
+    if not lines:
+        return
+    tree = STRtree(lines)
+    boundaries = {s: dict(source_boundaries(airport_graph, s)) for s in identifiers}
+    points = [
+        (n, Point(airport_graph.project.transform(*d["pos"][:2])))
+        for n, d in airport_graph.graph.nodes(data=True)
+    ]
+
+    def intersection_points(geometry: BaseGeometry) -> list[Point]:
+        if geometry.geom_type == "Point":
+            return [geometry]
+        if geometry.geom_type == "LineString":
+            return [Point(geometry.coords[0]), Point(geometry.coords[-1])]
+        return [p for part in getattr(geometry, "geoms", ()) for p in intersection_points(part)]
+
+    candidates = [point for _, point in points]
+    for i, line in enumerate(lines):
+        for j in tree.query(line):
+            if int(j) > i:
+                candidates.extend(intersection_points(line.intersection(lines[int(j)])))
+    for point in candidates:
+        touching = [
+            int(i)
+            for i in tree.query(point.buffer(ENDPOINT_TOLERANCE_M))
+            if lines[int(i)].distance(point) <= ENDPOINT_TOLERANCE_M
+        ]
+        if not touching:
+            continue
+        node = next((n for n, p in points if p.distance(point) <= ENDPOINT_TOLERANCE_M), None)
+        if node is None:
+            node = f"intersection-{len(points)}"
+            while node in airport_graph.graph:
+                node += "-new"
+            airport_graph.graph.add_node(
+                node,
+                pos=airport_graph.to_wgs84.transform(point.x, point.y),
+                source_type="intersection",
+            )
+            points.append((node, point))
+        for i in touching:
+            station = lines[i].project(point)
+            existing = boundaries[identifiers[i]]
+            if not any(abs(station - old) <= ENDPOINT_TOLERANCE_M for old in existing):
+                existing[station] = node
+    for source_id, values in boundaries.items():
+        if sorted(values.items()) != source_boundaries(airport_graph, source_id):
+            rebuild_source_edges(airport_graph, source_id, sorted(values.items()))
+    airport_graph.initialize_semantic_defaults()
 
 
 def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
@@ -38,7 +341,15 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
     source_nodes, aliases = _canonicalize_source_nodes(
         node_positions, _node_attributes_from_osm(osm)
     )
-    issues.extend(_geometric_crossing_issues(sources, aliases))
+    frame = osm.parse()
+    if {"aeroway", "geometry", "id_"} <= set(frame.columns):
+        for _, row in frame.loc[frame["aeroway"] == "parking_position"].iterrows():
+            geometry = row["geometry"]
+            if getattr(geometry, "geom_type", None) == "Point":
+                node_positions[row["id_"]] = (geometry.x, geometry.y)
+        source_nodes, aliases = _canonicalize_source_nodes(
+            node_positions, _node_attributes_from_osm(osm)
+        )
     graph = _build_derived_graph(
         sources,
         source_nodes,
@@ -47,7 +358,15 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
         airport.icao,
         issues,
     )
-    classify_business_nodes(graph)
+    for node, source in source_nodes.items():
+        tags = source.attributes.get("osm_node_attributes", {})
+        if any(value.get("aeroway") == "parking_position" for value in tags.values()):
+            if node not in graph.graph:
+                graph.graph.add_node(
+                    node, pos=source.position, source_type="osm", osm_node_ids=source.osm_node_ids
+                )
+            graph.graph.nodes[node]["aeroway"] = "parking_position"
+    complete_geometric_topology(graph)
     validate_edge_endpoints(graph)
     validate_edge_sources(graph)
     validate_source_intervals(graph)

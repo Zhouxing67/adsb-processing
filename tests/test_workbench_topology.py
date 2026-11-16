@@ -9,8 +9,6 @@ from airport_workbench.app import BrowserState, _edge_colors, create_app
 
 
 class _AirportGraph:
-    parking_position_nodes: set = set()
-    runway_access_nodes: set = set()
 
     @staticmethod
     def length(geometry: LineString) -> float:
@@ -49,8 +47,8 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
     )
     assert isolated["properties"]["color"] == "#a34f6a"
     assert isolated["properties"]["radius"] == 5
-    assert isolated["properties"]["parking_position_node"] is False
-    assert isolated["properties"]["runway_access_node"] is False
+    assert isolated["properties"]["node_type"] == "unclassified"
+    assert isolated["properties"]["is_manual_lock"] is False
     assert isolated["properties"]["id"] == {"type": "str", "value": "isolated"}
     edge = state["edges"]["features"][0]["properties"]
     assert edge["u_id"]["type"] == "str"

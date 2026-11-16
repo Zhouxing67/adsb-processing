@@ -79,13 +79,11 @@ AirportGraph 因此分别保存两件事：
 
 ## 5. 业务节点与修复记录
 
-### 业务节点集合
+### 语义字段
 
-`parking_position_nodes` 和 `runway_access_nodes` 是两个独立的 Python `set`，分别保存停机位侧节点和跑道进出节点的当前图节点 ID。二者可以重叠，成员必须存在于当前图中。
-
-这些集合表达业务归属，不参与线路是否连通的判定。自动建图给出初始分类，人工复核可以添加或移除标注；人工标注不受自动识别条件的强制限制。
-
-加载、保存和普通编辑不会重新执行自动分类。删除节点时清理其标注；合并节点时将各类别归属合并到保留节点；撤销同时恢复标注和相应图状态。集合使用独立副本，避免修改一份图时影响另一份。
+节点和边的语义字段是业务身份的唯一来源，不再维护旧版业务节点集合。
+基础建图保留原始 OSM 标签；Workbench 保存时刷新后置语义，手动锁定值不被覆盖。
+机位实体提取和组内子图仍为 Phase 2 占位，不从旧停车端点推断门户。
 
 ### 人工修复与当前状态
 
@@ -95,7 +93,7 @@ AirportGraph 因此分别保存两件事：
 
 ## 6. 自动建图如何得到 AirportGraph
 
-自动构建入口位于 `traffic_builder.py`。整个过程先保留来源，再确定拓扑，最后分类和验证。
+自动构建入口位于 `traffic_builder.py`。整个过程先保留来源，再确定拓扑，最后进行几何切分和验证。
 
 构建入口通过 `traffic` 取得机场的 OpenStreetMap 数据，但实际调用的 `network_graph()` 由 `traffic` 依赖的 `cartes.osm.Overpass` 提供。这里返回的 `MultiGraph` 只作为 OSM Way 的解析和传递格式使用，不是本项目最终采用的机场拓扑图。对于筛选出的开放线状 Way，`network_graph()` 以 Way 的首尾 OSM 节点作为图端点，并生成一条携带完整 `geometry`、有序 `nodes`、Way ID 和业务属性的边；它不会在 Way 的内部共享节点处切分，也不会执行本项目的节点归一化、交叉点识别或业务分类。
 
@@ -135,16 +133,10 @@ AirportGraph 因此分别保存两件事：
 
 来源里程由米制投影下的折线累计长度计算。此阶段不把相同端点的多条边合并，也不将弯曲线路拉直。发现自环或极短边时记录构建问题，最终结果仍须通过后续验证。
 
-### 第五步：识别业务节点
+### 第五步：补齐基础几何拓扑
 
-在最终拓扑上识别两类初始标注：
-
-- 停机位侧节点：图中度为 1，且唯一关联边贴近该节点的来源类型为 `parking_position`。
-- 跑道进出节点：节点处同时连接跑道来源和滑行道或停机位来源。
-
-分类使用图边在节点端的来源类型，不凭整条派生边中是否包含某种来源来判断。类型缺失时不会凭距离或位置猜测。
-
-这些规则提供待人工确认的业务标注，不保证原始数据已完整表达机场实际运行含义。
+保留 Point 机位并在几何交点处切分来源区间；不推断停车端点或业务归属。
+业务语义由独立后处理入口在需要时计算，不属于基础建图步骤。
 
 ### 第六步：检查结构一致性，返回对象
 
@@ -179,3 +171,58 @@ Workbench API 只支持现有图文件能够无损保存的两类对象 ID：整
 `POST /api/matches` 会先验证并去重全部 `flight_key`，顺序执行实际新增成员，跳过正在运行或当前图版本已有成功缓存的成员。`GET /api/matches?task_id=...` 只返回固定任务成员的状态摘要与进度，不包含轨迹、路径或观测数据。任务和进度仅存在于当前服务会话。
 
 航班详情位于主内容区“观测记录”标签页。记录保持原始顺序并按 100 条分页，默认只展示时空和运动字段，可按需展开全部字段。单条记录定位使用临时地图标记，不会加入地图展示集合。轨迹、匹配路径及观测记录继续按需获取。
+
+## Semantic pipeline (Phase 1)
+
+`build_airport_graph` builds geometry and topology only. It retains Point parking
+entities, splits source intervals at geometric intersections, and preserves the
+immutable source LineStrings. Stand points away from lines remain isolated; no
+nearest-line snapping is inferred. Collinear source overlaps retain parallel edges.
+
+`enrich_airport_semantics(graph, cluster_eps_m=70.0)` returns an independent graph
+with identical topology and geometry. Node defaults are `node_type="unclassified"`,
+`stand_group_id=None`, and `is_manual_lock=False`; edge defaults are
+`edge_zone="backbone"`, `stand_group_id=None`, and `is_manual_lock=False`.
+Runway interfaces use `node_type="runway_interface"` and require both runway and
+taxiway incident source endpoints. Locked attributes survive refresh. Semantic
+fields are the sole source of business identity; the legacy classifier and
+mutable business-node collections have been removed.
+
+`StandEntity`, `StandGroup`, and `SemanticPostProcessor` define the extension
+contract. Entity extraction, spatial clustering and group subgraph inference are
+Phase 2 stubs returning empty results. Phase 1 does not generate automatic portals
+or internal edges. Manually assigned `group_portal` nodes and locked
+`stand_group_internal` edges are supported. `get_backbone_subgraph()` returns an
+independent MultiGraph and an ordered list of portal/runway-interface node IDs;
+it excludes internal edges and retains isolated OD nodes.
+
+Workbench Save and Finish enrich a copy under the existing session lock, persist
+it atomically, and publish it only after successful writing. Semantic changes
+increment `revision`, not `topology_revision`; an unchanged save increments neither.
+The node inspector offers portal lock/unlock. Conflicting locked node annotations
+prevent a merge; compatible locks carry to the surviving node. Edge splits inherit
+edge annotations. Existing undo and optimistic revision checks remain in effect.
+
+JSON schema v1 accepts the additive attributes. Loading verifies the original
+content hash before filling absent semantic defaults. Old files need no offline
+conversion; their next save includes defaults and a newly computed content hash.
+
+旧文件兼容：加载时先校验完整原始 JSON 的 graph_id，再忽略旧的
+`parking_position_nodes` 和 `runway_access_nodes` 顶层字段（即使包含已失效节点）。
+这些旧标注不会转换成新门户或机位组；下次保存不再写出旧字段并重新计算哈希。
+旧 Python 分类 API 与 `/api/nodes/business-annotations` 已移除；命令行参数不变。
+
+建图专用的来源提取、节点归一化、派生图构建及几何交点补齐集中在 `traffic_builder.py`。
+`graph.py` 保留编辑器共用的几何与来源区间操作、校验和 JSON 持久化。
+`traffic` 仍在实际建图入口内延迟导入，普通图加载与保存无需安装该可选依赖。
+
+## 直接绘制缺失连接
+
+编辑模式下选择“直接绘制连接”，先点击现有起点，再点击地图添加可选形状点，
+最后点击现有终点。检查预览，选择线路类型（默认 taxiway）并填写可选编号，
+点击“确认添加”。“撤回最后一点”先撤回终点，再逐个撤回形状点；取消绘制不修改图。
+
+确认后新增一个 manual SourceEdge 及引用完整来源区间的派生边，保留两端节点。
+中间形状点和沿途交叉不自动产生拓扑连接。新增操作可一次撤销，撤销同时移除
+人工来源；点击保存后按现有流程刷新语义并持久化。只读及航班模式禁止补线。
+若编辑版本已变化，提交被拒绝，需要根据当前图重新绘制。

@@ -148,15 +148,15 @@ def test_business_node_markers_and_point_review_are_wired() -> None:
     source = Path("src/airport_workbench/static/app.js").read_text(encoding="utf-8")
     html = Path("src/airport_workbench/static/index.html").read_text(encoding="utf-8")
 
-    assert 'p.parking_position_node?"P":""' in source
-    assert 'p.runway_access_node?"R":""' in source
-    assert "business-annotations" in source
-    assert "/business-annotations" in source
+    assert 'p.node_type==="group_portal"' in source
+    assert 'p.node_type==="runway_interface"' in source
+    assert "portal-lock" in source
+    assert "/business-annotations" not in source
     assert "sortedNodeReviewSnapshot(nodeFeatures)" in source
     assert "nodeFeatureIndex.set(nodeKey(feature),feature)" in source
     assert "nodeFeatureIndex.get(nodeKey(feature))" in source
     assert "if(selected)selectNode(selected);else closeDetails()" in source
-    assert "if(current)showNodeProperties(current);else closeDetails()" in source
+    assert "is_manual_lock:!properties.is_manual_lock" in source
     assert "lastTopologyRevision!==data.topology_revision" in source
     assert "遍历位置" in source
     assert "已到最后一个节点；这不表示全部复核通过" in source
@@ -208,10 +208,10 @@ vm.runInThisContext(lines.find(line=>line.startsWith("function nodeKey")));
 const integer={properties:{node_id:"1",id:{type:"int",value:"1"}}};
 const string={properties:{node_id:"'1'",id:{type:"str",value:"1"}}};
 const refreshedInteger={properties:{
-  node_id:"1",id:{type:"int",value:"1"},parking_position_node:true
+  node_id:"1",id:{type:"int",value:"1"},node_type:"group_portal"
 }};
 const refreshedString={properties:{
-  node_id:"'1'",id:{type:"str",value:"1"},runway_access_node:true
+  node_id:"'1'",id:{type:"str",value:"1"},node_type:"runway_interface"
 }};
 const index=new Map([refreshedInteger,refreshedString].map(feature=>[nodeKey(feature),feature]));
 const snapshot=[integer,string].map(feature=>index.get(nodeKey(feature)));

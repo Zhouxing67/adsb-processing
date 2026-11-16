@@ -21,9 +21,9 @@ from adsb import Flight
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
-    _json_value,
     load_graph,
 )
+from utils.json_value import to_json_value
 
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightWorkbench
@@ -77,6 +77,14 @@ class VersionedRequest(BaseModel):
     expected_revision: StrictInt
 
 
+class DrawConnectionRequest(VersionedRequest):
+    start: EncodedValue
+    end: EncodedValue
+    intermediate_points: list[tuple[float, float]] = Field(default_factory=list, max_length=10000)
+    aeroway: str = "taxiway"
+    ref: str | None = None
+
+
 class RestoreRequest(VersionedRequest):
     start: EncodedValue
     end: EncodedValue
@@ -123,12 +131,6 @@ class ManualSnapRequest(VersionedRequest):
 class MatchFlightsRequest(BaseModel):
     flight_keys: list[str] = Field(default_factory=list)
     force: bool = False
-
-
-class BusinessNodeAnnotations(VersionedRequest):
-    node: EncodedValue
-    parking_position: bool
-    runway_access: bool
 
 
 class BrowserState:
@@ -184,6 +186,9 @@ class BrowserState:
                     "properties": {
                         "id": encode_value(node),
                         "node_id": repr(node),
+                        "node_type": data.get("node_type", "unclassified"),
+                        "is_manual_lock": data.get("is_manual_lock", False),
+                        "stand_group_id": data.get("stand_group_id"),
                         "longitude": longitude,
                         "latitude": latitude,
                         "degree": degree,
@@ -199,26 +204,10 @@ class BrowserState:
                         "attributes": repr(
                             {key: value for key, value in data.items() if key != "pos"}
                         ),
-                        "editable_attributes": _json_value(
+                        "editable_attributes": to_json_value(
                             {key: value for key, value in data.items() if key != "pos"}
                         ),
                         "manual": data.get("source") == "manual",
-                        "parking_position_node": (
-                            node
-                            in getattr(
-                                self.session.airport_graph,
-                                "parking_position_nodes",
-                                (),
-                            )
-                        ),
-                        "runway_access_node": (
-                            node
-                            in getattr(
-                                self.session.airport_graph,
-                                "runway_access_nodes",
-                                (),
-                            )
-                        ),
                         "color": color,
                         "radius": 5 if degree == 0 else 4 if degree == 1 else 2.75,
                     },
@@ -238,6 +227,8 @@ class BrowserState:
                     "properties": {
                         "id": encode_edge(u, v, key),
                         "edge_id": repr((u, v, key)),
+                        "edge_zone": data.get("edge_zone", "backbone"),
+                        "stand_group_id": data.get("stand_group_id"),
                         "u": repr(u),
                         "v": repr(v),
                         "u_id": encode_value(u),
@@ -257,7 +248,7 @@ class BrowserState:
                         "attributes": repr(
                             {name: value for name, value in data.items() if name != "geometry"}
                         ),
-                        "editable_attributes": _json_value(
+                        "editable_attributes": to_json_value(
                             {
                                 name: value
                                 for name, value in data.items()
@@ -312,6 +303,7 @@ class BrowserState:
             "topology_revision": getattr(self.session, "topology_revision", 0),
             "save_path": str(save_path),
         }
+
 
 def create_app(
     session: EditorSession,
@@ -513,21 +505,35 @@ def create_app(
     def match_status(task_id: list[str] | None = None) -> dict[str, Any]:
         return flight_workbench.task_status(task_id)
 
+    @app.post("/api/draw-connection")
+    def draw_connection(item: DrawConnectionRequest) -> dict[str, Any]:
+        start, end = decode_value(item.start), decode_value(item.end)
+        try:
+            result = session.draw_connection(
+                start,
+                end,
+                item.intermediate_points,
+                aeroway=item.aeroway,
+                ref=item.ref,
+                expected_revision=item.expected_revision,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        return {"message": "已添加人工连接，可撤销；点击保存持久化", "revision": result.revision}
+
     @app.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
         start, end = decode_value(item.start), decode_value(item.end)
         if start == end:
             raise HTTPException(400, "起点和终点不能相同")
-        result = session.connection_candidates(
-            start, end, expected_revision=item.expected_revision
-        )
+        result = session.connection_candidates(start, end, expected_revision=item.expected_revision)
         return {
             "revision": result.revision,
             "current_endpoints": [repr(start), repr(end)],
             "candidates": [
                 {
                     **{
-                        name: _json_value(value)
+                        name: to_json_value(value)
                         for name, value in candidate.items()
                         if name != "geometry"
                     },
@@ -560,7 +566,7 @@ def create_app(
     def merge_candidates() -> dict[str, Any]:
         with session.lock:
             candidates = session.merge_candidates()
-            payload = _json_value(candidates)
+            payload = to_json_value(candidates)
             for raw, encoded in zip(candidates, payload):
                 encoded["node_ids"] = [encode_value(node) for node in raw["node_ids"]]
                 for raw_node, node in zip(raw["nodes"], encoded["nodes"]):
@@ -582,7 +588,7 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        value = _json_value(result.value)
+        value = to_json_value(result.value)
         value["revision"] = result.revision
         value["node_ids"] = [encode_value(node) for node in result.value["node_ids"]]
         value["canonical_node_id"] = encode_value(result.value["canonical_node_id"])
@@ -615,9 +621,7 @@ def create_app(
     @app.post("/api/delete-edge-confirm")
     def delete_edge_confirm(item: EdgeRequest) -> dict[str, Any]:
         edge = decode_edge(item.edge)
-        result = session.remove_derived_edge(
-            *edge, expected_revision=item.expected_revision
-        )
+        result = session.remove_derived_edge(*edge, expected_revision=item.expected_revision)
         return {
             "message": f"已删除派生边 {edge!r}，SourceEdge 保持不变",
             "revision": result.revision,
@@ -658,7 +662,7 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        value = _json_value(result.value)
+        value = to_json_value(result.value)
         value["revision"] = result.revision
         for candidate in value["candidates"]:
             candidate["id"] = encode_value(candidate.pop("canonical_node_id"))
@@ -693,7 +697,7 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {**_json_value(result.value), "revision": result.revision}
+        return {**to_json_value(result.value), "revision": result.revision}
 
     @app.post("/api/manual-snap-confirm")
     def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
@@ -717,25 +721,6 @@ def create_app(
             node, item.attributes, expected_revision=item.expected_revision
         )
         return {"message": f"已更新节点 {node!r} 的属性", "revision": result.revision}
-
-    @app.post("/api/nodes/business-annotations")
-    def update_business_node_annotations(item: BusinessNodeAnnotations) -> dict[str, Any]:
-        node = decode_value(item.node)
-        try:
-            result = session.set_business_node_annotations(
-                node,
-                parking_position=item.parking_position,
-                runway_access=item.runway_access,
-                expected_revision=item.expected_revision,
-            )
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已更新节点 {node!r} 的业务标注",
-            "parking_position": item.parking_position,
-            "runway_access": item.runway_access,
-            "revision": result.revision,
-        }
 
     @app.post("/api/update-edge")
     def update_edge(item: UpdatedEdgeAttributes) -> dict[str, Any]:
@@ -769,9 +754,7 @@ def create_app(
     def finish(item: VersionedRequest) -> dict[str, Any]:
         if on_finish is None:
             raise HTTPException(400, "当前为独立编辑模式")
-        result = session.finish(
-            save_path, on_finish, expected_revision=item.expected_revision
-        )
+        result = session.finish(save_path, on_finish, expected_revision=item.expected_revision)
         output = result.value
         return {
             "message": f"已保存 {output}，编辑完成，正在返回 AirportGraph",

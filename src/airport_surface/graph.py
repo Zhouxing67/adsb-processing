@@ -1,22 +1,18 @@
-"""Build, validate, save, and load the airport surface graph."""
+"""Shared graph geometry operations, validation, and JSON persistence."""
 
 from __future__ import annotations
 
 import hashlib
 import json
-import math
-from collections import Counter, defaultdict
-from copy import deepcopy
-from dataclasses import asdict, is_dataclass
 from pathlib import Path
-from typing import Any, Hashable, Iterable, Mapping
+from typing import Any, Iterable, Mapping
 
 import networkx as nx
-import numpy as np
 from pyproj import Proj
-from shapely import STRtree
 from shapely.geometry import LineString, Point, mapping, shape
 from shapely.ops import substring
+
+from utils.json_value import to_json_value
 
 from .models import (
     AirportGraph,
@@ -34,281 +30,6 @@ ENDPOINT_TOLERANCE_M = 1e-3
 
 def source_registry(airport_graph: AirportGraph) -> dict[str, SourceEdge]:
     return airport_graph.source_edges
-
-
-def _node_endpoint_aeroways(airport_graph: AirportGraph, node: Hashable) -> list[str | None]:
-    """Return the source aeroway touching ``node`` for every incident edge."""
-    aeroways: list[str | None] = []
-    for u, v, _key, data in airport_graph.graph.edges(node, keys=True, data=True):
-        segments = edge_source_segments(data)
-        if not segments:
-            aeroways.append(None)
-            continue
-        first, last = data.get("first", u), data.get("last", v)
-        if node == first:
-            segment = segments[0]
-        elif node == last:
-            segment = segments[-1]
-        else:
-            aeroways.append(None)
-            continue
-        source = airport_graph.source_edges.get(segment.source_id)
-        value = source.attributes.get("aeroway") if source is not None else None
-        aeroways.append(str(value) if value is not None else None)
-    return aeroways
-
-
-def classify_business_nodes(airport_graph: AirportGraph) -> None:
-    """Populate business annotations once for a newly built topology graph."""
-    parking: set[Hashable] = set()
-    runway_access: set[Hashable] = set()
-    for node in airport_graph.graph.nodes:
-        endpoint_types = _node_endpoint_aeroways(airport_graph, node)
-        if airport_graph.graph.degree(node) == 1 and endpoint_types == ["parking_position"]:
-            parking.add(node)
-        types = {value for value in endpoint_types if value is not None}
-        if "runway" in types and types.intersection({"taxiway", "parking_position"}):
-            runway_access.add(node)
-    airport_graph.parking_position_nodes = parking
-    airport_graph.runway_access_nodes = runway_access
-
-
-def _source_identifier(
-    registry: Mapping[str, SourceEdge], way_id: Any, u: Any, v: Any, key: Any
-) -> str:
-    preferred = f"osm-way-{way_id}" if way_id is not None else f"osm-edge-{u}-{v}-{key}"
-    if preferred not in registry:
-        return preferred
-    index = 2
-    while f"{preferred}-{index}" in registry:
-        index += 1
-    return f"{preferred}-{index}"
-
-
-def _source_attributes(data: Mapping[str, Any]) -> dict[str, Any]:
-    excluded = {
-        "geometry",
-        "first",
-        "last",
-        "id_",
-        "nodes",
-        "source_id",
-        "source_type",
-        "source_start_m",
-        "source_end_m",
-        "split_from",
-    }
-    return {name: deepcopy(value) for name, value in data.items() if name not in excluded}
-
-
-def _extract_sources(
-    raw_graph: nx.MultiGraph,
-) -> tuple[dict[str, SourceEdge], dict[Hashable, tuple[float, float]], list[str]]:
-    source_edges: dict[str, SourceEdge] = {}
-    node_positions: dict[Hashable, tuple[float, float]] = {}
-    issues: list[str] = []
-    for u, v, key, data in raw_graph.edges(keys=True, data=True):
-        geometry = data.get("geometry")
-        if not isinstance(geometry, LineString) or geometry.is_empty:
-            issues.append(f"raw edge {(u, v, key)!r} has no non-empty LineString")
-            continue
-        raw_node_ids = data.get("nodes")
-        node_ids = tuple(
-            raw_node_ids
-            if raw_node_ids is not None
-            else (data.get("first", u), data.get("last", v))
-        )
-        coordinates = tuple(tuple(coordinate[:2]) for coordinate in geometry.coords)
-        if len(node_ids) != len(coordinates):
-            issues.append(
-                f"raw edge {(u, v, key)!r} has {len(node_ids)} OSM nodes but "
-                f"{len(coordinates)} geometry coordinates"
-            )
-            continue
-        for node_id, coordinate in zip(node_ids, coordinates):
-            previous = node_positions.setdefault(node_id, coordinate)
-            if previous != coordinate:
-                issues.append(f"OSM node {node_id!r} has inconsistent coordinates")
-        way_id = data.get("id_", data.get("osm_way_id"))
-        source_id = _source_identifier(source_edges, way_id, u, v, key)
-        source_edges[source_id] = SourceEdge(
-            source_id,
-            geometry,
-            "osm",
-            way_id,
-            node_ids,
-            _source_attributes(data),
-        )
-    return source_edges, node_positions, issues
-
-
-def _canonicalize_source_nodes(
-    node_positions: Mapping[Hashable, tuple[float, float]],
-    node_attributes: Mapping[Hashable, Mapping[str, Any]] | None = None,
-) -> tuple[dict[Hashable, SourceNode], dict[Hashable, Hashable]]:
-    groups: dict[tuple[float, float], list[Hashable]] = defaultdict(list)
-    for node_id, position in node_positions.items():
-        groups[position].append(node_id)
-    source_nodes: dict[Hashable, SourceNode] = {}
-    aliases: dict[Hashable, Hashable] = {}
-    node_attributes = node_attributes or {}
-    for position, node_ids in groups.items():
-        canonical = node_ids[0]
-        attributes = {
-            "osm_node_attributes": {
-                str(node_id): deepcopy(dict(node_attributes.get(node_id, {})))
-                for node_id in node_ids
-            }
-        }
-        source_nodes[canonical] = SourceNode(canonical, position, tuple(node_ids), attributes)
-        aliases.update({node_id: canonical for node_id in node_ids if node_id != canonical})
-    return source_nodes, aliases
-
-
-def _topology_nodes(
-    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
-) -> set[Hashable]:
-    node_sources: dict[Hashable, set[str]] = defaultdict(set)
-    repeated: set[Hashable] = set()
-    endpoints: set[Hashable] = set()
-    for source_id, source in source_edges.items():
-        canonical = [aliases.get(node, node) for node in source.osm_node_ids]
-        endpoints.update((canonical[0], canonical[-1]))
-        repeated.update(node for node, count in Counter(canonical).items() if count > 1)
-        for node in set(canonical):
-            node_sources[node].add(source_id)
-    shared = {node for node, sources in node_sources.items() if len(sources) > 1}
-    return endpoints | shared | repeated
-
-
-def _geometric_crossing_issues(
-    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
-) -> list[str]:
-    identifiers = list(source_edges)
-    geometries = [source_edges[identifier].geometry for identifier in identifiers]
-    if not geometries:
-        return []
-    tree = STRtree(geometries)
-    issues: list[str] = []
-    for left_index, left_geometry in enumerate(geometries):
-        for raw_right_index in np.asarray(tree.query(left_geometry)).tolist():
-            right_index = int(raw_right_index)
-            if right_index <= left_index:
-                continue
-            left_id, right_id = identifiers[left_index], identifiers[right_index]
-            left_nodes = {aliases.get(node, node) for node in source_edges[left_id].osm_node_ids}
-            right_nodes = {aliases.get(node, node) for node in source_edges[right_id].osm_node_ids}
-            intersection = left_geometry.intersection(geometries[right_index])
-            if left_geometry.equals(geometries[right_index]):
-                issues.append(f"sources {left_id!r} and {right_id!r} have duplicate geometry")
-                continue
-            if intersection.is_empty or left_nodes & right_nodes:
-                continue
-            issues.append(
-                f"sources {left_id!r} and {right_id!r} intersect geometrically "
-                "without a shared OSM node"
-            )
-    return issues
-
-
-def _node_attributes_from_osm(osm: Any) -> dict[Hashable, dict[str, Any]]:
-    """Extract available OSM node tags without making them topology evidence."""
-    frame = osm.parse()
-    if not {"type_", "id_"} <= set(frame.columns):
-        return {}
-    excluded = {
-        "_parent",
-        "id_",
-        "type_",
-        "geometry",
-        "latitude",
-        "longitude",
-        "nodes",
-    }
-    attributes: dict[Hashable, dict[str, Any]] = {}
-    for _index, row in frame.loc[frame["type_"] == "node"].iterrows():
-        attributes[row["id_"]] = {
-            name: value
-            for name, value in row.items()
-            if name not in excluded
-            and value is not None
-            and not (isinstance(value, float) and math.isnan(value))
-        }
-    return attributes
-
-
-def _cumulative_distances(graph: AirportGraph, geometry: LineString) -> list[float]:
-    projected = graph.project_shape(geometry)
-    distances = [0.0]
-    for left, right in zip(projected.coords, projected.coords[1:]):
-        distances.append(distances[-1] + Point(left).distance(Point(right)))
-    return distances
-
-
-def _build_derived_graph(
-    source_edges: Mapping[str, SourceEdge],
-    source_nodes: Mapping[Hashable, SourceNode],
-    aliases: Mapping[Hashable, Hashable],
-    projection: Any,
-    airport: str,
-    initial_issues: list[str],
-) -> AirportGraph:
-    graph = nx.MultiGraph()
-    topology_nodes = _topology_nodes(source_edges, aliases)
-    for node_id in topology_nodes:
-        source_node = source_nodes[node_id]
-        graph.add_node(
-            node_id,
-            pos=source_node.position,
-            source_type="osm",
-            osm_node_ids=source_node.osm_node_ids,
-        )
-    airport_graph = AirportGraph(
-        graph,
-        projection,
-        source_nodes=source_nodes,
-        source_edges=source_edges,
-        node_aliases=aliases,
-        metadata=GraphMetadata(airport=airport),
-    )
-    issues = list(initial_issues)
-    for source_id, source in source_edges.items():
-        original_nodes = source.osm_node_ids
-        canonical_nodes = tuple(aliases.get(node, node) for node in original_nodes)
-        coordinates = tuple(source.geometry.coords)
-        distances = _cumulative_distances(airport_graph, source.geometry)
-        split_indices = [
-            index
-            for index, node_id in enumerate(canonical_nodes)
-            if index in {0, len(canonical_nodes) - 1} or node_id in topology_nodes
-        ]
-        for start_index, end_index in zip(split_indices, split_indices[1:]):
-            first, last = canonical_nodes[start_index], canonical_nodes[end_index]
-            geometry = LineString(coordinates[start_index : end_index + 1])
-            data = dict(source.attributes)
-            data.update(
-                geometry=geometry,
-                first=first,
-                last=last,
-                source_id=source_id,
-                source_type=source.source_type,
-                source_start_m=distances[start_index],
-                source_end_m=distances[end_index],
-                osm_node_ids=original_nodes[start_index : end_index + 1],
-                source_segments=(
-                    SourceSegment(source_id, distances[start_index], distances[end_index]),
-                ),
-            )
-            graph.add_edge(first, last, **data)
-            if first == last:
-                issues.append(f"source {source_id!r} produced self-loop at node {first!r}")
-            if airport_graph.length(geometry) <= ENDPOINT_TOLERANCE_M:
-                issues.append(f"source {source_id!r} produced a zero-length derived edge")
-    airport_graph.metadata = GraphMetadata(
-        airport=airport,
-        build_issues=tuple(issues),
-    )
-    return airport_graph
 
 
 def geometry_from_source_interval(
@@ -572,28 +293,6 @@ def validate_source_intervals(
                 raise ValueError(f"Source {source_id!r} has a gap or overlap in its intervals")
 
 
-def _json_value(value: Any) -> Any:
-    if is_dataclass(value):
-        return _json_value(asdict(value))
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, dict):
-        return {str(key): _json_value(item) for key, item in value.items()}
-    if isinstance(value, (list, tuple)):
-        return [_json_value(item) for item in value]
-    item = getattr(value, "item", None)
-    if callable(item):
-        return _json_value(item())
-    if value is None or isinstance(value, (str, int, float, bool)):
-        return value
-    return str(value)
-
-
-def _stable_node_order(node: Hashable) -> tuple[str, str]:
-    """Order heterogeneous node identifiers without comparing their values."""
-    return type(node).__qualname__, repr(node)
-
-
 def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
     return {
         "schema_version": GRAPH_SCHEMA_VERSION,
@@ -602,40 +301,32 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
         "build_issues": list(airport_graph.metadata.build_issues),
         "source_nodes": {
             str(node_id): {
-                "node_id": _json_value(source.node_id),
-                "position": _json_value(source.position),
-                "osm_node_ids": _json_value(source.osm_node_ids),
-                "attributes": _json_value(dict(source.attributes)),
+                "node_id": to_json_value(source.node_id),
+                "position": to_json_value(source.position),
+                "osm_node_ids": to_json_value(source.osm_node_ids),
+                "attributes": to_json_value(dict(source.attributes)),
             }
             for node_id, source in airport_graph.source_nodes.items()
         },
         "node_aliases": [
-            [_json_value(alias), _json_value(canonical)]
+            [to_json_value(alias), to_json_value(canonical)]
             for alias, canonical in airport_graph.node_aliases.items()
-        ],
-        "parking_position_nodes": [
-            _json_value(node)
-            for node in sorted(airport_graph.parking_position_nodes, key=_stable_node_order)
-        ],
-        "runway_access_nodes": [
-            _json_value(node)
-            for node in sorted(airport_graph.runway_access_nodes, key=_stable_node_order)
         ],
         "source_edges": {
             source_id: {
                 "geometry": mapping(source.geometry),
                 "source_type": source.source_type,
-                "osm_way_id": _json_value(source.osm_way_id),
-                "osm_node_ids": _json_value(source.osm_node_ids),
-                "attributes": _json_value(dict(source.attributes)),
+                "osm_way_id": to_json_value(source.osm_way_id),
+                "osm_node_ids": to_json_value(source.osm_node_ids),
+                "attributes": to_json_value(dict(source.attributes)),
             }
             for source_id, source in airport_graph.source_edges.items()
         },
         "nodes": [
             {
-                "id": _json_value(node),
-                "pos": _json_value(data["pos"]),
-                "attributes": _json_value(
+                "id": to_json_value(node),
+                "pos": to_json_value(data["pos"]),
+                "attributes": to_json_value(
                     {key: value for key, value in data.items() if key != "pos"}
                 ),
             }
@@ -643,11 +334,11 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
         ],
         "edges": [
             {
-                "u": _json_value(u),
-                "v": _json_value(v),
-                "key": _json_value(key),
+                "u": to_json_value(u),
+                "v": to_json_value(v),
+                "key": to_json_value(key),
                 "geometry": mapping(data["geometry"]),
-                "attributes": _json_value(
+                "attributes": to_json_value(
                     {name: value for name, value in data.items() if name != "geometry"}
                 ),
             }
@@ -701,6 +392,8 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
                 f"Airport graph content does not match graph_id: "
                 f"expected {declared_graph_id!r}, got {actual_graph_id!r}"
             )
+    # Legacy top-level business collections are deliberately ignored after hash validation.
+    # Semantic attributes are authoritative; old collections must not create new labels.
     graph = nx.MultiGraph()
     for node in document["nodes"]:
         graph.add_node(node["id"], pos=tuple(node["pos"]), **node["attributes"])
@@ -732,17 +425,21 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         )
         for item in document.get("source_nodes", {}).values()
     }
-    source_edges = {
-        source_id: SourceEdge(
+    source_edges: dict[str, SourceEdge] = {}
+    for source_id, item in document.get("source_edges", {}).items():
+        geometry = shape(item["geometry"])
+        if not isinstance(geometry, LineString):
+            raise ValueError(
+                f"Source {source_id!r} requires LineString geometry, got {geometry.geom_type}"
+            )
+        source_edges[source_id] = SourceEdge(
             source_id,
-            shape(item["geometry"]),
+            geometry,
             item["source_type"],
             item.get("osm_way_id"),
             tuple(item.get("osm_node_ids", ())),
             item.get("attributes", {}),
         )
-        for source_id, item in document.get("source_edges", {}).items()
-    }
     metadata = GraphMetadata(
         airport=document.get("airport", "ZBAA"),
         build_issues=tuple(document.get("build_issues", ())),
@@ -755,7 +452,5 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         source_nodes=source_nodes,
         source_edges=source_edges,
         node_aliases=dict(document.get("node_aliases", ())),
-        parking_position_nodes=set(document.get("parking_position_nodes", ())),
-        runway_access_nodes=set(document.get("runway_access_nodes", ())),
         metadata=metadata,
     )

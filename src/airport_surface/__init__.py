@@ -4,7 +4,6 @@ from typing import Any
 
 from .graph import (
     DEFAULT_GRAPH_PATH,
-    classify_business_nodes,
     geometry_from_source_segments,
     graph_id,
     load_graph,
@@ -22,6 +21,7 @@ from .models import (
     SourceSegment,
     edge_source_segments,
 )
+from .semantic_processor import SemanticPostProcessor, StandGroup, enrich_airport_semantics
 
 
 def edit_graph(*args: Any, **kwargs: Any) -> Any:
@@ -41,12 +41,14 @@ def __getattr__(name: str) -> Any:
 
 __all__ = [
     "AirportGraph",
+    "SemanticPostProcessor",
+    "StandGroup",
+    "enrich_airport_semantics",
     "DEFAULT_GRAPH_PATH",
     "GraphMetadata",
     "SourceEdge",
     "SourceNode",
     "SourceSegment",
-    "classify_business_nodes",
     "EditorSession",
     "edit_graph",
     "edge_source_segments",

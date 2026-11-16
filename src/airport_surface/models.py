@@ -5,7 +5,7 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Hashable, Mapping, Self
+from typing import Any, Hashable, Mapping, Self, overload
 
 import networkx as nx
 from pyproj import Proj, Transformer
@@ -103,6 +103,18 @@ class GraphMetadata:
         return cls(airport="UNKNOWN")
 
 
+NODE_SEMANTIC_DEFAULTS = {
+    "node_type": "unclassified",
+    "stand_group_id": None,
+    "is_manual_lock": False,
+}
+EDGE_SEMANTIC_DEFAULTS = {
+    "edge_zone": "backbone",
+    "stand_group_id": None,
+    "is_manual_lock": False,
+}
+
+
 class AirportGraph:
     """Airport topology, projection helpers, and authoritative source registries."""
 
@@ -116,8 +128,6 @@ class AirportGraph:
         source_nodes: Mapping[Hashable, SourceNode] | None = None,
         source_edges: Mapping[str, SourceEdge] | None = None,
         node_aliases: Mapping[Hashable, Hashable] | None = None,
-        parking_position_nodes: set[Hashable] | None = None,
-        runway_access_nodes: set[Hashable] | None = None,
         metadata: GraphMetadata | None = None,
     ) -> None:
         self.graph = graph
@@ -127,30 +137,68 @@ class AirportGraph:
         self.source_nodes = dict(source_nodes or {})
         self.source_edges = dict(source_edges or {})
         self.node_aliases = dict(node_aliases or {})
-        self.parking_position_nodes = set(parking_position_nodes or ())
-        self.runway_access_nodes = set(runway_access_nodes or ())
         self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
-        missing_business_nodes = (
-            self.parking_position_nodes | self.runway_access_nodes
-        ).difference(self.graph.nodes)
-        if missing_business_nodes:
-            raise ValueError(
-                "Business node annotations reference unknown graph nodes: "
-                f"{sorted(missing_business_nodes, key=repr)!r}"
-            )
+        self.initialize_semantic_defaults()
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
             if segments:
                 data["source_segments"] = segments
 
+    def initialize_semantic_defaults(self) -> None:
+        """Fill missing annotations without replacing existing or locked values."""
+        for _, data in self.graph.nodes(data=True):
+            for name, value in NODE_SEMANTIC_DEFAULTS.items():
+                data.setdefault(name, value)
+        for *_, data in self.graph.edges(data=True):
+            for name, value in EDGE_SEMANTIC_DEFAULTS.items():
+                data.setdefault(name, value)
+
+    def get_backbone_subgraph(self) -> tuple[nx.MultiGraph, list[Hashable]]:
+        """Return an independent backbone graph and deterministically ordered OD IDs.
+
+        Internal edges are excluded; isolated OD vertices remain available.
+        """
+        od = sorted(
+            (
+                n
+                for n, d in self.graph.nodes(data=True)
+                if d.get("node_type") in {"group_portal", "runway_interface"}
+            ),
+            key=repr,
+        )
+        graph = deepcopy(self.graph)
+        graph.remove_edges_from(
+            [
+                (u, v, k)
+                for u, v, k, d in graph.edges(keys=True, data=True)
+                if d.get("edge_zone") == "stand_group_internal"
+            ]
+        )
+        graph.remove_nodes_from([n for n in graph if graph.degree(n) == 0 and n not in od])
+        return graph, od
+
     @property
     def components(self) -> list[int]:
         return [len(component) for component in nx.connected_components(self.graph)]
 
+    @overload
+    def project_shape(self, geometry: LineString) -> LineString: ...
+
+    @overload
+    def project_shape(self, geometry: BaseGeometry) -> BaseGeometry: ...
+
     def project_shape(self, geometry: BaseGeometry) -> BaseGeometry:
+        """Transform coordinates while preserving the input geometry kind."""
         return transform(self.project.transform, geometry)
 
+    @overload
+    def to_wgs84_shape(self, geometry: LineString) -> LineString: ...
+
+    @overload
+    def to_wgs84_shape(self, geometry: BaseGeometry) -> BaseGeometry: ...
+
     def to_wgs84_shape(self, geometry: BaseGeometry) -> BaseGeometry:
+        """Transform coordinates while preserving the input geometry kind."""
         return transform(self.to_wgs84.transform, geometry)
 
     def length(self, geometry: BaseGeometry) -> float:
@@ -179,7 +227,5 @@ class AirportGraph:
             source_nodes=self.source_nodes,
             source_edges=self.source_edges,
             node_aliases=self.node_aliases,
-            parking_position_nodes=self.parking_position_nodes,
-            runway_access_nodes=self.runway_access_nodes,
             metadata=self.metadata,
         )

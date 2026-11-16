@@ -25,6 +25,7 @@
     <div class="dock-title">编辑工具</div>
     <button class="tool active" data-mode="inspect"><span>⌖</span><em>查看</em></button>
     <button class="tool" data-mode="split"><span>✂</span><em>补充分割点</em></button>
+    <button class="tool" data-mode="draw"><span>＋</span><em>直接绘制连接</em></button>
     <button class="tool" data-mode="restore"><span>⌁</span><em>恢复来源连接</em></button>
     <button class="tool" data-mode="merge"><span>◎</span><em>合并重合节点</em></button>
     <button class="tool" data-mode="snap"><span>↦</span><em>人工吸附到边</em></button>
@@ -40,7 +41,7 @@
     </section>
     <div class="map-overlay-stack">
       <div class="legend panel">
-        <span><i class="dot node-dot"></i>普通节点</span><span><i class="business-legend">P</i>停机位侧</span><span><i class="business-legend runway">R</i>跑道进出</span><span><i class="line edge-line"></i>派生边</span>
+        <span><i class="dot node-dot"></i>普通节点</span><span><i class="business-node-icon group_portal">G</i>机位组门户</span><span><i class="business-node-icon runway_interface">R</i>跑道接口</span><span><i class="line edge-line"></i>派生边</span>
         <span><i class="line flight-line"></i>虚线＝原始轨迹</span><span><i class="line path-line"></i>实线＝匹配路径</span>
       </div>
       <div id="layer-control-slot"></div>

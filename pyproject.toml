@@ -28,7 +28,7 @@ requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["adsb", "airport_surface", "airport_workbench", "path_map"]
+module-name = ["adsb", "airport_surface", "airport_workbench", "path_map", "utils"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

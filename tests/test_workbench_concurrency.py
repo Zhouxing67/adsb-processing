@@ -77,20 +77,18 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
     session = graph_session()
     with TestClient(create_app(session)) as client:
         first = client.post(
-            "/api/nodes/business-annotations",
+            "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "parking_position": True,
-                "runway_access": False,
+                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
                 "expected_revision": 0,
             },
         )
         stale = client.post(
-            "/api/nodes/business-annotations",
+            "/api/update-node",
             json={
                 "node": value("str", "1"),
-                "parking_position": False,
-                "runway_access": True,
+                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
                 "expected_revision": 0,
             },
         )
@@ -104,7 +102,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
     }
     assert session.revision == 1
     assert len(session._history) == 1
-    assert session.airport_graph.runway_access_nodes == set()
+    assert session.graph.nodes["1"]["node_type"] == "unclassified"
 
 
 def test_simultaneous_same_revision_allows_only_one_edit() -> None:
@@ -114,10 +112,9 @@ def test_simultaneous_same_revision_allows_only_one_edit() -> None:
     def edit(node: int | str) -> str:
         barrier.wait()
         try:
-            session.set_business_node_annotations(
+            session.update_node_attributes(
                 node,
-                parking_position=True,
-                runway_access=False,
+                {"node_type": "group_portal", "is_manual_lock": True},
                 expected_revision=0,
             )
             return "success"
@@ -142,11 +139,10 @@ def test_preview_revision_becomes_invalid_after_other_edit() -> None:
             json={"edge": edge, "expected_revision": 0},
         ).json()
         client.post(
-            "/api/nodes/business-annotations",
+            "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "parking_position": True,
-                "runway_access": False,
+                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
                 "expected_revision": 0,
             },
         )
@@ -163,10 +159,9 @@ def test_current_revision_missing_object_and_reversed_undirected_edge() -> None:
     session = graph_session()
     session.delete_node(1, expected_revision=0)
     with pytest.raises(GraphObjectNotFound):
-        session.set_business_node_annotations(
+        session.update_node_attributes(
             1,
-            parking_position=True,
-            runway_access=False,
+            {"node_type": "group_portal", "is_manual_lock": True},
             expected_revision=1,
         )
 
@@ -188,10 +183,9 @@ def test_merged_old_node_id_is_not_resolved_through_aliases() -> None:
     session.merge_nodes([1, 2], canonical_node=1, expected_revision=0)
 
     with pytest.raises(GraphObjectNotFound):
-        session.set_business_node_annotations(
+        session.update_node_attributes(
             2,
-            parking_position=True,
-            runway_access=False,
+            {"node_type": "group_portal", "is_manual_lock": True},
             expected_revision=1,
         )
 
@@ -200,8 +194,8 @@ def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
     session = graph_session()
     with pytest.raises(TypeError, match="expected_revision"):
         session.delete_node(1)
-    session.set_business_node_annotations(
-        1, parking_position=True, runway_access=False, expected_revision=0
+    session.update_node_attributes(
+        1, {"node_type": "group_portal", "is_manual_lock": True}, expected_revision=0
     )
     result = session.undo(expected_revision=1)
     assert result.revision == 2
@@ -210,11 +204,10 @@ def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
 
     with TestClient(create_app(graph_session())) as client:
         missing = client.post(
-            "/api/nodes/business-annotations",
+            "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "parking_position": True,
-                "runway_access": False,
+                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
             },
         )
         invalid = client.post("/api/undo", json={"expected_revision": "0"})

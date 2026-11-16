@@ -10,7 +10,7 @@ from copy import deepcopy
 from dataclasses import dataclass
 from functools import wraps
 from itertools import combinations
-from math import acos, degrees
+from math import acos, degrees, isfinite
 from pathlib import Path as FilePath
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, ParamSpec, Sequence, TypeVar
@@ -26,6 +26,7 @@ from airport_surface import (
     SourceNode,
     SourceSegment,
     edge_source_segments,
+    enrich_airport_semantics,
 )
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
@@ -33,6 +34,7 @@ from airport_surface.graph import (
     compact_source_segments,
     geometry_from_source_interval,
     geometry_from_source_segments,
+    graph_id,
     rebuild_source_edges,
     reverse_source_segments,
     save_graph,
@@ -41,6 +43,7 @@ from airport_surface.graph import (
     validate_edge_endpoints,
     validate_edge_sources,
 )
+from airport_surface.source_chain import split_source_chain
 
 if TYPE_CHECKING:
     from path_map import Path
@@ -123,8 +126,6 @@ class EditorSession:
             source_nodes=airport_graph.source_nodes,
             source_edges=airport_graph.source_edges,
             node_aliases=airport_graph.node_aliases,
-            parking_position_nodes=airport_graph.parking_position_nodes,
-            runway_access_nodes=airport_graph.runway_access_nodes,
             metadata=airport_graph.metadata,
         )
         self._history: list[tuple[AirportGraph, bool]] = []
@@ -145,8 +146,6 @@ class EditorSession:
             source_nodes=current.source_nodes,
             source_edges=current.source_edges,
             node_aliases=current.node_aliases,
-            parking_position_nodes=current.parking_position_nodes,
-            runway_access_nodes=current.runway_access_nodes,
             metadata=current.metadata,
         )
 
@@ -219,7 +218,12 @@ class EditorSession:
             self._check_revision(expected_revision)
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
-            output = save_graph(self.airport_graph, path)
+            enriched = enrich_airport_semantics(self.airport_graph)
+            changed = graph_id(enriched) != graph_id(self.airport_graph)
+            output = save_graph(enriched, path)
+            self.airport_graph = enriched
+            if changed:
+                self.revision += 1
             return CommandResult(output, self.revision)
 
     def finish(
@@ -234,7 +238,12 @@ class EditorSession:
             self._check_revision(expected_revision)
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
-            output = save_graph(self.airport_graph, path)
+            enriched = enrich_airport_semantics(self.airport_graph)
+            changed = graph_id(enriched) != graph_id(self.airport_graph)
+            output = save_graph(enriched, path)
+            self.airport_graph = enriched
+            if changed:
+                self.revision += 1
             on_finish()
             return CommandResult(output, self.revision)
 
@@ -257,23 +266,70 @@ class EditorSession:
         self.require_node(node)
         with self._edit():
             self.graph.remove_node(node)
-            self.airport_graph.parking_position_nodes.discard(node)
-            self.airport_graph.runway_access_nodes.discard(node)
 
     @versioned_edit
-    def set_business_node_annotations(
-        self, node: Any, *, parking_position: bool, runway_access: bool
-    ) -> None:
-        self.require_node(node)
-        with self._edit(topology_change=False):
-            for enabled, collection in (
-                (parking_position, self.airport_graph.parking_position_nodes),
-                (runway_access, self.airport_graph.runway_access_nodes),
+    def draw_connection(
+        self,
+        u: Any,
+        v: Any,
+        intermediate_points: Sequence[tuple[float, float]],
+        *,
+        aeroway: str = "taxiway",
+        ref: str | None = None,
+    ) -> Any:
+        """Create one manual source and edge; interior coordinates are shape points only."""
+        self.require_node(u)
+        self.require_node(v)
+        if u == v:
+            raise ValueError("起点和终点不能相同")
+        if aeroway not in {"taxiway", "runway", "parking_position"}:
+            raise ValueError("不支持的线路类型")
+        coordinates = [
+            tuple(self.graph.nodes[u]["pos"][:2]),
+            *[tuple(point) for point in intermediate_points],
+            tuple(self.graph.nodes[v]["pos"][:2]),
+        ]
+        for point in coordinates:
+            if (
+                len(point) != 2
+                or not all(isfinite(x) for x in point)
+                or not -180 <= point[0] <= 180
+                or not -90 <= point[1] <= 90
             ):
-                if enabled:
-                    collection.add(node)
-                else:
-                    collection.discard(node)
+                raise ValueError("折线坐标必须是有效经纬度")
+        coordinates = [
+            point for i, point in enumerate(coordinates) if i == 0 or point != coordinates[i - 1]
+        ]
+        if len(coordinates) < 2:
+            raise ValueError("连接长度必须大于零")
+        geometry = LineString(coordinates)
+        length = self.airport_graph.length(geometry)
+        if not isfinite(length) or length <= 1e-3:
+            raise ValueError("连接长度必须大于 1 毫米")
+        with self._edit():
+            source_id = f"manual-connection-{self.revision}"
+            while source_id in self.airport_graph.source_edges:
+                source_id += "-new"
+            attributes = {"aeroway": aeroway, "ref": ref}
+            self.airport_graph.source_edges[source_id] = SourceEdge(
+                source_id, geometry, "manual", attributes=attributes
+            )
+            key = self.graph.add_edge(
+                u,
+                v,
+                geometry=geometry,
+                first=u,
+                last=v,
+                source_type="manual",
+                source_id=source_id,
+                source_start_m=0.0,
+                source_end_m=length,
+                source_segments=(SourceSegment(source_id, 0.0, length),),
+                **attributes,
+            )
+            validate_edge_endpoints(self.airport_graph, edge_ids=[(u, v, key)])
+            validate_edge_sources(self.airport_graph, edge_ids=[(u, v, key)])
+        return key
 
     @versioned_edit
     def add_edge(self, u: Any, v: Any, **attributes: Any) -> Any:
@@ -339,9 +395,7 @@ class EditorSession:
         return preview
 
     @versioned_preview
-    def derived_edge_removal_preview(
-        self, u: Any, v: Any, key: Any
-    ) -> dict[str, Any]:
+    def derived_edge_removal_preview(self, u: Any, v: Any, key: Any) -> dict[str, Any]:
         u, v, key = self.require_edge(u, v, key)
         data = self.graph.edges[u, v, key]
         return {
@@ -369,9 +423,7 @@ class EditorSession:
             distances = [0.0]
             for left, right in zip(projected.coords, projected.coords[1:]):
                 distances.append(distances[-1] + Point(left).distance(Point(right)))
-            canonical = [
-                self.airport_graph.canonical_node_id(node) for node in source.osm_node_ids
-            ]
+            canonical = [self.airport_graph.canonical_node_id(node) for node in source.osm_node_ids]
             for index, (left, right) in enumerate(zip(canonical, canonical[1:])):
                 length = distances[index + 1] - distances[index]
                 if left == right or length <= 1e-3:
@@ -386,9 +438,7 @@ class EditorSession:
                 }
                 if graph.has_edge(left, right):
                     graph[left][right]["options"].append(option)
-                    graph[left][right]["weight"] = min(
-                        graph[left][right]["weight"], length
-                    )
+                    graph[left][right]["weight"] = min(graph[left][right]["weight"], length)
                 else:
                     graph.add_edge(left, right, weight=length, options=[option])
         return graph
@@ -510,11 +560,7 @@ class EditorSession:
         """Return complete-link groups of nearby graph nodes; never merge automatically."""
         nodes = list(self.graph)
         positions = {
-            node: Point(
-                self.airport_graph.project.transform(
-                    *self.graph.nodes[node]["pos"][:2]
-                )
-            )
+            node: Point(self.airport_graph.project.transform(*self.graph.nodes[node]["pos"][:2]))
             for node in nodes
         }
         cells: dict[tuple[int, int], list[Any]] = {}
@@ -571,11 +617,7 @@ class EditorSession:
     ) -> dict[str, Any]:
         members = self._merge_nodes(node_ids)
         points = {
-            node: Point(
-                self.airport_graph.project.transform(
-                    *self.graph.nodes[node]["pos"][:2]
-                )
-            )
+            node: Point(self.airport_graph.project.transform(*self.graph.nodes[node]["pos"][:2]))
             for node in members
         }
         maximum = max(
@@ -597,9 +639,8 @@ class EditorSession:
             node: [
                 source_id
                 for source_id, source in self.airport_graph.source_edges.items()
-                if node in {
-                    self.airport_graph.canonical_node_id(item) for item in source.osm_node_ids
-                }
+                if node
+                in {self.airport_graph.canonical_node_id(item) for item in source.osm_node_ids}
             ]
             for node in members
         }
@@ -613,8 +654,7 @@ class EditorSession:
             }
             if len(values) > 1:
                 raise ValueError(
-                    f"来源的 {attribute} 属性冲突，不能合并: "
-                    f"{sorted(values, key=repr)!r}"
+                    f"来源的 {attribute} 属性冲突，不能合并: {sorted(values, key=repr)!r}"
                 )
         direct_edges = [
             (u, v, key)
@@ -622,22 +662,16 @@ class EditorSession:
             if u in members and v in members
         ]
         affected = [
-            (u, v, key)
-            for u, v, key in self.graph.edges(keys=True)
-            if u in members or v in members
+            (u, v, key) for u, v, key in self.graph.edges(keys=True) if u in members or v in members
         ]
         warnings = []
         if direct_edges:
             warnings.append("成员节点之间存在直接边；合并时这些边会成为自环并被移除")
         if maximum > MERGE_CANDIDATE_TOLERANCE_M:
             warnings.append("节点距离超过普通候选范围，请重点检查")
-        common_sources = set.intersection(
-            *(set(source_membership[node]) for node in members)
-        )
+        common_sources = set.intersection(*(set(source_membership[node]) for node in members))
         if common_sources:
-            warnings.append(
-                "成员节点位于同一个 SourceEdge 上，请确认它们不是两个真实的相邻形状点"
-            )
+            warnings.append("成员节点位于同一个 SourceEdge 上，请确认它们不是两个真实的相邻形状点")
         aeroways = {
             self.airport_graph.get_source_edge(source_id).attributes.get("aeroway")
             for source_ids in source_membership.values()
@@ -667,9 +701,7 @@ class EditorSession:
         }
 
     @versioned_edit
-    def merge_nodes(
-        self, node_ids: Sequence[Any], canonical_node: Any | None = None
-    ) -> Any:
+    def merge_nodes(self, node_ids: Sequence[Any], canonical_node: Any | None = None) -> Any:
         preview = self.merge_nodes_preview.__wrapped__(self, node_ids, canonical_node)
         members = tuple(preview["node_ids"])
         canonical = preview["canonical_node_id"]
@@ -677,19 +709,21 @@ class EditorSession:
             member: tuple(self.graph.nodes[member]["pos"][:2]) for member in members
         }
         with self._edit():
-            parking = any(
-                member in self.airport_graph.parking_position_nodes
-                for member in members
-            )
-            runway_access = any(
-                member in self.airport_graph.runway_access_nodes for member in members
-            )
             incident = [
                 (u, v, key, deepcopy(data))
                 for u, v, key, data in self.graph.edges(keys=True, data=True)
                 if u in members or v in members
             ]
             canonical_data = deepcopy(self.graph.nodes[canonical])
+            locked = [
+                self.graph.nodes[n] for n in members if self.graph.nodes[n].get("is_manual_lock")
+            ]
+            signatures = {(d.get("node_type"), d.get("stand_group_id")) for d in locked}
+            if len(signatures) > 1:
+                raise ValueError("Cannot merge conflicting manually locked annotations")
+            if locked:
+                for name in ("node_type", "stand_group_id", "is_manual_lock"):
+                    canonical_data[name] = locked[0].get(name)
             for member in members:
                 if member in self.graph:
                     self.graph.remove_node(member)
@@ -710,12 +744,6 @@ class EditorSession:
                 osm_node_ids=merged_osm_ids,
             )
             self.graph.add_node(canonical, **canonical_data)
-            self.airport_graph.parking_position_nodes.difference_update(members)
-            self.airport_graph.runway_access_nodes.difference_update(members)
-            if parking:
-                self.airport_graph.parking_position_nodes.add(canonical)
-            if runway_access:
-                self.airport_graph.runway_access_nodes.add(canonical)
             added_edges = []
             for u, v, _key, data in incident:
                 first = canonical if data.get("first", u) in members else data.get("first", u)
@@ -957,8 +985,6 @@ class EditorSession:
             additions.append((first, last, data))
         with self._edit():
             self.graph.remove_node(node)
-            self.airport_graph.parking_position_nodes.discard(node)
-            self.airport_graph.runway_access_nodes.discard(node)
             added_edges = []
             for first, last, data in additions:
                 key = self.graph.add_edge(first, last, **data)
@@ -1167,9 +1193,7 @@ class EditorSession:
             "target_station_m": station,
             "segment_index": split["segment_index"],
             "target_geometry": mapping(self.graph.edges[u, v, key]["geometry"]),
-            "connector_geometry": mapping(
-                LineString([(longitude, latitude), snapped_position])
-            ),
+            "connector_geometry": mapping(LineString([(longitude, latitude), snapped_position])),
             "source_edge_unchanged": True,
         }
 
@@ -1184,38 +1208,18 @@ class EditorSession:
     ) -> list[tuple[Any, Any, Any]]:
         data = deepcopy(self.graph.edges[u, v, key])
         segments = edge_source_segments(data)
-        segment = segments[segment_index]
-        before, after = list(segments[:segment_index]), list(segments[segment_index + 1 :])
-        if segment.reversed:
-            if station < segment.source_end_m - 1e-3:
-                before.append(SourceSegment(segment.source_id, station, segment.source_end_m, True))
-            if station > segment.source_start_m + 1e-3:
-                after.insert(
-                    0,
-                    SourceSegment(segment.source_id, segment.source_start_m, station, True),
-                )
-        else:
-            if station > segment.source_start_m + 1e-3:
-                before.append(SourceSegment(segment.source_id, segment.source_start_m, station))
-            if station < segment.source_end_m - 1e-3:
-                after.insert(0, SourceSegment(segment.source_id, station, segment.source_end_m))
-        left_segments = compact_source_segments(before)
-        right_segments = compact_source_segments(after)
+        left_segments, right_segments = split_source_chain(segments, segment_index, station)
         if not left_segments or not right_segments:
             raise ValueError("人工吸附位置不能与目标边端点重合")
         first, last = data.get("first", u), data.get("last", v)
         left_data, right_data = deepcopy(data), deepcopy(data)
         left_data.update(
-            geometry=geometry_from_source_segments(
-                self.airport_graph, left_segments, first, node
-            ),
+            geometry=geometry_from_source_segments(self.airport_graph, left_segments, first, node),
             first=first,
             last=node,
         )
         right_data.update(
-            geometry=geometry_from_source_segments(
-                self.airport_graph, right_segments, node, last
-            ),
+            geometry=geometry_from_source_segments(self.airport_graph, right_segments, node, last),
             first=node,
             last=last,
         )
@@ -1316,24 +1320,8 @@ class EditorSession:
             split_station = float(preview["manual_station_m"])
             attributes = {"source_type": "manual", "source": "manual"}
         segment_index = int(preview["segment_index"])
-        segment = segments[segment_index]
         station = split_station
-        before, after = list(segments[:segment_index]), list(segments[segment_index + 1 :])
-        if segment.reversed:
-            if station < segment.source_end_m - 1e-3:
-                before.append(SourceSegment(segment.source_id, station, segment.source_end_m, True))
-            if station > segment.source_start_m + 1e-3:
-                after.insert(
-                    0,
-                    SourceSegment(segment.source_id, segment.source_start_m, station, True),
-                )
-        else:
-            if station > segment.source_start_m + 1e-3:
-                before.append(SourceSegment(segment.source_id, segment.source_start_m, station))
-            if station < segment.source_end_m - 1e-3:
-                after.insert(0, SourceSegment(segment.source_id, station, segment.source_end_m))
-        left_segments = compact_source_segments(before)
-        right_segments = compact_source_segments(after)
+        left_segments, right_segments = split_source_chain(segments, segment_index, station)
         if not left_segments or not right_segments:
             raise ValueError("切分位置不能与派生边端点重合")
         with self._edit():
