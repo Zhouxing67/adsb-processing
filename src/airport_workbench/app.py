@@ -13,7 +13,7 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
 import networkx as nx
 import uvicorn
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 
@@ -40,8 +40,6 @@ from .serializers import serialize_flights, serialize_paths
 if TYPE_CHECKING:
     from path_map import Path
 
-STATIC_DIRECTORY = FilePath(__file__).with_name("static")
-NO_CACHE_HEADERS = {"Cache-Control": "no-store"}
 VALIDATION_EDGE_COLORS = (
     "#406c80",
     "#9a684d",
@@ -369,56 +367,6 @@ def create_app(
                 content={"detail": "当前为只读可视化模式，不允许修改机场图"},
             )
         return await call_next(request)
-
-    @app.get("/")
-    def index() -> FileResponse:
-        return FileResponse(STATIC_DIRECTORY / "index.html", headers=NO_CACHE_HEADERS)
-
-    @app.get("/preview")
-    def design_preview() -> FileResponse:
-        return FileResponse(STATIC_DIRECTORY / "preview.html", headers=NO_CACHE_HEADERS)
-
-    @app.get("/preview.css")
-    def preview_stylesheet() -> FileResponse:
-        return FileResponse(STATIC_DIRECTORY / "preview.css", media_type="text/css", headers=NO_CACHE_HEADERS)
-
-    @app.get("/preview-flights.js")
-    def preview_flights_javascript() -> FileResponse:
-        return FileResponse(STATIC_DIRECTORY / "preview-flights.js", media_type="text/javascript", headers=NO_CACHE_HEADERS)
-
-    @app.get("/preview.js")
-    def preview_javascript() -> FileResponse:
-        return FileResponse(STATIC_DIRECTORY / "preview.js", media_type="text/javascript", headers=NO_CACHE_HEADERS)
-
-    @app.get("/app.css")
-    def stylesheet() -> FileResponse:
-        return FileResponse(
-            STATIC_DIRECTORY / "app.css", media_type="text/css", headers=NO_CACHE_HEADERS
-        )
-
-    @app.get("/flight-layout.css")
-    def flight_layout_stylesheet() -> FileResponse:
-        return FileResponse(
-            STATIC_DIRECTORY / "flight-layout.css",
-            media_type="text/css",
-            headers=NO_CACHE_HEADERS,
-        )
-
-    @app.get("/app.js")
-    def javascript() -> FileResponse:
-        return FileResponse(
-            STATIC_DIRECTORY / "app.js",
-            media_type="text/javascript",
-            headers=NO_CACHE_HEADERS,
-        )
-
-    @app.get("/flights-v2.js")
-    def flight_javascript_v2() -> FileResponse:
-        return FileResponse(
-            STATIC_DIRECTORY / "flights-v2.js",
-            media_type="text/javascript",
-            headers=NO_CACHE_HEADERS,
-        )
 
     @app.get("/api/state")
     def state() -> dict[str, Any]:
@@ -777,6 +725,9 @@ def create_app(
             "revision": result.revision,
         }
 
+    from .frontend import mount_frontend
+
+    mount_frontend(app)
     return app
 
 
