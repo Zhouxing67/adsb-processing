@@ -7,7 +7,7 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
   <link rel="stylesheet" href="/app.css">
   <link rel="stylesheet" href="/flight-layout.css">
-</head>
+<link rel="stylesheet" href="/workbench.css"></head>
 <body>
   <header class="topbar panel">
     <div class="brand-mark">AW</div>
@@ -53,12 +53,12 @@
     <label>边的两个端点<div class="edge-inputs"><input id="search-edge-u" placeholder="端点 A"><span>—</span><input id="search-edge-v" placeholder="端点 B"><button id="search-edge-button">选中</button></div></label>
   </section>
   <aside id="topology-panel" class="topology-panel panel hidden">
-    <div class="panel-heading"><div><small>只辅助人工判断，不自动修改</small><h2>拓扑概览</h2></div><button class="panel-close" data-close="topology-panel">×</button></div>
+    <div class="panel-heading"><div><h2>拓扑概览</h2></div><button class="panel-close" data-close="topology-panel">×</button></div>
     <div id="topology-summary" class="metric-grid"></div>
     <div id="topology-details" class="topology-details"></div>
     <div class="topology-actions"><button id="split-validation-toggle" class="secondary-button">开启相邻边辨色</button></div>
     <section class="node-review"><h3>逐点检查</h3><p id="node-review-progress" class="field-note">尚未开始</p><div class="node-review-actions"><button id="node-review-start" class="primary-button">开始</button><button id="node-review-prev" class="secondary-button" disabled>上一个</button><button id="node-review-next" class="secondary-button" disabled>下一个</button><button id="node-review-end" class="secondary-button" disabled>结束</button></div></section>
-    <p class="field-note">度为 0/1 的节点只是“值得检查”，不一定是错误。点击上方统计或下方明细可直接在地图定位。</p>
+
   </aside>
   <aside id="flights-panel" class="flights-panel panel">
     <div id="flight-list-view" class="flight-view">
@@ -85,5 +85,8 @@
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <script src="/app.js"></script>
   <script src="/flights-v2.js"></script>
+<script type="importmap">{"imports":{"react":"https://esm.sh/react@18.3.1","react-dom":"https://esm.sh/react-dom@18.3.1?external=react"}}</script><script type="module" src="/workbench.js"></script>
+
+<script src="/flight-workspace.js"></script>
 </body>
 </html>

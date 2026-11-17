@@ -31,3 +31,7 @@ outputs/
 
 #pytest
 *.pytest*
+
+# Frontend dependencies and generated delivery assets
+node_modules/
+src/airport_workbench/web_dist/
