@@ -234,6 +234,8 @@ def _build_derived_graph(
             for index, node_id in enumerate(canonical_nodes)
             if index in {0, len(canonical_nodes) - 1} or node_id in topology_nodes
         ]
+        if source.attributes.get("aeroway") == "parking_position":
+            split_indices = [0, len(canonical_nodes) - 1]
         for start_index, end_index in zip(split_indices, split_indices[1:]):
             first, last = canonical_nodes[start_index], canonical_nodes[end_index]
             geometry = LineString(coordinates[start_index : end_index + 1])
@@ -260,6 +262,8 @@ def _build_derived_graph(
         airport=airport,
         build_issues=tuple(issues),
     )
+    airport_graph.rebuild_stand_index()
+    airport_graph.rebuild_runway_interfaces()
     return airport_graph
 
 
@@ -315,6 +319,12 @@ def complete_geometric_topology(airport_graph: AirportGraph) -> None:
             points.append((node, point))
         for i in touching:
             station = lines[i].project(point)
+            if airport_graph.source_edges[identifiers[i]].attributes.get(
+                "aeroway"
+            ) == "parking_position":
+                # A stand is one complete edge; only its endpoints connect.
+                if ENDPOINT_TOLERANCE_M < station < lines[i].length - ENDPOINT_TOLERANCE_M:
+                    continue
             existing = boundaries[identifiers[i]]
             if not any(abs(station - old) <= ENDPOINT_TOLERANCE_M for old in existing):
                 existing[station] = node
@@ -322,6 +332,8 @@ def complete_geometric_topology(airport_graph: AirportGraph) -> None:
         if sorted(values.items()) != source_boundaries(airport_graph, source_id):
             rebuild_source_edges(airport_graph, source_id, sorted(values.items()))
     airport_graph.initialize_semantic_defaults()
+    airport_graph.rebuild_stand_index()
+    airport_graph.rebuild_runway_interfaces()
 
 
 def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
@@ -370,6 +382,8 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
     validate_edge_endpoints(graph)
     validate_edge_sources(graph)
     validate_source_intervals(graph)
+    graph.rebuild_stand_index()
+    graph.rebuild_runway_interfaces()
     return graph
 
 

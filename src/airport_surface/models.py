@@ -8,6 +8,7 @@ from types import MappingProxyType
 from typing import Any, Hashable, Mapping, Self, overload
 
 import networkx as nx
+from bidict import bidict
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
@@ -146,6 +147,64 @@ class AirportGraph:
             segments = edge_source_segments(data)
             if segments:
                 data["source_segments"] = segments
+        self.rebuild_stand_index()
+        self.rebuild_runway_interfaces()
+
+    def rebuild_runway_interfaces(self) -> None:
+        """Index nodes incident to both runway and taxiway edges.
+
+        Values contain the incident runway and taxiway edge IDs respectively.
+        Source tags take precedence over potentially inherited derived-edge tags.
+        """
+        incident: dict[Hashable, dict[str, list[tuple[Hashable, Hashable, Hashable]]]] = {}
+        for u, v, key, data in self.graph.edges(keys=True, data=True):
+            segments = edge_source_segments(data)
+            kinds = {
+                self.source_edges[s.source_id].attributes.get("aeroway")
+                for s in segments if s.source_id in self.source_edges
+            } if segments else {data.get("aeroway")}
+            for kind in kinds & {"runway", "taxiway"}:
+                for node in {u, v}:
+                    incident.setdefault(node, {"runway": [], "taxiway": []})[kind].append(
+                        (u, v, key)
+                    )
+        self.runway_interfaces = {
+            node: {kind: tuple(edges) for kind, edges in kinds.items()}
+            for node, kinds in incident.items()
+            if kinds["runway"] and kinds["taxiway"]
+        }
+
+    def rebuild_stand_index(self) -> None:
+        """Index stand sources and their current edges after topology changes.
+
+        Source IDs identify stands independently of edge splitting or merging.
+        Deleted stands remain in ``stands`` and are absent from ``stand_edges``.
+        ``stand_edges.inverse`` maps canonical undirected edge IDs back to stands.
+        Direct mutations of ``graph`` require an explicit rebuild.
+        """
+        self.stands = {
+            source_id: source
+            for source_id, source in self.source_edges.items()
+            if source.attributes.get("aeroway") == "parking_position"
+        }
+        index: bidict[str, tuple[Hashable, Hashable, Hashable]] = bidict()
+        for u, v, key, data in self.graph.edges(keys=True, data=True):
+            segments = edge_source_segments(data)
+            stand_ids = tuple(dict.fromkeys(
+                segment.source_id for segment in segments
+                if segment.source_id in self.stands
+            ))
+            if not stand_ids:
+                continue
+            if len(stand_ids) != 1 or any(
+                segment.source_id != stand_ids[0] for segment in segments
+            ):
+                raise ValueError(f"Stand edge mixes multiple sources: {(u, v, key)!r}")
+            stand_id = stand_ids[0]
+            if stand_id in index:
+                raise ValueError(f"Stand spans multiple graph edges: {stand_id!r}")
+            index[stand_id] = (u, v, key)
+        self.stand_edges = index
 
     def initialize_semantic_defaults(self) -> None:
         """Fill missing annotations without replacing existing or locked values."""
