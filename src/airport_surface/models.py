@@ -8,7 +8,6 @@ from types import MappingProxyType
 from typing import Any, Hashable, Mapping, Self, overload
 
 import networkx as nx
-from bidict import bidict
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
@@ -142,7 +141,6 @@ class AirportGraph:
         self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
         # Preserve existing serialized groups as opaque metadata; no active grouping pipeline.
         self.stand_groups = deepcopy(tuple(stand_groups))
-        self.initialize_semantic_defaults()
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
             if segments:
@@ -175,69 +173,29 @@ class AirportGraph:
         }
 
     def rebuild_stand_index(self) -> None:
-        """Index stand sources and their current edges after topology changes.
+        """Map OSM stand refs to edge IDs and back; unlabelled stands are omitted.
 
-        Source IDs identify stands independently of edge splitting or merging.
-        Deleted stands remain in ``stands`` and are absent from ``stand_edges``.
-        ``stand_edges.inverse`` maps canonical undirected edge IDs back to stands.
-        Direct mutations of ``graph`` require an explicit rebuild.
+        Direct graph mutations require an explicit rebuild. Edge IDs use the
+        orientation returned by graph.edges(), independent of travel direction.
         """
-        self.stands = {
-            source_id: source
-            for source_id, source in self.source_edges.items()
-            if source.attributes.get("aeroway") == "parking_position"
-        }
-        index: bidict[str, tuple[Hashable, Hashable, Hashable]] = bidict()
+        forward: dict[str, tuple[Hashable, Hashable, Hashable]] = {}
+        reverse: dict[tuple[Hashable, Hashable, Hashable], str] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
-            segments = edge_source_segments(data)
-            stand_ids = tuple(dict.fromkeys(
-                segment.source_id for segment in segments
-                if segment.source_id in self.stands
-            ))
-            if not stand_ids:
+            if data.get("aeroway") != "parking_position":
                 continue
-            if len(stand_ids) != 1 or any(
-                segment.source_id != stand_ids[0] for segment in segments
-            ):
-                raise ValueError(f"Stand edge mixes multiple sources: {(u, v, key)!r}")
-            stand_id = stand_ids[0]
-            if stand_id in index:
-                raise ValueError(f"Stand spans multiple graph edges: {stand_id!r}")
-            index[stand_id] = (u, v, key)
-        self.stand_edges = index
+            ref = data.get("ref")
+            if ref is None or not str(ref).strip():
+                continue
+            stand_id = str(ref)
+            if stand_id in forward:
+                #raise ValueError(f"Stand ref maps to multiple graph edges: {stand_id!r}")
+                continue
+            edge_id = (u, v, key)
+            forward[stand_id] = edge_id
+            reverse[edge_id] = stand_id
+        self.stand_to_edge = forward
+        self.edge_to_stand = reverse
 
-    def initialize_semantic_defaults(self) -> None:
-        """Fill missing annotations without replacing existing or locked values."""
-        for _, data in self.graph.nodes(data=True):
-            for name, value in NODE_SEMANTIC_DEFAULTS.items():
-                data.setdefault(name, value)
-        for *_, data in self.graph.edges(data=True):
-            for name, value in EDGE_SEMANTIC_DEFAULTS.items():
-                data.setdefault(name, value)
-
-    def get_backbone_subgraph(self) -> tuple[nx.MultiGraph, list[Hashable]]:
-        """Return an independent backbone graph and deterministically ordered OD IDs.
-
-        Internal edges are excluded; isolated OD vertices remain available.
-        """
-        od = sorted(
-            (
-                n
-                for n, d in self.graph.nodes(data=True)
-                if d.get("node_type") in {"group_portal", "runway_interface"}
-            ),
-            key=repr,
-        )
-        graph = deepcopy(self.graph)
-        graph.remove_edges_from(
-            [
-                (u, v, k)
-                for u, v, k, d in graph.edges(keys=True, data=True)
-                if d.get("edge_zone") == "stand_group_internal"
-            ]
-        )
-        graph.remove_nodes_from([n for n in graph if graph.degree(n) == 0 and n not in od])
-        return graph, od
 
     @property
     def components(self) -> list[int]:

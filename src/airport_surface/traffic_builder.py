@@ -12,12 +12,9 @@ import numpy as np
 from pyproj import CRS, Proj
 from shapely import STRtree
 from shapely.geometry import LineString, Point
-from shapely.geometry.base import BaseGeometry
 
 from .graph import (
     ENDPOINT_TOLERANCE_M,
-    rebuild_source_edges,
-    source_boundaries,
     validate_edge_endpoints,
     validate_edge_sources,
     validate_source_intervals,
@@ -267,75 +264,6 @@ def _build_derived_graph(
     return airport_graph
 
 
-def complete_geometric_topology(airport_graph: AirportGraph) -> None:
-    """Split source intervals at geometric intersections and existing Point entities.
-
-    Source geometries remain immutable. Collinear overlaps retain parallel edges.
-    This is a build-only operation, never part of semantic enrichment.
-    """
-    identifiers = list(airport_graph.source_edges)
-    lines = [
-        airport_graph.project_shape(airport_graph.source_edges[s].geometry) for s in identifiers
-    ]
-    if not lines:
-        return
-    tree = STRtree(lines)
-    boundaries = {s: dict(source_boundaries(airport_graph, s)) for s in identifiers}
-    points = [
-        (n, Point(airport_graph.project.transform(*d["pos"][:2])))
-        for n, d in airport_graph.graph.nodes(data=True)
-    ]
-
-    def intersection_points(geometry: BaseGeometry) -> list[Point]:
-        if geometry.geom_type == "Point":
-            return [geometry]
-        if geometry.geom_type == "LineString":
-            return [Point(geometry.coords[0]), Point(geometry.coords[-1])]
-        return [p for part in getattr(geometry, "geoms", ()) for p in intersection_points(part)]
-
-    candidates = [point for _, point in points]
-    for i, line in enumerate(lines):
-        for j in tree.query(line):
-            if int(j) > i:
-                candidates.extend(intersection_points(line.intersection(lines[int(j)])))
-    for point in candidates:
-        touching = [
-            int(i)
-            for i in tree.query(point.buffer(ENDPOINT_TOLERANCE_M))
-            if lines[int(i)].distance(point) <= ENDPOINT_TOLERANCE_M
-        ]
-        if not touching:
-            continue
-        node = next((n for n, p in points if p.distance(point) <= ENDPOINT_TOLERANCE_M), None)
-        if node is None:
-            node = f"intersection-{len(points)}"
-            while node in airport_graph.graph:
-                node += "-new"
-            airport_graph.graph.add_node(
-                node,
-                pos=airport_graph.to_wgs84.transform(point.x, point.y),
-                source_type="intersection",
-            )
-            points.append((node, point))
-        for i in touching:
-            station = lines[i].project(point)
-            if airport_graph.source_edges[identifiers[i]].attributes.get(
-                "aeroway"
-            ) == "parking_position":
-                # A stand is one complete edge; only its endpoints connect.
-                if ENDPOINT_TOLERANCE_M < station < lines[i].length - ENDPOINT_TOLERANCE_M:
-                    continue
-            existing = boundaries[identifiers[i]]
-            if not any(abs(station - old) <= ENDPOINT_TOLERANCE_M for old in existing):
-                existing[station] = node
-    for source_id, values in boundaries.items():
-        if sorted(values.items()) != source_boundaries(airport_graph, source_id):
-            rebuild_source_edges(airport_graph, source_id, sorted(values.items()))
-    airport_graph.initialize_semantic_defaults()
-    airport_graph.rebuild_stand_index()
-    airport_graph.rebuild_runway_interfaces()
-
-
 def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
     """Build a graph from a traffic Airport in an explicit offline workflow."""
     osm = airport._openstreetmap()
@@ -378,7 +306,6 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
                     node, pos=source.position, source_type="osm", osm_node_ids=source.osm_node_ids
                 )
             graph.graph.nodes[node]["aeroway"] = "parking_position"
-    complete_geometric_topology(graph)
     validate_edge_endpoints(graph)
     validate_edge_sources(graph)
     validate_source_intervals(graph)

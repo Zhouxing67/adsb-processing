@@ -1,67 +1,61 @@
 import networkx as nx
 import pytest
-from bidict import bidict
 from pyproj import Proj
 from shapely.geometry import LineString
 
 from airport_surface import AirportGraph, SourceEdge, SourceSegment
 
 
-def make_graph(*, split=False, mixed=False):
-    geometry = LineString([(0, 0), (0.001, 0)])
-    sources = {
-        name: SourceEdge(name, geometry, "osm", attributes={"aeroway": kind})
-        for name, kind in [("stand", "parking_position"), ("taxi", "taxiway")]
-    }
+def make_graph():
     graph = nx.MultiGraph()
-    segments = [SourceSegment("stand", 0, 10)]
-    if mixed:
-        segments.append(SourceSegment("taxi", 0, 10))
-    graph.add_edge(1, 2, source_segments=tuple(segments))
-    if split:
-        graph.add_edge(2, 3, source_segments=(SourceSegment("stand", 10, 20),))
-    return AirportGraph(graph, Proj("EPSG:3857"), source_edges=sources)
+    graph.add_edge(1, 2, aeroway="parking_position", ref="101")
+    return AirportGraph(graph, Proj("EPSG:3857"))
 
 
-def test_stand_bidirectional_index_and_deleted_stand():
+def test_stand_dictionaries_use_osm_ref():
     airport = make_graph()
-    assert isinstance(airport.stand_edges, bidict)
-    assert airport.stand_edges["stand"] == (1, 2, 0)
-    assert airport.stand_edges.inverse[(1, 2, 0)] == "stand"
+    assert airport.stand_to_edge["101"] == (1, 2, 0)
+    assert airport.edge_to_stand[(1, 2, 0)] == "101"
     airport.graph.remove_edge(1, 2, 0)
     airport.rebuild_stand_index()
-    assert "stand" in airport.stands
-    assert not airport.stand_edges
+    assert not airport.edge_to_stand
+    assert not airport.stand_to_edge
 
 
-@pytest.mark.parametrize("kwargs", [{"split": True}, {"mixed": True}])
-def test_stand_requires_one_exclusive_edge(kwargs):
-    with pytest.raises(ValueError, match="Stand"):
-        make_graph(**kwargs)
-
-
-def test_geometric_runway_taxiway_crossing_is_indexed():
-    from airport_surface.traffic_builder import complete_geometric_topology
+def test_shared_runway_taxiway_node_is_indexed():
 
     graph = nx.MultiGraph()
     sources = {}
     for name, nodes, coords in [
         ("runway", (1, 2), [(-0.001, 0), (0.001, 0)]),
-        ("taxiway", (3, 4), [(0, -0.001), (0, 0.001)]),
+        ("taxiway", (2, 4), [(0.001, 0), (0.001, 0.001)]),
         ("parking_position", (5, 6), [(0.0005, -0.001), (0.0005, 0.001)]),
     ]:
         geometry = LineString(coords)
-        sources[name] = SourceEdge(name, geometry, "osm", attributes={"aeroway": name})
+        sources[name] = SourceEdge(
+            name, geometry, "osm", attributes={"aeroway": name, "ref": "102"}
+        )
         length = 222.6389816
         for node, pos in zip(nodes, coords):
             graph.add_node(node, pos=pos)
         graph.add_edge(*nodes, geometry=geometry, first=nodes[0], last=nodes[1],
+                       aeroway=name, ref="102",
                        source_segments=(SourceSegment(name, 0, length),))
     airport = AirportGraph(graph, Proj("EPSG:3857"), source_edges=sources)
-    complete_geometric_topology(airport)
-    assert len(airport.stand_edges) == 1
+    assert len(airport.stand_to_edge) == 1
     assert len(airport.runway_interfaces) == 1
     interface = next(iter(airport.runway_interfaces.values()))
-    assert len(interface["runway"]) == 2
-    assert len(interface["taxiway"]) == 2
+    assert len(interface["runway"]) == 1
+    assert len(interface["taxiway"]) == 1
     assert airport.copy().runway_interfaces == airport.runway_interfaces
+
+
+def test_missing_ref_is_omitted_and_duplicate_ref_is_rejected():
+    graph = nx.MultiGraph()
+    graph.add_edge(1, 2, aeroway="parking_position")
+    airport = AirportGraph(graph, Proj("EPSG:3857"))
+    assert airport.stand_to_edge == airport.edge_to_stand == {}
+    graph.edges[1, 2, 0]["ref"] = "101"
+    graph.add_edge(2, 3, aeroway="parking_position", ref="101")
+    with pytest.raises(ValueError, match="Stand ref"):
+        airport.rebuild_stand_index()

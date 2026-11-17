@@ -14,7 +14,6 @@ from airport_surface.traffic_builder import (
     _build_derived_graph,
     _canonicalize_source_nodes,
     _extract_sources,
-    complete_geometric_topology,
 )
 from airport_workbench import EditorSession
 
@@ -34,24 +33,21 @@ def topology():
     return _build_derived_graph(sources, nodes, aliases, Proj("EPSG:3857"), "TEST", issues)
 
 
-def test_crossing_and_point_split_preserve_sources():
+def test_geometric_crossing_and_point_do_not_change_topology():
     graph = topology()
     original = {k: s.geometry.wkb for k, s in graph.source_edges.items()}
     graph.graph.add_node("stand", pos=(0.0005, 0), aeroway="parking_position")
-    complete_geometric_topology(graph)
-    assert graph.graph.number_of_edges() == 5
-    assert graph.graph.degree("stand") == 2
+    assert graph.graph.number_of_edges() == 2
+    assert graph.graph.degree("stand") == 0
     validate_edge_sources(graph)
     validate_source_intervals(graph)
     assert original == {k: s.geometry.wkb for k, s in graph.source_edges.items()}
     before = graph_id(graph)
-    complete_geometric_topology(graph)
     assert graph_id(graph) == before
 
 
 def test_save_failure_preserves_graph_and_revision(tmp_path, monkeypatch):
     graph = topology()
-    complete_geometric_topology(graph)
     session = EditorSession(graph)
     original = graph_id(session.airport_graph)
     with monkeypatch.context() as patch:
