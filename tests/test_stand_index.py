@@ -1,5 +1,4 @@
 import networkx as nx
-import pytest
 from pyproj import Proj
 from shapely.geometry import LineString
 
@@ -50,12 +49,14 @@ def test_shared_runway_taxiway_node_is_indexed():
     assert airport.copy().runway_interfaces == airport.runway_interfaces
 
 
-def test_missing_ref_is_omitted_and_duplicate_ref_is_rejected():
+def test_missing_ref_is_omitted_and_shared_ref_indexes_all_edges():
     graph = nx.MultiGraph()
     graph.add_edge(1, 2, aeroway="parking_position")
     airport = AirportGraph(graph, Proj("EPSG:3857"))
     assert airport.stand_to_edge == airport.edge_to_stand == {}
     graph.edges[1, 2, 0]["ref"] = "101"
     graph.add_edge(2, 3, aeroway="parking_position", ref="101")
-    with pytest.raises(ValueError, match="Stand ref"):
-        airport.rebuild_stand_index()
+    airport.rebuild_stand_index()
+    assert airport.stand_to_edge["101"] == (1, 2, 0)
+    assert airport.edge_to_stand[(1, 2, 0)] == "101"
+    assert airport.edge_to_stand[(2, 3, 0)] == "101"

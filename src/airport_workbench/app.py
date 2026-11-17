@@ -143,13 +143,13 @@ class BrowserState:
         self.paths = tuple(paths)
 
     def state(
-        self, can_finish: bool, save_path: FilePath, *, read_only: bool = False
+        self, can_finish: bool, save_path: FilePath
     ) -> dict[str, Any]:
         with self.session.lock:
-            return self._state(can_finish, save_path, read_only=read_only)
+            return self._state(can_finish, save_path)
 
     def _state(
-        self, can_finish: bool, save_path: FilePath, *, read_only: bool = False
+        self, can_finish: bool, save_path: FilePath
     ) -> dict[str, Any]:
         graph = self.session.graph
         components = sorted(nx.connected_components(graph), key=len, reverse=True)
@@ -184,9 +184,11 @@ class BrowserState:
                     "properties": {
                         "id": encode_value(node),
                         "node_id": repr(node),
-                        "node_type": data.get("node_type", "unclassified"),
-                        "is_manual_lock": data.get("is_manual_lock", False),
-                        "stand_group_id": data.get("stand_group_id"),
+                        "node_type": (
+                            "runway_interface"
+                            if node in getattr(self.session.airport_graph, "runway_interfaces", {})
+                            else "unclassified"
+                        ),
                         "longitude": longitude,
                         "latitude": latitude,
                         "degree": degree,
@@ -225,8 +227,6 @@ class BrowserState:
                     "properties": {
                         "id": encode_edge(u, v, key),
                         "edge_id": repr((u, v, key)),
-                        "edge_zone": data.get("edge_zone", "backbone"),
-                        "stand_group_id": data.get("stand_group_id"),
                         "u": repr(u),
                         "v": repr(v),
                         "u_id": encode_value(u),
@@ -296,7 +296,6 @@ class BrowserState:
             },
             "can_undo": self.session.can_undo,
             "can_finish": can_finish,
-            "read_only": read_only,
             "revision": getattr(self.session, "revision", 0),
             "topology_revision": getattr(self.session, "topology_revision", 0),
             "save_path": str(save_path),
@@ -310,7 +309,6 @@ def create_app(
     *,
     flights: Sequence[Flight] = (),
     paths_by_flight_key: Mapping[str, Path] | None = None,
-    read_only: bool = False,
     match_config: Any | None = None,
     flight_sources: Sequence[str] | None = None,
     movement_types: Sequence[str] | None = None,
@@ -332,7 +330,7 @@ def create_app(
         revision_provider=lambda: getattr(session, "revision", 0),
     )
     flight_mode = bool(flights)
-    app = FastAPI(title="Airport Graph Viewer" if read_only else "Airport Workbench")
+    app = FastAPI(title="Airport Workbench")
 
     @app.exception_handler(RevisionConflict)
     async def revision_conflict_handler(_request: Request, error: RevisionConflict) -> JSONResponse:
@@ -357,23 +355,28 @@ def create_app(
         )
 
     @app.middleware("http")
-    async def enforce_read_only(request: Request, call_next: Callable[..., Any]) -> Any:
-        read_only_match_api = request.url.path == "/api/matches" and request.method == "POST"
+    async def enforce_flight_permissions(request: Request, call_next: Callable[..., Any]) -> Any:
+        match_api = request.url.path == "/api/matches" and request.method == "POST"
         safe_method = request.method in {"GET", "HEAD", "OPTIONS"}
-        graph_write_blocked = (read_only or flight_mode) and not read_only_match_api
+        graph_write_blocked = flight_mode and not match_api
         if graph_write_blocked and not safe_method:
             return JSONResponse(
                 status_code=405,
-                content={"detail": "当前为只读可视化模式，不允许修改机场图"},
+                content={"detail": "航班工作台不允许修改机场图"},
             )
         return await call_next(request)
 
     @app.get("/api/state")
     def state() -> dict[str, Any]:
         flight_workbench.sync_graph()
-        value = browser.state(on_finish is not None, save_path, read_only=read_only)
+        value = browser.state(on_finish is not None, save_path)
         value["flight_count"] = len(flight_workbench.flights)
         value["flight_mode"] = flight_mode
+        value["capabilities"] = {
+            "can_edit_graph": not flight_mode,
+            "has_flights": bool(flights),
+            "can_match": bool(flights),
+        }
         value["path_count"] = sum(
             result.status == "success" for result in flight_workbench.results.values()
         )

@@ -56,7 +56,7 @@ def test_revision_conflict():
     assert not editor.airport_graph.source_edges
 
 
-def test_api_and_read_only():
+def test_api_and_read_only(flight_samples):
     payload = {
         "start": {"type": "int", "value": "1"},
         "end": {"type": "int", "value": "2"},
@@ -67,5 +67,5 @@ def test_api_and_read_only():
     with TestClient(create_app(editor)) as client:
         assert client.post("/api/draw-connection", json=payload).status_code == 200
         assert client.post("/api/draw-connection", json=payload).status_code == 409
-    with TestClient(create_app(session(), read_only=True)) as client:
+    with TestClient(create_app(session(), flights=flight_samples)) as client:
         assert client.post("/api/draw-connection", json=payload).status_code == 405

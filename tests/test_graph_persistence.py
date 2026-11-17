@@ -65,69 +65,6 @@ def test_save_failure_preserves_graph_and_revision(tmp_path, monkeypatch):
     assert session.revision == 0
 
 
-def test_workbench_portal_lock_save_unlock(tmp_path):
-    from fastapi.testclient import TestClient
-
-    from airport_workbench.app import create_app
-
-    graph = topology()
-    session = EditorSession(graph)
-    path = tmp_path / "saved.json"
-    with TestClient(create_app(session, path)) as client:
-        state = client.get("/api/state").json()
-        node = state["nodes"]["features"][0]["properties"]
-        attributes = dict(
-            node["editable_attributes"], node_type="group_portal", is_manual_lock=True
-        )
-        response = client.post(
-            "/api/update-node",
-            json={"node": node["id"], "attributes": attributes, "expected_revision": 0},
-        )
-        assert response.status_code == 200
-        revision = response.json()["revision"]
-        response = client.post("/api/save", json={"expected_revision": revision})
-        assert response.status_code == 200
-        saved = load_graph(path)
-        assert any(
-            d["node_type"] == "group_portal" and d["is_manual_lock"]
-            for _, d in saved.graph.nodes(data=True)
-        )
-        attributes.update(is_manual_lock=False, node_type="unclassified")
-        response = client.post(
-            "/api/update-node",
-            json={
-                "node": node["id"],
-                "attributes": attributes,
-                "expected_revision": response.json()["revision"],
-            },
-        )
-        assert response.status_code == 200
-        assert (
-            client.post(
-                "/api/save", json={"expected_revision": response.json()["revision"]}
-            ).status_code
-            == 200
-        )
-        assert all(
-            d["node_type"] != "group_portal" for _, d in load_graph(path).graph.nodes(data=True)
-        )
-
-
-def test_legacy_missing_semantic_fields(tmp_path):
-    import json
-
-    path = save_graph(topology(), tmp_path / "legacy.json")
-    document = json.loads(path.read_text(encoding="utf-8"))
-    document.pop("graph_id")
-    for item in document["nodes"] + document["edges"]:
-        for field in ("node_type", "edge_zone", "stand_group_id", "is_manual_lock"):
-            item["attributes"].pop(field, None)
-    path.write_text(json.dumps(document), encoding="utf-8")
-    graph = load_graph(path)
-    assert all(not d["is_manual_lock"] for _, d in graph.graph.nodes(data=True))
-    assert all(d["edge_zone"] == "backbone" for *_, d in graph.graph.edges(data=True))
-
-
 def test_loader_rejects_non_line_source_geometry(tmp_path):
     import json
 
@@ -163,7 +100,7 @@ def test_old_collections_are_verified_then_ignored(tmp_path):
     document["graph_id"] = _document_graph_id(document)
     path.write_text(json.dumps(document), encoding="utf-8")
     loaded = load_graph(path)
-    assert loaded.graph.nodes[1]["node_type"] == "unclassified"
+    assert loaded.graph.nodes[1]["pos"] == (0, 0)
     assert not hasattr(loaded, "parking_position_nodes")
     save_graph(loaded, tmp_path / "new.json")
     new = json.loads((tmp_path / "new.json").read_text(encoding="utf-8"))
@@ -175,16 +112,7 @@ def test_old_collections_are_verified_then_ignored(tmp_path):
         load_graph(path)
 
 
-def test_stored_groups_survive_without_algorithm(tmp_path):
-    groups = ({"stand_group_id": "old", "entities": [], "diagnostics": ["historical"]},)
-    graph = AirportGraph(nx.MultiGraph(), Proj("EPSG:3857"), stand_groups=groups)
-    copied = graph.copy()
-    copied.stand_groups[0]["entities"].append({"id": "new"})
-    assert graph.stand_groups == groups
-    assert load_graph(save_graph(graph, tmp_path / "graph.json")).stand_groups == groups
-
-
-def test_node_attribute_edit_is_undoable_and_read_only_is_protected():
+def test_node_attribute_edit_is_undoable_and_read_only_is_protected(flight_samples):
     from fastapi.testclient import TestClient
 
     from airport_workbench.app import create_app
@@ -195,7 +123,7 @@ def test_node_attribute_edit_is_undoable_and_read_only_is_protected():
     session.update_node_attributes(1, {"name": "reviewed"}, expected_revision=0)
     session.undo(expected_revision=1)
     assert "name" not in session.graph.nodes[1]
-    with TestClient(create_app(session, read_only=True)) as client:
+    with TestClient(create_app(session, flights=flight_samples)) as client:
         response = client.post(
             "/api/update-node",
             json={

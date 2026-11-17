@@ -48,7 +48,6 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
     assert isolated["properties"]["color"] == "#a34f6a"
     assert isolated["properties"]["radius"] == 5
     assert isolated["properties"]["node_type"] == "unclassified"
-    assert isolated["properties"]["is_manual_lock"] is False
     assert isolated["properties"]["id"] == {"type": "str", "value": "isolated"}
     edge = state["edges"]["features"][0]["properties"]
     assert edge["u_id"]["type"] == "str"
@@ -65,7 +64,7 @@ def test_validation_colors_differ_for_incident_edges() -> None:
     assert len(set(colors.values())) == 3
 
 
-def test_read_only_viewer_hides_editing_state_and_rejects_writes() -> None:
+def test_read_only_viewer_hides_editing_state_and_rejects_writes(flight_samples) -> None:
     graph = nx.MultiGraph()
     graph.add_node("a", pos=(0.0, 0.0))
     session = SimpleNamespace(
@@ -74,10 +73,10 @@ def test_read_only_viewer_hides_editing_state_and_rejects_writes() -> None:
         airport_graph=_AirportGraph(),
         can_undo=False,
     )
-    app = create_app(session, read_only=True)
+    app = create_app(session, flights=flight_samples)
     state_route = next(
         route for route in app.routes if getattr(route, "path", None) == "/api/state"
     )
 
-    assert state_route.endpoint()["read_only"] is True
+    assert state_route.endpoint()["capabilities"]["can_edit_graph"] is False
     assert app.user_middleware

@@ -1,3 +1,7 @@
+import { popupPosition } from '../domain/popup-layout';
+import { propertyPatch, requireRevision } from '../domain/properties';
+import { applicationLifecycle as lifecycle } from './lifecycle.js';
+import L from 'leaflet';
 const map = L.map("map", {preferCanvas: false, zoomControl: false, maxZoom: 26});
 map.createPane("edgeCasingPane"); map.getPane("edgeCasingPane").style.zIndex = 410;
 map.createPane("edgesPane"); map.getPane("edgesPane").style.zIndex = 420;
@@ -8,9 +12,9 @@ map.createPane("nodesPane"); map.getPane("nodesPane").style.zIndex = 650;
 map.createPane("previewPane"); map.getPane("previewPane").style.zIndex = 660;
 map.createPane("selectionPane"); map.getPane("selectionPane").style.zIndex = 670;
 
-const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {attribution: "© OpenStreetMap contributors",maxNativeZoom:19,maxZoom:26}).addTo(map);
+const osm = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {attribution: "© OpenStreetMap contributors",maxNativeZoom:19,maxZoom:26});
 const satellite = L.tileLayer("https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}", {attribution: "Esri, Maxar, Earthstar Geographics",maxNativeZoom:19,maxZoom:26});
-const blankBase = L.layerGroup();
+const blankBase = L.layerGroup().addTo(map);
 const layers = L.control.layers({"OpenStreetMap": osm, "ESRI 卫星": satellite, "无底图（精细编辑）": blankBase}, {}, {collapsed: false, position: "topleft"}).addTo(map);
 document.querySelector("#layer-control-slot").appendChild(layers.getContainer());
 
@@ -43,7 +47,7 @@ const messages = {
 };
 
 let conflictNotice=false;
-function setStatus(message) { if(!conflictNotice)status.textContent = message; }
+function setStatus(message) { if(!conflictNotice)status.textContent = message;publishMapState(); }
 function escapeHtml(value) { return String(value ?? "—").replace(/[&<>'"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;","'":"&#39;",'"':"&quot;"})[c]); }
 function normalizeId(value) { return String(value ?? "").trim().replace(/^['"]|['"]$/g, ""); }
 function edgePairKey(u, v) { return [normalizeId(u), normalizeId(v)].sort().join("|"); }
@@ -57,28 +61,51 @@ async function post(path, body, reload = false) {
 function clearPreview() { if (previewLayer) { map.removeLayer(previewLayer); previewLayer = null; } }
 function clearEndpointHighlight() { if (endpointLayer) { map.removeLayer(endpointLayer); endpointLayer = null; } }
 function clearSelection() { if (selectionLayer) { map.removeLayer(selectionLayer); selectionLayer = null; } }
-function refreshMapLayout(){requestAnimationFrame(()=>map.invalidateSize());}
+function refreshMapLayout(){lifecycle.frame(()=>map.invalidateSize());}
 function isNarrowLayout(){return window.matchMedia("(max-width: 1050px)").matches;}
 function shouldSwapTopologyPanel(){return Boolean(currentState?.flight_mode)||isNarrowLayout();}
 function setTopologyInspection(active){if(active===topologyInspectionActive)return;if(active){topologyPreviousNodeVisibility=Boolean(nodeLayer&&map.hasLayer(nodeLayer));topologyPreviousEdgeVisibility=Boolean(edgeGroup&&map.hasLayer(edgeGroup));}topologyInspectionActive=active;if(active&&nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);else if(!active&&nodeLayer&&!topologyPreviousNodeVisibility&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);if(currentState)renderEdges(currentState);if(active&&edgeGroup&&!map.hasLayer(edgeGroup))edgeGroup.addTo(map);else if(!active&&edgeGroup&&!topologyPreviousEdgeVisibility&&map.hasLayer(edgeGroup))map.removeLayer(edgeGroup);}
-function openDetails(){const returnToTopology=shouldSwapTopologyPanel()&&!topologyPanel.classList.contains("hidden");if(returnToTopology){narrowDetailsReturnToTopology=true;topologyPanel.classList.add("hidden");setTopologyInspection(false);}topologyBack.classList.toggle("hidden",!narrowDetailsReturnToTopology);details.classList.remove("hidden");refreshMapLayout();}
+function openDetails(propertyPopup=false){if(!propertyPopup)details.classList.remove("property-popup");const returnToTopology=shouldSwapTopologyPanel()&&!topologyPanel.classList.contains("hidden");if(returnToTopology){narrowDetailsReturnToTopology=true;topologyPanel.classList.add("hidden");setTopologyInspection(false);}topologyBack.classList.toggle("hidden",!narrowDetailsReturnToTopology);details.classList.remove("hidden");refreshMapLayout();}
 function closeDetails() { selectedNodeKey=null;activeOperationRevision=null;narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");clearPreview();clearEndpointHighlight();clearSelection();refreshMapLayout(); }
 function returnToTopology(){narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");topologyPanel.classList.remove("hidden");document.querySelector("#topology-toggle").classList.add("active");setTopologyInspection(true);refreshMapLayout();}
+let propertyTarget=null, propertyAnchor=null;
+const propertyFields=['aeroway','name','ref'];
+let propertyView=null;
+function positionPropertyPopup(){
+ if(!propertyAnchor||!details.classList.contains('property-popup')||details.classList.contains('hidden'))return;
+ const point=map.latLngToContainerPoint(propertyAnchor),size=map.getSize(),width=300,height=300,gap=24;
+ if(!size.x||!size.y)return;
+ const position=popupPosition(point,size,{width,height,gap});
+ details.style.left=position.x+'px';details.style.top=position.y+'px';
+}
+map.on('move zoom resize',positionPropertyPopup);
 function showProperties(title, properties) {
-  const ignored = new Set(["id", "u_id", "v_id", "validation_color", "editable_attributes"]);
-  const rows = Object.entries(properties).filter(([key]) => !ignored.has(key)).map(([key,value]) => `<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(typeof value==="object"?JSON.stringify(value,null,2):typeof value==="number"&&!Number.isInteger(value)?Number(value.toFixed(key==="longitude"||key==="latitude"?7:3)):value)}</dd>`).join("");
-  detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2><dl>${rows}</dl>`; openDetails();
+ propertyView={title,properties};
+ const canEdit=Boolean(currentState?.capabilities?.can_edit_graph&&document.body.classList.contains('graph-editing'));
+ const ignored=new Set(['id','u_id','v_id','editable_attributes','validation_color',...propertyFields]);
+ const inputs=propertyFields.map(key=>{
+ const value=properties[key]??properties.editable_attributes?.[key]??'';
+ if(key==='aeroway'){
+ const types=['taxiway','runway','parking_position'];
+ const options=[...(!types.includes(value)?[value]:[]),...types].map(type=>`<option value="${escapeHtml(type)}" ${type===value?'selected':''} ${!types.includes(type)?'disabled':''}>${escapeHtml(type||'未设置')}</option>`).join('');
+ return `<label>${key}<select data-property="${key}" ${canEdit?'':'disabled'}>${options}</select></label>`;
+ }
+ return `<label>${key}<input data-property="${key}" value="${escapeHtml(value)}" ${canEdit?'':'readonly'}></label>`;
+ }).join('');
+ const rows=Object.entries(properties).filter(([key])=>!ignored.has(key)).map(([key,value])=>`<dt>${escapeHtml(key)}</dt><dd>${escapeHtml(typeof value==='object'?JSON.stringify(value):value)}</dd>`).join('');
+ detailsContent.innerHTML=`<h2>${escapeHtml(title)}</h2><div class="property-primary">${inputs}</div>${canEdit?'<button class="primary-button" id="save-properties">保存属性</button>':''}<dl>${rows}</dl>`;
+ details.classList.add('property-popup');openDetails(true);positionPropertyPopup();
+ if(canEdit){const revision=currentState.revision,target=propertyTarget;document.querySelector('#save-properties').onclick=async()=>{
+ if(!document.body.classList.contains('graph-editing')||!currentState?.capabilities?.can_edit_graph){setStatus('请先进入编辑图');return}
+ const values={};detailsContent.querySelectorAll('[data-property]').forEach(input=>values[input.dataset.property]=input.value);
+ let attributes;try{attributes={...properties.editable_attributes,...propertyPatch(values)};requireRevision(revision)}catch(error){setStatus(error.message);return}
+ const payload={attributes,expected_revision:revision,...(target.kind==='edge'?{edge:target.id}:{node:target.id})};
+ try{await post(target.kind==='edge'?'/api/update-edge':'/api/update-node',payload,true);closeDetails();setStatus('属性已保存')}catch(error){setStatus(error.message)}
+ };}
 }
-function showNodeProperties(feature) {
-  const properties=feature.properties;
-  showProperties(`节点 ${properties.node_id}`,properties);
-  const readonly=currentState?.read_only||currentState?.flight_mode;
-  if(readonly)return;
-  const formRevision=currentState.revision;
-  detailsContent.insertAdjacentHTML("beforeend", `<button id="portal-lock">${properties.is_manual_lock?"解锁门户":"锁定为 Group_Portal"}</button>`);
-  document.querySelector("#portal-lock").onclick=async()=>{try{await post("/api/update-node",{node:properties.id,attributes:{...properties.editable_attributes,node_type:properties.is_manual_lock?"unclassified":"group_portal",is_manual_lock:!properties.is_manual_lock},expected_revision:formRevision},true);}catch(error){setStatus(error.message);}};
-}
+function showNodeProperties(feature){showProperties(`节点 ${feature.properties.node_id}`,feature.properties)}
 function showConfirmation(title, html, confirmText, onConfirm, revision) {
+  details.classList.remove("property-popup");
   activeOperationRevision=revision;
   detailsContent.innerHTML = `<h2>${escapeHtml(title)}</h2>${html}<div class="attribute-actions"><button id="cancel-action" class="secondary-button">取消</button><button id="confirm-action" class="primary-button">${escapeHtml(confirmText)}</button></div>`;
   openDetails();
@@ -94,7 +121,9 @@ function highlightEdgeEndpoints(feature) {
   });
   endpointLayer=L.layerGroup(markers).addTo(map);
 }
-function selectEdge(feature, fit = false) {
+function selectEdge(feature, fit = false, anchor = null) {
+  propertyTarget={kind:"edge",id:feature.properties.id,feature};
+  const coordinates=feature.geometry.coordinates.map(c=>L.latLng(c[1],c[0]));let total=0;const lengths=coordinates.slice(1).map((c,i)=>{const length=map.distance(coordinates[i],c);total+=length;return length});let remaining=total/2;let midpoint=coordinates[0];for(let i=0;i<lengths.length;i++){if(remaining<=lengths[i]){const t=lengths[i]?remaining/lengths[i]:0;midpoint=L.latLng(coordinates[i].lat+(coordinates[i+1].lat-coordinates[i].lat)*t,coordinates[i].lng+(coordinates[i+1].lng-coordinates[i].lng)*t);break}remaining-=lengths[i]}propertyAnchor=anchor||midpoint;
   selectedNodeKey=null;
   clearSelection(); highlightEdgeEndpoints(feature);
   selectionLayer=L.geoJSON({type:"Feature",geometry:feature.geometry},{pane:"selectionEdgePane",interactive:false,style:{color:"#2563eb",weight:4,opacity:1,lineCap:"round",lineJoin:"round"}}).addTo(map);
@@ -102,6 +131,7 @@ function selectEdge(feature, fit = false) {
   showProperties(`派生边 ${feature.properties.edge_id}`,feature.properties);
 }
 function selectNode(feature, fit = false) {
+ propertyTarget={kind:"node",id:feature.properties.id};propertyAnchor=L.latLng(feature.geometry.coordinates[1],feature.geometry.coordinates[0]);
   clearSelection(); clearEndpointHighlight();
   const id=nodeKey(feature);selectedNodeKey=id;
   const incident=currentState.edges.features.filter(edge=>nodeKey(edge.properties.u_id)===id||nodeKey(edge.properties.v_id)===id);
@@ -143,7 +173,7 @@ function renderDrawing(){
 }
 map.on("click",event=>{if(mode!=="draw"||!drawing||drawing.end)return;drawing.points.push([event.latlng.lng,event.latlng.lat]);renderDrawing();});
 function drawingNodeClicked(feature){
-  if(currentState.read_only||currentState.flight_mode)return;
+  if(!currentState.capabilities?.can_edit_graph)return;
   if(!drawing)drawing={start:feature,points:[],end:null,revision:currentState.revision};
   else if(nodeKey(drawing.start)===nodeKey(feature))return setStatus("两个端点不能相同");
   else drawing.end=feature;
@@ -249,11 +279,11 @@ function nodeClicked(feature,event) {
   if(mode==="snap") { firstNode=p.id;firstNodeRevision=currentState.revision;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
   if(mode==="merge") { if(!mergeNodeIds.length)mergeSelectionRevision=currentState.revision;if(!mergeNodeIds.some(id=>nodeKey(id)===nodeKey(p.id)))mergeNodeIds.push(p.id);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeIds.length} 个待合并节点`); }
 }
-function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); if(mode==="draw"){if(drawing&&!drawing.end){drawing.points.push([event.latlng.lng,event.latlng.lat]);renderDrawing();}return;} selectEdge(feature); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.id); if(mode==="split")return previewSplit(p.id,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.id,firstNodeRevision);} }
+function edgeClicked(feature,event) { L.DomEvent.stopPropagation(event); if(mode==="draw"){if(drawing&&!drawing.end){drawing.points.push([event.latlng.lng,event.latlng.lat]);renderDrawing();}return;} selectEdge(feature,false,event.latlng); const p=feature.properties; if(mode==="delete")return previewEdgeDeletion(p.id); if(mode==="split")return previewSplit(p.id,event.latlng);if(mode==="snap"){if(!firstNode)return setStatus("请先选择需要人工吸附的图节点");return previewManualSnap(firstNode,p.id,firstNodeRevision);} }
 
 function renderNodes() {
   if(nodeLayer) { layers.removeLayer(nodeLayer); map.removeLayer(nodeLayer); }
-  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>{const p=feature.properties;if(p.node_type==="group_portal"||p.node_type==="runway_interface")return L.marker(latlng,{pane:"nodesPane",icon:L.divIcon({className:`business-node-icon ${p.node_type}`,html:p.node_type==="group_portal"?"G":"R",iconSize:[20,20]})});return L.circleMarker(latlng,{pane:"nodesPane",radius:Math.max(Number(p.radius)||0,4),color:"rgba(255,255,255,.9)",fillColor:p.color,fillOpacity:.9,weight:1.5});},onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
+  nodeLayer=L.geoJSON({type:"FeatureCollection",features:nodeFeatures},{pane:"nodesPane",pointToLayer:(feature,latlng)=>{const p=feature.properties;if(p.node_type==="runway_interface")return L.marker(latlng,{pane:"nodesPane",icon:L.divIcon({className:`business-node-icon ${p.node_type}`,html:"R",iconSize:[20,20]})});return L.circleMarker(latlng,{pane:"nodesPane",radius:Math.max(Number(p.radius)||0,4),color:"rgba(255,255,255,.9)",fillColor:p.color,fillOpacity:.9,weight:1.5});},onEachFeature:(feature,layer)=>layer.on("click",event=>nodeClicked(feature,event))});
   if(!currentState?.flight_mode||topologyInspectionActive)nodeLayer.addTo(map); layers.addOverlay(nodeLayer,`图节点 (${nodeFeatures.length})`);
 }
 function renderEdges(data) {
@@ -264,7 +294,7 @@ function renderEdges(data) {
   const casing=L.geoJSON(data.edges,{pane:"edgeCasingPane",interactive:false,style:{color:"rgba(255,255,255,.8)",weight:flightMode&&!inspection?4.5:5,opacity:flightMode&&!inspection?.58:.65}});
   edgeSearchIndex.clear();
   edgeIdentityIndex.clear();
-  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:splitValidation?feature.properties.validation_color:feature.properties.edge_zone==="stand_group_internal"?"#8b5cf6":flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
+  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:feature.properties.aeroway==="parking_position"?"#dc6b32":splitValidation?feature.properties.validation_color:flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
   edgeGroup=L.layerGroup([casing,edgeLayer]);if(wasVisible)edgeGroup.addTo(map);layers.addOverlay(edgeGroup,`派生边 (${data.edge_count})`);
 }
 function renderReferenceLayers(data) {
@@ -276,14 +306,13 @@ function renderReferenceLayers(data) {
   data.flights.forEach((collection,index)=>{const color=flightColors[index%flightColors.length];const layer=L.geoJSON(collection,{pane:"flightPane",interactive:false,style:{pane:"flightPane",color:"#fff",weight:7,opacity:.88},pointToLayer:(_feature,latlng)=>L.circleMarker(latlng,{pane:"flightPane",radius:2.5,color:"#fff",fillColor:color,weight:1,fillOpacity:.95})});const accent=L.geoJSON(collection,{pane:"flightPane",interactive:false,filter:feature=>feature.geometry.type!=="Point",style:{pane:"flightPane",color,weight:4.5,opacity:.96,dashArray:dashPatterns[Math.floor(index/flightColors.length)%dashPatterns.length]}});const group=L.layerGroup([layer,accent]);dataLayers.push(group);layers.addOverlay(group,`Flight ${index+1}`);group.addTo(map);});
   data.paths.forEach((collection,index)=>{const color=pathColors[index%pathColors.length];const casing=L.geoJSON(collection,{pane:"pathPane",interactive:false,style:{pane:"pathPane",color:"#fff",weight:9,opacity:.92}});const accent=L.geoJSON(collection,{pane:"pathPane",interactive:false,style:{pane:"pathPane",color,weight:6,opacity:.98,dashArray:dashPatterns[Math.floor(index/pathColors.length)%dashPatterns.length]}});const group=L.layerGroup([casing,accent]);dataLayers.push(group);layers.addOverlay(group,`Path ${index+1}`);group.addTo(map);});
 }
-function updateNodeReviewControls(){const active=nodeReviewIndex>=0&&nodeReviewSnapshot.length>0;document.querySelector("#node-review-start").disabled=!nodeFeatures.length||currentState?.read_only||currentState?.flight_mode;document.querySelector("#node-review-prev").disabled=!active||nodeReviewIndex===0;document.querySelector("#node-review-next").disabled=!active||nodeReviewIndex===nodeReviewSnapshot.length-1;document.querySelector("#node-review-end").disabled=!active;document.querySelector("#node-review-progress").textContent=active?`遍历位置 ${nodeReviewIndex+1} / ${nodeReviewSnapshot.length} · 节点 ${nodeReviewSnapshot[nodeReviewIndex].properties.node_id}`:"尚未开始";}
+function updateNodeReviewControls(){const active=nodeReviewIndex>=0&&nodeReviewSnapshot.length>0;document.querySelector("#node-review-start").disabled=!nodeFeatures.length||!currentState?.capabilities?.can_edit_graph;document.querySelector("#node-review-prev").disabled=!active||nodeReviewIndex===0;document.querySelector("#node-review-next").disabled=!active||nodeReviewIndex===nodeReviewSnapshot.length-1;document.querySelector("#node-review-end").disabled=!active;document.querySelector("#node-review-progress").textContent=active?`遍历位置 ${nodeReviewIndex+1} / ${nodeReviewSnapshot.length} · 节点 ${nodeReviewSnapshot[nodeReviewIndex].properties.node_id}`:"尚未开始";}
 function endNodeReview(message=""){nodeReviewSnapshot=[];nodeReviewIndex=-1;updateNodeReviewControls();if(message)setStatus(message);}
 function showNodeReviewPosition(fit=true){const feature=nodeReviewSnapshot[nodeReviewIndex];if(!feature)return endNodeReview("节点快照已失效，请重新开始逐点检查");if(nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);selectNode(feature,fit);updateNodeReviewControls();if(nodeReviewIndex===nodeReviewSnapshot.length-1)setStatus("已到最后一个节点；这不表示全部复核通过");}
 function startNodeReview(){if(!nodeFeatures.length)return setStatus("当前图没有可检查节点");nodeReviewSnapshot=sortedNodeReviewSnapshot(nodeFeatures);nodeReviewIndex=0;showNodeReviewPosition(true);}
 function moveNodeReview(delta){if(nodeReviewIndex<0)return;const target=nodeReviewIndex+delta;if(target<0||target>=nodeReviewSnapshot.length)return;nodeReviewIndex=target;showNodeReviewPosition(true);}
-async function loadState(){const data=await readResponse(await fetch("/api/state"));const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||data.read_only||data.flight_mode))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;document.body.classList.toggle("read-only",data.read_only);document.body.classList.toggle("flight-mode",data.flight_mode);document.title=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";document.querySelector(".brand-copy strong").textContent=data.flight_mode?"Airport Flight Workbench":data.read_only?"Airport Graph Viewer":"Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected)selectNode(selected);else closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边 · ${data.flight_count} 航班`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.read_only)setStatus("只读可视化 · 点击节点或派生边查看详情");if(data.flight_mode)setStatus("航班模式 · 待匹配可批量选择，地图最多展示 10 条");if(!fitted){const nodeBounds=nodeLayer.getBounds(),edgeBounds=edgeLayer.getBounds();if(nodeBounds.isValid()){map.fitBounds(nodeBounds,{padding:[24,24]});fitted=true;}else if(edgeBounds.isValid()){map.fitBounds(edgeBounds,{padding:[24,24]});fitted=true;}}setTimeout(()=>map.invalidateSize(),0);}
-const loadStateCore=loadState;
-loadState=async function(){await loadStateCore();const staleOperation=activeOperationRevision!==null&&activeOperationRevision!==currentState.revision;const staleSelection=(firstNodeRevision!==null&&firstNodeRevision!==currentState.revision)||(mergeSelectionRevision!==null&&mergeSelectionRevision!==currentState.revision);if(staleOperation||staleSelection){closeDetails();firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;setStatus("图已变更，旧操作已失效，请重新检查");}};
+async function loadState(){const data=await readResponse(await fetch("/api/state"));if(lifecycle.disposed)return;const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||!data.capabilities?.can_edit_graph))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;window.dispatchEvent(new CustomEvent("workbench-state",{detail:data}));document.body.classList.add("flight-mode","unified-workbench");document.title="Airport Workbench";document.querySelector(".brand-copy strong").textContent="Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected)selectNode(selected);else closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边 · ${data.flight_count} 航班`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.flight_mode)setStatus("航班模式 · 待匹配可批量选择，地图最多展示 10 条");if(!fitted){if(nodeLayer&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);const nodeBounds=nodeLayer.getBounds(),edgeBounds=edgeLayer.getBounds();if(nodeBounds.isValid()){map.fitBounds(nodeBounds,{padding:[24,24]});fitted=true;}else if(edgeBounds.isValid()){map.fitBounds(edgeBounds,{padding:[24,24]});fitted=true;}}validateOperationRevisions();lifecycle.timeout(()=>map.invalidateSize(),0);}
+function validateOperationRevisions(){if(!currentState)return;const staleOperation=activeOperationRevision!==null&&activeOperationRevision!==currentState.revision;const staleSelection=(firstNodeRevision!==null&&firstNodeRevision!==currentState.revision)||(mergeSelectionRevision!==null&&mergeSelectionRevision!==currentState.revision);if(staleOperation||staleSelection){closeDetails();firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;setStatus("图已变更，旧操作已失效，请重新检查");}};
 
 function renderTopologySummary(topology) {
   const metrics = [
@@ -305,11 +334,15 @@ function renderTopologySummary(topology) {
   document.querySelectorAll("[data-topology-action]").forEach(button=>button.onclick=()=>{const action=button.dataset.topologyAction;if(action==="component-1")showComponent(1);else if(action==="components")showNodes(nodeFeatures,"全部连通分量");else if(action==="isolated")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===0),"度为 0 的节点");else if(action==="dangling")showNodes(nodeFeatures.filter(feature=>feature.properties.degree===1),"度为 1 的节点");else if(action==="parallel"&&topology.parallel_groups.length)showParallel(0);});
 }
 
-document.querySelectorAll(".tool").forEach(button=>button.onclick=()=>{document.querySelectorAll(".tool").forEach(item=>item.classList.remove("active"));button.classList.add("active");cancelDrawing();mode=button.dataset.mode;firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;closeDetails();setStatus(messages[mode]);if(mode==="merge")openMergeCandidates();});
+function setEditorTool(nextMode){
+ if(!Object.hasOwn(messages,nextMode))return;
+ if(nextMode!=='inspect'&&(!currentState?.capabilities?.can_edit_graph||!document.body.classList.contains('graph-editing')))return;
+ document.querySelectorAll('.tool').forEach(item=>item.classList.toggle('active',item.dataset.mode===nextMode));
+ cancelDrawing();mode=nextMode;firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;closeDetails();setStatus(messages[mode]);if(mode==='merge')openMergeCandidates();publishMapState();
+}
+document.querySelectorAll('.tool').forEach(button=>button.onclick=()=>setEditorTool(button.dataset.mode));
 document.querySelector("#close-details").onclick=closeDetails;
 topologyBack.onclick=returnToTopology;
-document.querySelector("#search-toggle").onclick=event=>{document.querySelector("#search-panel").classList.toggle("hidden");event.currentTarget.classList.toggle("active");};
-document.querySelector("#topology-toggle").onclick=event=>{const opening=topologyPanel.classList.contains("hidden");if(opening&&shouldSwapTopologyPanel()&&!details.classList.contains("hidden")){narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");}topologyPanel.classList.toggle("hidden");event.currentTarget.classList.toggle("active");setTopologyInspection(opening);refreshMapLayout();};
 document.querySelectorAll("[data-close]").forEach(button=>button.onclick=()=>{document.querySelector(`#${button.dataset.close}`).classList.add("hidden");if(button.dataset.close==="topology-panel"){document.querySelector("#topology-toggle").classList.remove("active");setTopologyInspection(false);}refreshMapLayout();});
 document.querySelector("#split-validation-toggle").onclick=event=>{splitValidation=!splitValidation;event.currentTarget.classList.toggle("active",splitValidation);event.currentTarget.textContent=splitValidation?"关闭相邻边辨色":"开启相邻边辨色";document.querySelector(".legend").classList.toggle("validation",splitValidation);if(currentState)renderEdges(currentState);setStatus(splitValidation?"拓扑辨色已开启 · 相邻边使用不同颜色，便于检查连接关系":"拓扑辨色已关闭 · 派生边恢复统一颜色");};
 document.querySelector("#node-review-start").onclick=startNodeReview;
@@ -318,10 +351,40 @@ document.querySelector("#node-review-next").onclick=()=>moveNodeReview(1);
 document.querySelector("#node-review-end").onclick=()=>endNodeReview("逐点检查已结束；当前节点保持选中");
 document.querySelector("#search-node-button").onclick=()=>{const matches=nodeSearchIndex.get(normalizeId(document.querySelector("#search-node").value))||[];if(!matches.length)return setStatus("未找到该节点");if(matches.length>1)return setStatus("节点 ID 文本存在多种类型，请在地图上选择目标节点");selectNode(matches[0],true);setStatus(`已选中节点 ${matches[0].properties.node_id}`);};
 document.querySelector("#search-edge-button").onclick=()=>{const entries=edgeSearchIndex.get(edgePairKey(document.querySelector("#search-edge-u").value,document.querySelector("#search-edge-v").value));if(!entries?.length)return setStatus("未找到该组端点的派生边");selectEdge(entries[0].feature,true);setStatus(`已选中派生边；该组端点共有 ${entries.length} 条边`);};
-document.querySelector("#save").onclick=async()=>{try{const response=await post("/api/save",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`保存失败：${error.message}`);}};
-document.querySelector("#undo").onclick=async()=>{try{const response=await post("/api/undo",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`撤销失败：${error.message}`);}};
-document.querySelector("#finish").onclick=async()=>{try{const result=await post("/api/finish",{expected_revision:currentState.revision});setStatus(result.message);}catch(error){setStatus(`完成失败：${error.message}`);}};
-document.addEventListener("pointerdown",()=>{conflictNotice=false;},{capture:true});
-document.addEventListener("keydown",event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="z"){event.preventDefault();if(!document.querySelector("#undo").disabled)document.querySelector("#undo").click();}});
-new ResizeObserver(refreshMapLayout).observe(document.querySelector(".workspace"));
+async function saveGraph(){try{const response=await post("/api/save",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`保存失败：${error.message}`);}};
+async function undoGraph(){try{const response=await post("/api/undo",{expected_revision:currentState.revision},true);setStatus(response.message);}catch(error){setStatus(`撤销失败：${error.message}`);}};
+async function finishGraph(){try{const result=await post("/api/finish",{expected_revision:currentState.revision});setStatus(result.message);}catch(error){setStatus(`完成失败：${error.message}`);}};
+lifecycle.listen(document,"pointerdown",()=>{conflictNotice=false;},{capture:true});
+lifecycle.listen(document,"keydown",event=>{if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==="z"){if(event.target?.closest?.("input,textarea,select,[contenteditable=true]"))return;event.preventDefault();if(currentState?.can_undo&&currentState?.capabilities?.can_edit_graph&&document.body.classList.contains('graph-editing'))undoGraph();}});
+lifecycle.observe(document.querySelector(".workspace"),refreshMapLayout);
 loadState().catch(error=>setStatus(`载入失败：${error.message}`));
+
+document.querySelector('#map-view').append(details);
+const standSearch=document.createElement('label');standSearch.innerHTML='机位编号 ref<div class="input-action"><input id="search-stand-ref" placeholder="机位编号"><button id="search-stand-button">搜索</button></div><div id="stand-search-results"></div>';document.querySelector('#search-panel').append(standSearch);document.querySelector('#search-panel .panel-heading small')?.remove();
+document.querySelector('#search-stand-button').onclick=()=>{const ref=document.querySelector('#search-stand-ref').value.trim();const matches=currentState.edges.features.filter(f=>f.properties.aeroway==='parking_position'&&String(f.properties.ref??'')===ref);const results=document.querySelector('#stand-search-results');results.replaceChildren();if(!matches.length){results.textContent='未找到机位边';return}if(matches.length===1){document.querySelector("#search-panel").classList.add("hidden");selectEdge(matches[0],true);return}matches.forEach(f=>{const button=document.createElement('button');button.textContent=String(f.properties.edge_id);button.onclick=()=>{document.querySelector("#search-panel").classList.add("hidden");selectEdge(f,true)};results.append(button)})};
+
+lifecycle.listen(window,'graph-editing-changed',()=>{
+ mode='inspect';document.querySelectorAll('.tool').forEach(tool=>tool.classList.toggle('active',tool.dataset.mode==='inspect'));
+ clearPreview();firstNode=null;mergeNodeIds=[];
+ if(propertyView&&details.classList.contains('property-popup')&&!details.classList.contains('hidden'))showProperties(propertyView.title,propertyView.properties);
+});
+
+function publishMapState(){window.dispatchEvent(new Event('map-controller-changed'))}
+function toggleMapSearch(){document.querySelector('#search-panel').classList.toggle('hidden');publishMapState()}
+function toggleMapTopology(){const opening=topologyPanel.classList.contains('hidden');if(opening&&shouldSwapTopologyPanel()&&!details.classList.contains('hidden')){narrowDetailsReturnToTopology=false;details.classList.add('hidden');topologyBack.classList.add('hidden');}topologyPanel.classList.toggle('hidden');setTopologyInspection(opening);refreshMapLayout();publishMapState()}
+window.workbenchMap={
+ snapshot:()=>({ready:Boolean(currentState),canEdit:Boolean(currentState?.capabilities?.can_edit_graph),editing:document.body.classList.contains('graph-editing'),canUndo:Boolean(currentState?.can_undo),canFinish:Boolean(currentState?.can_finish),mode,nodeCount:currentState?.node_count??0,edgeCount:currentState?.edge_count??0,flightCount:currentState?.flight_count??0}),
+ setTool:setEditorTool,save:saveGraph,undo:undoGraph,finish:finishGraph,search:toggleMapSearch,topology:toggleMapTopology,
+ toggleEditing:()=>{if(!currentState?.capabilities?.can_edit_graph)return;document.body.classList.toggle('graph-editing');window.dispatchEvent(new Event('graph-editing-changed'));window.dispatchEvent(new Event('resize'));publishMapState()},
+};
+lifecycle.listen(window,'workbench-state',()=>lifecycle.frame(publishMapState));
+document.querySelector('#save').onclick=saveGraph;document.querySelector('#undo').onclick=undoGraph;document.querySelector('#finish').onclick=finishGraph;
+
+document.querySelector('#search-toggle').onclick=toggleMapSearch;
+document.querySelector('#topology-toggle').onclick=toggleMapTopology;
+
+export { map, layers, escapeHtml, readResponse, setStatus };
+
+lifecycle.own(()=>map.remove());
+
+lifecycle.own(()=>{delete window.workbenchMap;});

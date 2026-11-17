@@ -125,7 +125,6 @@ class EditorSession:
             source_edges=airport_graph.source_edges,
             node_aliases=airport_graph.node_aliases,
             metadata=airport_graph.metadata,
-            stand_groups=airport_graph.stand_groups,
         )
         self._history: list[tuple[AirportGraph, bool]] = []
         self.revision = 0
@@ -146,7 +145,6 @@ class EditorSession:
             source_edges=current.source_edges,
             node_aliases=current.node_aliases,
             metadata=current.metadata,
-            stand_groups=current.stand_groups,
         )
 
     @property
@@ -705,15 +703,6 @@ class EditorSession:
                 if u in members or v in members
             ]
             canonical_data = deepcopy(self.graph.nodes[canonical])
-            locked = [
-                self.graph.nodes[n] for n in members if self.graph.nodes[n].get("is_manual_lock")
-            ]
-            signatures = {(d.get("node_type"), d.get("stand_group_id")) for d in locked}
-            if len(signatures) > 1:
-                raise ValueError("Cannot merge conflicting manually locked annotations")
-            if locked:
-                for name in ("node_type", "stand_group_id", "is_manual_lock"):
-                    canonical_data[name] = locked[0].get(name)
             for member in members:
                 if member in self.graph:
                     self.graph.remove_node(member)
@@ -1527,14 +1516,13 @@ def _serve_workbench(
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
-    read_only: bool = False,
     match_config: Any | None = None,
     flight_sources: Sequence[str] | None = None,
     movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
 ) -> AirportGraph:
-    """Serve the shared workbench UI in editing or read-only mode."""
+    """Serve the shared workbench UI with graph-editing or flight capabilities."""
     import uvicorn
 
     from .app import create_app
@@ -1551,7 +1539,6 @@ def _serve_workbench(
         on_finish=finish,
         flights=flights,
         paths_by_flight_key=paths_by_flight_key,
-        read_only=read_only,
         match_config=match_config,
         flight_sources=flight_sources,
         movement_types=movement_types,
@@ -1590,37 +1577,6 @@ def open_workbench(
         host=host,
         port=port,
         open_browser=open_browser,
-        match_config=match_config,
-        flight_sources=flight_sources,
-        movement_types=movement_types,
-        input_time_semantics=input_time_semantics,
-        display_timezone=display_timezone,
-    )
-
-
-def visualize(
-    airport_graph: AirportGraph,
-    *,
-    flights: Sequence[Flight] = (),
-    paths_by_flight_key: Mapping[str, Path] | None = None,
-    host: str = "127.0.0.1",
-    port: int = 8765,
-    open_browser: bool = True,
-    match_config: Any | None = None,
-    flight_sources: Sequence[str] | None = None,
-    movement_types: Sequence[str] | None = None,
-    input_time_semantics: str = "UTC",
-    display_timezone: str = "UTC",
-) -> None:
-    """Open a read-only graph viewer with search and topology inspection tools."""
-    _serve_workbench(
-        airport_graph,
-        flights=flights,
-        paths_by_flight_key=paths_by_flight_key,
-        host=host,
-        port=port,
-        open_browser=open_browser,
-        read_only=True,
         match_config=match_config,
         flight_sources=flight_sources,
         movement_types=movement_types,

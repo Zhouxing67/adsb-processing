@@ -80,7 +80,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
             "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
+                "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
         )
@@ -88,7 +88,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
             "/api/update-node",
             json={
                 "node": value("str", "1"),
-                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
+                "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
         )
@@ -102,7 +102,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
     }
     assert session.revision == 1
     assert len(session._history) == 1
-    assert session.graph.nodes["1"]["node_type"] == "unclassified"
+    assert "name" not in session.graph.nodes["1"]
 
 
 def test_simultaneous_same_revision_allows_only_one_edit() -> None:
@@ -114,7 +114,7 @@ def test_simultaneous_same_revision_allows_only_one_edit() -> None:
         try:
             session.update_node_attributes(
                 node,
-                {"node_type": "group_portal", "is_manual_lock": True},
+                {"name": "reviewed"},
                 expected_revision=0,
             )
             return "success"
@@ -142,7 +142,7 @@ def test_preview_revision_becomes_invalid_after_other_edit() -> None:
             "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
+                "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
         )
@@ -161,7 +161,7 @@ def test_current_revision_missing_object_and_reversed_undirected_edge() -> None:
     with pytest.raises(GraphObjectNotFound):
         session.update_node_attributes(
             1,
-            {"node_type": "group_portal", "is_manual_lock": True},
+            {"name": "reviewed"},
             expected_revision=1,
         )
 
@@ -185,7 +185,7 @@ def test_merged_old_node_id_is_not_resolved_through_aliases() -> None:
     with pytest.raises(GraphObjectNotFound):
         session.update_node_attributes(
             2,
-            {"node_type": "group_portal", "is_manual_lock": True},
+            {"name": "reviewed"},
             expected_revision=1,
         )
 
@@ -195,7 +195,7 @@ def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
     with pytest.raises(TypeError, match="expected_revision"):
         session.delete_node(1)
     session.update_node_attributes(
-        1, {"node_type": "group_portal", "is_manual_lock": True}, expected_revision=0
+        1, {"name": "reviewed"}, expected_revision=0
     )
     result = session.undo(expected_revision=1)
     assert result.revision == 2
@@ -207,7 +207,7 @@ def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
             "/api/update-node",
             json={
                 "node": value("int", "1"),
-                "attributes": {"node_type": "group_portal", "is_manual_lock": True},
+                "attributes": {"name": "reviewed"},
             },
         )
         invalid = client.post("/api/undo", json={"expected_revision": "0"})

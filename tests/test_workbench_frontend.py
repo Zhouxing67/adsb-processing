@@ -6,7 +6,7 @@ import pytest
 
 
 def test_match_poll_compares_with_rendered_geometry_version() -> None:
-    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8")
 
     assert (
         "function needsGeometryRefresh(key,result){return "
@@ -19,7 +19,7 @@ def test_match_poll_compares_with_rendered_geometry_version() -> None:
 
 
 def test_catalogue_search_only_applies_on_enter_and_uses_committed_term() -> None:
-    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8")
 
     assert 'document.querySelector("#flight-search").oninput' not in source
     assert 'document.querySelector("#flight-search").onkeydown' in source
@@ -30,7 +30,7 @@ def test_catalogue_search_only_applies_on_enter_and_uses_committed_term() -> Non
 
 
 def test_catalogue_page_jump_and_point_filter_validate_before_query() -> None:
-    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8")
 
     jump = source[source.index("function jumpToPage()") :]
     jump = jump[: jump.index("async function showDetail")]
@@ -48,12 +48,12 @@ def test_catalogue_coordinator_defers_background_refresh_and_preserves_draft() -
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/flight-controller.js").resolve()
     script = r"""
 const fs = require("fs");
 const vm = require("vm");
 const source = fs.readFileSync(process.argv[1], "utf8");
-vm.runInThisContext(source.slice(0, source.indexOf("const SLOT_COLORS")));
+vm.runInThisContext(source.slice(source.indexOf("class CatalogueQueryCoordinator"), source.indexOf("const SLOT_COLORS")));
 (async () => {
   const coordinator = new CatalogueQueryCoordinator();
   let finishUser;
@@ -130,7 +130,7 @@ vm.runInThisContext(source.slice(0, source.indexOf("const SLOT_COLORS")));
 
 
 def test_catalogue_initialization_locks_controls_until_restore_finishes() -> None:
-    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8")
     initialize = source[source.index("async function initializeCatalogue()") :]
     initialize = initialize[: initialize.index("initializeCatalogue();")]
 
@@ -145,18 +145,19 @@ def test_catalogue_initialization_locks_controls_until_restore_finishes() -> Non
 
 
 def test_business_node_markers_and_point_review_are_wired() -> None:
-    source = Path("src/airport_workbench/static/app.js").read_text(encoding="utf-8")
-    html = Path("src/airport_workbench/static/index.html").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/map-controller.js").read_text(encoding="utf-8")
+    html = Path("frontend/workbench/index.html").read_text(encoding="utf-8")
 
-    assert 'p.node_type==="group_portal"' in source
+    assert 'p.node_type==="group_portal"' not in source
     assert 'p.node_type==="runway_interface"' in source
-    assert "portal-lock" in source
+    assert "portal-lock" not in source
+    assert "propertyFields=['aeroway','name','ref']" in source
     assert "/business-annotations" not in source
     assert "sortedNodeReviewSnapshot(nodeFeatures)" in source
     assert "nodeFeatureIndex.set(nodeKey(feature),feature)" in source
     assert "nodeFeatureIndex.get(nodeKey(feature))" in source
     assert "if(selected)selectNode(selected);else closeDetails()" in source
-    assert "is_manual_lock:!properties.is_manual_lock" in source
+    assert "is_manual_lock:!properties.is_manual_lock" not in source
     assert "lastTopologyRevision!==data.topology_revision" in source
     assert "遍历位置" in source
     assert "已到最后一个节点；这不表示全部复核通过" in source
@@ -170,7 +171,7 @@ def test_point_review_snapshot_sort_executes_for_mixed_node_types() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/map-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8");
@@ -198,7 +199,7 @@ def test_point_review_refresh_preserves_mixed_node_identities() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/map-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8");
@@ -228,7 +229,7 @@ def test_revision_conflict_invalidates_operation_refreshes_without_retry() -> No
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/map-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8");
@@ -270,7 +271,7 @@ def test_observation_location_waits_for_visible_map_and_uses_finite_zoom() -> No
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/flight-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8"),lines=source.split(/\r?\n/);
@@ -299,7 +300,7 @@ if(!switched||invalidated!==1||zoom!==18){
 
 
 def test_observation_detail_only_latest_request_can_render() -> None:
-    source = Path("src/airport_workbench/static/flights-v2.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8")
     detail = source[source.index("async function showDetail") :]
     detail = detail[: detail.index("async function selectFiltered")]
 
@@ -315,7 +316,7 @@ def test_delayed_observation_page_does_not_reopen_observations_tab() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/flight-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8");
@@ -362,14 +363,14 @@ def test_flight_location_messages_distinguish_geometry_states() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/flights-v2.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/flight-controller.js").resolve()
     script = r"""
 const fs=require("fs"),vm=require("vm");
 const source=fs.readFileSync(process.argv[1],"utf8"),lines=source.split(/\r?\n/);
 const messages=[],mapSelection=new Map(),geometries=new Map();
 const context={
   mapSelection,geometries,messages,
-  setStatus(message){messages.push(message);},applyFocus(){},
+  setStatus(message){messages.push(message);},applyFocus(){},switchMainTab(){},
   map:{fitBounds(){throw new Error("unexpected fit");}},
   L:{latLngBounds(){return{extend(){},isValid(){return false;}}}}
 };
@@ -391,10 +392,10 @@ def test_narrow_details_switches_to_and_back_from_topology_panel() -> None:
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node.js is required for frontend behavior tests")
-    source_path = Path("src/airport_workbench/static/app.js").resolve()
+    source_path = Path("frontend/workbench/src/controllers/map-controller.js").resolve()
     source_text = source_path.read_text(encoding="utf-8")
     observer_wiring = (
-        'new ResizeObserver(refreshMapLayout).observe(document.querySelector(".workspace"))'
+        'lifecycle.observe(document.querySelector(".workspace"),refreshMapLayout)'
     )
     assert observer_wiring in source_text
     script = r"""
@@ -414,7 +415,7 @@ const context={
   topologyPanel,details,topologyBack,narrowDetailsReturnToTopology:false,
   topologyInspectionActive:false,topologyPreviousNodeVisibility:false,
   currentState:{flight_mode:true},nodeLayer:null,edgeGroup:null,renderEdges(){},
-  window:{matchMedia(){return{matches:true};}},requestAnimationFrame(callback){callback();},
+  window:{matchMedia(){return{matches:true};}},requestAnimationFrame(callback){callback();},lifecycle:{frame(callback){callback();}},
   map:{invalidateSize(){invalidations++;}},
   document:{querySelector(selector){if(selector==="#topology-toggle")return toggle;}}
 };
@@ -441,15 +442,15 @@ if(invalidations!==2)throw new Error(`expected two map resizes, got ${invalidati
 
 
 def test_initial_view_and_flight_topology_styles_are_wired() -> None:
-    source = Path("src/airport_workbench/static/app.js").read_text(encoding="utf-8")
+    source = Path("frontend/workbench/src/controllers/map-controller.js").read_text(encoding="utf-8")
 
     initial_fit = (
-        "if(!fitted){const nodeBounds=nodeLayer.getBounds(),"
+        "const nodeBounds=nodeLayer.getBounds(),"
         "edgeBounds=edgeLayer.getBounds()"
     )
     assert initial_fit in source
     assert "if(!data.flight_mode&&!fitted" not in source
-    assert 'color:splitValidation?feature.properties.validation_color' in source
+    assert 'feature.properties.aeroway==="parking_position"?"#dc6b32":splitValidation?feature.properties.validation_color' in source
     assert "flightMode&&!topologyInspectionActive?3:2.8" in source
     assert "Math.max(Number(p.radius)||0,4)" in source
     swap_rule = (
@@ -458,3 +459,67 @@ def test_initial_view_and_flight_topology_styles_are_wired() -> None:
     )
     assert swap_rule in source
     assert "setTopologyInspection(opening)" in source
+
+
+def test_popup_following_does_not_pan_map():
+    source = Path("frontend/workbench/src/controllers/map-controller.js").read_text(encoding="utf-8")
+    function = source.split("function positionPropertyPopup(){", 1)[1].split("map.on('move zoom resize'", 1)[0]
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node required")
+    script = """
+const details={classList:{contains:c=>c==='property-popup'},style:{}};
+const propertyAnchor={};
+const popupPosition=(point,size,box)=>({x:point.x-box.width/2,y:point.y+box.gap});
+const map={latLngToContainerPoint:()=>({x:240,y:100}),getSize:()=>({x:800,y:600}),panBy:()=>{throw Error('must not pan')}};
+function positionPropertyPopup(){FUNCTION
+positionPropertyPopup();
+if(details.style.top!=='124px')throw Error('expected below-anchor placement');
+""".replace("FUNCTION", function)
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
+def test_invalid_filter_submit_does_not_change_applied_snapshot():
+    source = Path("frontend/workbench/src/controllers/workspace-controller.js").read_text(encoding="utf-8")
+    function = Path("frontend/workbench/src/controllers/flight-controller.js").read_text(encoding="utf-8").split("function submitFlightFilters(){", 1)[1].split("export {", 1)[0]
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node required")
+    script = """
+let activeSearch='old',appliedMovement='arrival',appliedStatus='success',appliedMinPoints=0,appliedMaxPoints=50;
+const datasetMaxPoints=100;
+let queries=0,error='';let valid=false;
+const draft={'#flight-search':{value:'new'},'#flight-movement':{value:'departure'},'#flight-status':{value:'failed'}};
+const document={querySelector:s=>draft[s]};
+const parsePointValue=s=>s.includes('min')?(valid?10:90):50;
+const pointFilterDraft={commit(){}};
+const showQueryError=e=>error=e;
+const queryCatalogue=()=>queries++;
+function submitFlightFilters(){FUNCTION
+submitFlightFilters();
+if(queries||activeSearch!=='old'||appliedMovement!=='arrival')throw Error('invalid draft changed applied filters');
+valid=true;submitFlightFilters();
+if(queries!==1||appliedMovement!=='departure'||appliedStatus!=='failed'||appliedMinPoints!==10)throw Error('valid filters not committed');
+""".replace("FUNCTION", function)
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
+
+
+def test_editor_tool_command_rejects_readonly_and_nonediting_sessions():
+    source = Path("frontend/workbench/src/controllers/map-controller.js").read_text(encoding="utf-8")
+    body = source.split("function setEditorTool(nextMode){", 1)[1].split("document.querySelectorAll('.tool').forEach(button", 1)[0]
+    node = shutil.which("node")
+    if not node:
+        pytest.skip("node required")
+    script = """
+const messages={inspect:'inspect',delete:'delete'};
+let editing=false,currentState={capabilities:{can_edit_graph:false}};
+let mutations=0;
+const document={body:{classList:{contains:()=>editing}},querySelectorAll:()=>{mutations++;return[]}};
+function setEditorTool(nextMode){FUNCTION
+setEditorTool('delete');
+currentState.capabilities.can_edit_graph=true;
+setEditorTool('delete');
+setEditorTool('unknown');
+if(mutations)throw Error('forbidden command mutated UI');
+""".replace("FUNCTION", body)
+    subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)

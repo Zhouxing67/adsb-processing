@@ -1,0 +1,21 @@
+import { test, expect } from '@playwright/test';
+test('property edit, undo, sidebar visibility and reload', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '编辑图', exact: true }).click();
+  await page.getByRole('button', { name: '搜索', exact: true }).click();
+  await page.locator('#search-stand-ref').fill('A01');
+  await page.locator('#search-stand-button').click();
+  await expect(page.locator('[data-property="ref"]')).toHaveValue('A01');
+  await page.locator('[data-property="name"]').fill('Updated Stand');
+  await page.locator('#save-properties').click();
+  await expect(page.getByRole('button', { name: '撤销', exact: true })).toBeEnabled();
+  await expect.poll(async () => (await (await page.request.get('/api/state')).json()).edges.features[0].properties.name).toBe('Updated Stand');
+  await page.getByRole('button', { name: '撤销', exact: true }).click();
+  await expect.poll(async () => (await (await page.request.get('/api/state')).json()).edges.features[0].properties.name).toBe('Stand A');
+  await page.getByRole('button', { name: '切换左侧栏', exact: true }).click();
+  await expect(page.locator('#left-rail')).toBeHidden();
+  await page.getByRole('button', { name: '切换左侧栏', exact: true }).click();
+  await expect(page.locator('#left-rail')).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole('button', { name: '编辑图', exact: true })).toBeVisible();
+});

@@ -1,173 +1,122 @@
-# 机场图建图与修复脚本使用说明
+# 机场建图与 Workbench 工作流
 
-机场图采用离线生成、人工检查、生产加载三个阶段。匹配主过程只读取已经确认的
-`AirportGraph` JSON，不会导入 `traffic`，也不会在运行中重新下载或构造机场图。
+机场图离线生成，再通过 Workbench 检查、编辑并保存。匹配过程加载已确认的图，不会重新下载 OSM 或在运行时建图。
 
 ```text
-traffic 机场/OSM 数据
-        │ build_airport_graph.py
-        ▼
-<icao>_raw.json
-        │ repair_airport_graph.py + Workbench
-        ▼
-<icao>_final.json
-        │ load_graph()
-        ▼
-匹配主过程
+traffic / OSM → 原始图 _raw.json → 编辑工作台 → 已确认图 _final.json
+                                                     ↓
+                                         航班工作台查询与匹配
 ```
 
-## 1. 准备环境
+Workbench 只有两种后端会话：
 
-在仓库根目录执行：
+| 会话 | 可用功能 | 图修改权限 |
+|---|---|---|
+| 编辑工作台 | 地图查看、要素搜索、拓扑检查、图编辑 | 点击“编辑图”后操作，保存到指定输出文件 |
+| 航班工作台 | 航班筛选、选择、匹配、观测记录、地图对照 | 后端禁止修改机场图 |
+
+两者使用同一个页面入口 `/`。不再提供独立的只读查看模式或 `/preview` 页面。只想查看图时，也启动编辑工作台，保持默认查看状态即可；进入页面不会自动保存。
+
+## 1. 环境与前端构建
+
+以下命令均在仓库根目录执行。建图环境：
 
 ```powershell
 uv sync --group graph-build
 ```
 
-`traffic` 只属于 `graph-build` 可选依赖组。普通匹配环境不需要安装或导入它。
+`traffic` 仅用于离线建图。已有图的检查、编辑和航班匹配只需普通环境：
 
-## 2. 构造原始机场图
+```powershell
+uv sync
+```
 
-脚本位置：`scripts/build_airport_graph.py`。
+首次使用、拉取前端改动后，构建工作台：
 
-参数说明：
+```powershell
+pnpm --dir frontend/workbench install --frozen-lockfile
+pnpm --dir frontend/workbench build
+```
 
-- `--airport`：必填，ICAO 机场代码，例如 `ZBAA`、`KJFK`；
-- `--projection`：必填，适用于该机场的米制投影 CRS，例如 `EPSG:32650`；
-- `--output`：可选。省略时写入 `data/graphs/<icao小写>_raw.json`。
+前端源码位于 `frontend/workbench`，构建产物位于 `src/airport_workbench/web_dist`。React、Ant Design、Leaflet 由本地构建提供；在线底图仍需要网络。缺少构建时入口返回 503 和构建提示，不会回退旧页面。更新代码或构建后，请停止旧服务并重新启动。
 
-北京首都机场示例：
+## 2. 生成原始机场图
 
 ```powershell
 uv run python scripts/build_airport_graph.py `
-    --airport ZBAA `
-    --projection EPSG:32650
+  --airport ZBAA `
+  --projection EPSG:32650 `
+  --output data/graphs/zbaa_raw.json
 ```
 
-指定输出文件：
+- `--airport`：ICAO 机场代码。
+- `--projection`：适合机场区域、水平单位为米的投影 CRS，不能使用经纬度 CRS。
+- `--output`：省略时为 `data/graphs/<icao小写>_raw.json`。
+- `--force`：允许替换已经存在的输出文件；默认拒绝覆盖。
 
-```powershell
-uv run python scripts/build_airport_graph.py `
-    --airport ZBAA `
-    --projection EPSG:32650 `
-    --output data/graphs/zbaa_raw.json
-```
+建图脚本校验图的端点与来源区间，原子保存 JSON，并通过生产用 `load_graph()` 回读核对 `graph_id`。完成后检查输出的构图问题，再进入工作台。
 
-投影必须满足以下条件：
-
-- 是投影坐标系，不能使用 `EPSG:4326` 等经纬度坐标系；
-- 水平单位是米，因为边长、搜索半径、吸附距离和匹配参数均以米解释；
-- 适合机场所在区域。脚本不会自动猜测投影，以保证结果可复现。
-
-脚本完成后会：
-
-1. 验证边端点、来源链和来源区间；
-2. 原子化保存 JSON；
-3. 使用生产环境的 `load_graph()` 回读；
-4. 比较保存前后的 `graph_id`；
-5. 输出投影、节点数、边数、来源数和所有 `build_issues`。
-
-输出已经存在时脚本默认停止。确认需要替换时添加 `--force`：
-
-```powershell
-uv run python scripts/build_airport_graph.py `
-    --airport ZBAA `
-    --projection EPSG:32650 `
-    --force
-```
-
-## 3. 可视化已有机场图
-
-只想查看图时，使用 `scripts/visualize_airport_graph.py`，无需启动修复流程，也无需提供航班数据：
-
-```powershell
-uv run python scripts/visualize_airport_graph.py `
-    --input data/graphs/zbaa_final.json
-```
-
-`--input` 必填，可以指向原始图或修复后的图。脚本直接加载已有 JSON，启动只读
-Workbench；不会重新建图，也不会修改输入文件。地图中可以查看节点、边、业务节点标记
-和拓扑概览，但不能编辑标注或启动逐点检查。
-
-默认监听 `127.0.0.1:8765`，并自动打开浏览器。可用 `--host`、`--port` 修改监听地址和端口，
-用 `--no-browser` 关闭自动打开浏览器：
-
-```powershell
-uv run python scripts/visualize_airport_graph.py `
-    --input data/graphs/zbaa_raw.json `
-    --port 8877 `
-    --no-browser
-```
-
-此时手动访问 `http://127.0.0.1:8877`。查看结束后，在运行脚本的终端按 `Ctrl+C` 停止服务；
-仅关闭浏览器标签页不会停止服务。查看已有图不需要 `graph-build` 可选依赖组。
-
-## 4. 检查和修复机场图
-
-脚本位置：`scripts/repair_airport_graph.py`。
+## 3. 打开编辑工作台
 
 ```powershell
 uv run python scripts/repair_airport_graph.py `
-    --input data/graphs/zbaa_raw.json `
-    --output data/graphs/zbaa_final.json
+  --input data/graphs/zbaa_raw.json `
+  --output data/graphs/zbaa_final.json
 ```
 
-脚本加载原始图并启动本地 Airport Workbench。默认地址为
-`http://127.0.0.1:8765`，并自动打开浏览器。可以在工作台中检查构图问题、切分边、
-合并或删除节点、恢复连接以及撤销编辑。
-
-完成检查后，点击 Workbench 中的“完成”。程序会验证并保存最终图，然后停止本地服务。
-仅点击“保存”会写入目标文件，但不会结束工作台。
-
-常用选项：
+已有最终图需要继续修改时，使用新的输出文件：
 
 ```powershell
-# 使用其他端口
 uv run python scripts/repair_airport_graph.py `
-    --input data/graphs/zbaa_raw.json `
-    --output data/graphs/zbaa_final.json `
-    --port 8877
-
-# 不自动打开浏览器
-uv run python scripts/repair_airport_graph.py `
-    --input data/graphs/zbaa_raw.json `
-    --output data/graphs/zbaa_final.json `
-    --no-browser
+  --input data/graphs/zbaa_final.json `
+  --output data/graphs/zbaa_edited.json
 ```
 
-目标文件已经存在时，修复脚本同样默认停止。确认替换时添加 `--force`。建议保留原始图，
-把修复结果写入不同的 `_final.json` 文件，避免丢失可追溯的原始构图产物。
+默认打开浏览器，地址为 [http://127.0.0.1:8765/](http://127.0.0.1:8765/)。页面初始为查看状态，可搜索节点、边端点及机位编号 `ref`，或打开拓扑检查。搜索命中多条机位边时，从候选列表选择。
 
-## 5. 最终图用于匹配
+需要修改时点击地图工具区的“编辑图”：
 
-确认后的图由主过程直接加载：
+- 左侧栏切换为切分、连线、来源恢复、合并、吸附和删除工具。
+- 选中点或边后，属性浮层显示在地图中；`aeroway / name / ref` 可编辑，其他字段只读。
+- `aeroway` 可选择 `taxiway`、`runway`、`parking_position`；机位边使用独立颜色。
+- 修改属性后点击“保存属性”写入当前会话，图操作可撤销；写入图文件还需点击顶部“保存”或“完成”。
+
+“保存”验证并写入 `--output`，服务继续运行；“完成”保存后结束服务。关闭浏览器标签不会停止服务；终端 `Ctrl+C` 停止服务，不会替你保存尚未保存的会话编辑。
+
+输出文件已存在时默认停止；确需替换可添加 `--force`。保留原始图及独立的修订输出，便于比较和恢复。
+
+## 4. 打开航班工作台
 
 ```powershell
-uv run python src/__main__.py `
-    --graph data/graphs/zbaa_final.json `
-    --arrivals data/ADS-B/more_15_arr.csv `
-    --departures data/ADS-B/more_15_dep.csv `
-    --output outputs/path_map
+uv run python src/__main__.py --workbench `
+  --graph data/graphs/zbaa_final.json `
+  --arrivals data/ADS-B/more_15_arr.csv `
+  --departures data/ADS-B/more_15_dep.csv `
+  --input-timezone UTC `
+  --display-timezone UTC
 ```
 
-最终图包含投影定义和内容 `graph_id`。匹配输出会记录对应的 `graph_id`，从而避免路径结果
-被错误地解析到另一版本的机场图上。
+仅查看进港或离港时，只传对应的一个 CSV 参数。输入的无时区时间由 `--input-timezone` 解释；若原始时间表示北京时间，将其设置为 `Asia/Shanghai`。当前后端仍在启动时读入所选 CSV，尚未迁移至数据库。
 
-后台批量匹配、结果文件和 Workbench 交互匹配的详细步骤见 [路径匹配运行说明](path_matching_run.md)。
+1. 在底部切换到“航班”，填写航班号/ID、进出港、状态及点数范围，点击“过滤”。修改条件不会立即影响已显示结果。
+2. 在表格中选择航班，可跨页选择；“全部结果”选择已应用筛选条件对应的结果。
+3. 点击“匹配所选航班”，确认后查看任务进度与成功/失败状态。
+4. 将航班加入地图，比较原始轨迹与匹配路径；“详情”查看观测记录，“定位”返回地图。
 
+底部页签可拖到内容区一侧分屏；拖回页签栏恢复单页。左右侧栏支持显隐和宽度调整。航班会话不显示“编辑图”入口，后端也会拒绝图写入。
 
-## 工作台前端
+匹配结果保存在当前服务会话中，刷新页面不等于重启服务；重启后需重新匹配。完整匹配参数、后台批量输出见 [路径匹配运行说明](path_matching_run.md)。
 
-启动任一 Workbench 服务后，访问 `/` 使用工作台。旧页面和 `/preview` 入口已移除。
-工作台使用相同的会话、机场图和匹配 API；编辑模式的保存目标由启动参数决定。
-React 与 Ant Design 当前通过固定版本的 CDN 模块加载，需要联网。
+## 5. 地址、端口和关闭服务
 
-前端职责：
+编辑脚本与航班命令均支持：
 
-- `static/app.js`：共用地图、编辑操作和图状态逻辑，两种入口均加载此文件。
-- `static/flights-v2.js`：共用航班查询、匹配与观测记录逻辑。
-- `static/workbench.js`：React 外壳、图标、侧栏与宽度管理。
-- `static/flight-workspace.js`：工作台航班表格、选择工具栏与拖放分屏。
-- `static/workbench.css`：工作台设计 token 和布局。
+| 参数 | 默认值 | 用途 |
+|---|---|---|
+| `--host` | `127.0.0.1` | 本地监听地址 |
+| `--port` | `8765` | 服务端口 |
+| `--no-browser` | 未启用 | 不自动打开浏览器 |
 
-工作台不维护独立的地图业务副本。航班界面层复用已有查询、选择和匹配函数。
+例如在编辑命令后添加 `--port 8877 --no-browser`，再手动打开 `http://127.0.0.1:8877/`。端口被占用时先停止旧服务，或改用另一端口。
+
+若启动在图校验阶段失败，服务尚未运行；根据错误检查输入图，不能通过刷新页面解决。匹配输出关联图内容 `graph_id`，解释结果时必须使用对应版本的图。

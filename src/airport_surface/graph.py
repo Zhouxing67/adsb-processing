@@ -322,7 +322,6 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
             }
             for source_id, source in airport_graph.source_edges.items()
         },
-        "stand_groups": to_json_value(airport_graph.stand_groups),
         "nodes": [
             {
                 "id": to_json_value(node),
@@ -448,7 +447,6 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
     )
     projection_value = document.get("projection", "UTM zone 50")
     projection = Proj("EPSG:32650") if projection_value == "UTM zone 50" else Proj(projection_value)
-    stand_groups = tuple(document.get("stand_groups", ()))
     return AirportGraph(
         graph,
         projection,
@@ -456,5 +454,4 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         source_edges=source_edges,
         node_aliases=dict(document.get("node_aliases", ())),
         metadata=metadata,
-        stand_groups=stand_groups,
     )

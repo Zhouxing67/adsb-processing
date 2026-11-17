@@ -103,18 +103,6 @@ class GraphMetadata:
         return cls(airport="UNKNOWN")
 
 
-NODE_SEMANTIC_DEFAULTS = {
-    "node_type": "unclassified",
-    "stand_group_id": None,
-    "is_manual_lock": False,
-}
-EDGE_SEMANTIC_DEFAULTS = {
-    "edge_zone": "backbone",
-    "stand_group_id": None,
-    "is_manual_lock": False,
-}
-
-
 class AirportGraph:
     """Airport topology, projection helpers, and authoritative source registries."""
 
@@ -129,7 +117,6 @@ class AirportGraph:
         source_edges: Mapping[str, SourceEdge] | None = None,
         node_aliases: Mapping[Hashable, Hashable] | None = None,
         metadata: GraphMetadata | None = None,
-        stand_groups: tuple[dict[str, Any], ...] = (),
     ) -> None:
         self.graph = graph
         self.projection = projection
@@ -139,8 +126,6 @@ class AirportGraph:
         self.source_edges = dict(source_edges or {})
         self.node_aliases = dict(node_aliases or {})
         self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
-        # Preserve existing serialized groups as opaque metadata; no active grouping pipeline.
-        self.stand_groups = deepcopy(tuple(stand_groups))
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
             if segments:
@@ -175,6 +160,8 @@ class AirportGraph:
     def rebuild_stand_index(self) -> None:
         """Map OSM stand refs to edge IDs and back; unlabelled stands are omitted.
 
+        Shared refs are allowed: the forward index keeps the first edge, while
+        the reverse index includes every labelled edge.
         Direct graph mutations require an explicit rebuild. Edge IDs use the
         orientation returned by graph.edges(), independent of travel direction.
         """
@@ -187,11 +174,8 @@ class AirportGraph:
             if ref is None or not str(ref).strip():
                 continue
             stand_id = str(ref)
-            if stand_id in forward:
-                #raise ValueError(f"Stand ref maps to multiple graph edges: {stand_id!r}")
-                continue
             edge_id = (u, v, key)
-            forward[stand_id] = edge_id
+            forward.setdefault(stand_id, edge_id)
             reverse[edge_id] = stand_id
         self.stand_to_edge = forward
         self.edge_to_stand = reverse
@@ -248,5 +232,4 @@ class AirportGraph:
             source_edges=self.source_edges,
             node_aliases=self.node_aliases,
             metadata=self.metadata,
-            stand_groups=deepcopy(self.stand_groups),
         )
