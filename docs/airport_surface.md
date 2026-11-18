@@ -2,7 +2,7 @@
 
 `AirportGraph` 表达机场地面路网：哪些位置可以连接、连接沿什么曲线延伸，以及这些连接来自哪些原始数据。路径匹配使用它的拓扑和几何，人工修复则调整其中的连接关系和业务标注。
 
-它保存的是一份完整的机场图状态，而不只是一个 NetworkX 图。除当前节点与边外，还包含来源记录、坐标投影、节点归一化关系、人工修复记录和业务节点集合。这些信息使修改后的图仍能解释自身的几何来源，并能够独立保存和重新加载。
+它保存的是一份完整的机场图状态，而不只是一个 NetworkX 图。除当前节点与边外，还包含来源记录、坐标投影、节点归一化关系和构建疑点。这些信息使修改后的图仍能解释自身的几何来源，并能够独立保存和重新加载。
 
 本文介绍对象的含义和构建过程。命令及 Workbench 操作见[机场图建图与修复说明](graph_build_and_repair.md)。
 
@@ -77,19 +77,16 @@ AirportGraph 因此分别保存两件事：
 
 构建入口要求显式指定水平单位为米的投影坐标系。是否适合机场所在区域由调用方决定，构建器不会自动选择。
 
-## 5. 业务节点与修复记录
+## 5. 业务索引和人工修复
 
-### 语义字段
+节点和边保留来源标签与人工编辑后的属性。机位索引按 `aeroway=parking_position`
+边的 `ref` 聚合。同一个编号可对应多条边，空编号不进入索引。跑道接口索引包含同时
+连接跑道边和滑行道边的节点。两者从当前图计算，供工作台搜索和展示。
 
-节点和边的语义字段是业务身份的唯一来源，不再维护旧版业务节点集合。
-基础建图保留原始 OSM 标签；Workbench 保存时刷新后置语义，手动锁定值不被覆盖。
-机位实体提取和组内子图仍为 Phase 2 占位，不从旧停车端点推断门户。
+人工修复的结果体现在当前拓扑、节点位置、边几何、来源区间和 `node_aliases` 中。
+撤销历史由 `EditorSession` 管理。重新加载 JSON 时恢复保存的图状态。
 
-### 人工修复与当前状态
-
-`AirportGraph` 只保存人工修复后的当前图状态，不持久化节点合并和节点吸附的操作记录。节点合并结果体现在当前拓扑、来源节点和 `node_aliases` 中；节点吸附结果体现在节点位置、边几何和来源区间中。Workbench 的撤销历史由编辑会话管理，不属于 AirportGraph 的持久化内容，保存并重新加载后也不恢复历史操作。
-
-`metadata` 保存机场标识和 `build_issues`。后者记录构建时发现的疑点，供后续人工检查，不表示这些问题已经被自动修复。
+`metadata` 保存机场标识和构建疑点 `build_issues`。疑点是人工检查的线索，可能仍需修复。
 
 ## 6. 自动建图如何得到 AirportGraph
 
@@ -133,10 +130,10 @@ AirportGraph 因此分别保存两件事：
 
 来源里程由米制投影下的折线累计长度计算。此阶段不把相同端点的多条边合并，也不将弯曲线路拉直。发现自环或极短边时记录构建问题，最终结果仍须通过后续验证。
 
-### 第五步：补齐基础几何拓扑
+### 第五步：保留 Point 机位与业务索引
 
-保留 Point 机位并在几何交点处切分来源区间；不推断停车端点或业务归属。
-业务语义由独立后处理入口在需要时计算，不属于基础建图步骤。
+从解析后的 OSM 要素中保留 Point 机位。已有相同位置的节点时沿用归一化身份；
+未进入派生路网的机位可作为独立节点存在。机位索引和跑道接口索引由当前拓扑及属性构建。
 
 ### 第六步：检查结构一致性，返回对象
 
@@ -144,13 +141,14 @@ AirportGraph 因此分别保存两件事：
 
 验证失败会阻止构建结果返回。验证通过说明对象满足这些结构约束，并不证明所有实际连接都已正确、全图必然连通，或业务标注无需人工复核。构建疑点仍随 `metadata` 一起保留。
 
-## 7. 保存后仍然是一份完整图状态
+## 7. 图文件与版本标识
 
-JSON 保存当前拓扑、来源记录、投影、别名、修复记录、业务集合及元数据。业务集合转换为顺序稳定的数组，加载后恢复为集合；缺少这两个字段的旧图按空集合加载。
+JSON 保存当前节点、边、节点属性、来源记录、投影、节点别名和构建疑点。
+加载时从这些信息恢复图和派生索引。旧 JSON 中的顶层业务节点集合在校验原始文件
+的哈希后忽略；机位和跑道接口索引按当前边属性重新计算。
 
-`graph_id` 由图文档内容计算，用于识别图版本，业务标注也参与计算。它是内容标识，不是 AirportGraph 中需要人工维护的字段。
-
-加载已有图恢复的是保存时的状态，不需要重新访问 OSM，也不会重新自动分类。构建与生产加载因此可以分开：人工确认后的图能够作为独立数据交给后续路径匹配使用。
+`graph_id` 由图文档计算，参与路径结果与图快照的关联。业务属性变化也会改变内容标识。
+加载已有图不需要访问 OSM。保存和完成负责校验与持久化，机位组和门户没有自动重算步骤。
 
 ## 8. Workbench 稳定标识与并发控制
 
@@ -164,74 +162,12 @@ Workbench API 只支持现有图文件能够无损保存的两类对象 ID：整
 
 浏览器内部以稳定标识建立索引。表单、选择和预览绑定创建它们的 revision，不会借用后台刷新后的新版本。收到版本冲突时，旧预览和确认入口立即失效，页面刷新当前状态且不会自动重试修改。
 
-## 9. 航班批量匹配与比较视图
+## 9. 人工补线与航班匹配的边界
 
-航班工作台分别维护“待匹配集合”和“地图展示集合”。待匹配集合可跨页、选择当前页或按已提交筛选条件选择全部结果；地图展示集合最多十条，使用稳定的 A～J 色槽。两者的添加、移除和清空操作互不影响，提交任务也不会自动改变地图展示。
+编辑工作台的「直接绘制连接」使用现有起点、可选形状点和现有终点创建一条连接。
+确认后新增一个 `manual` 来源和引用完整区间的派生边。形状点保留在线条几何中，
+沿途几何交叉不会自动添加拓扑连接。撤销该操作会一起移除派生边和新增来源。
+确认请求必须使用预览返回的版本号。
 
-`POST /api/matches` 会先验证并去重全部 `flight_key`，顺序执行实际新增成员，跳过正在运行或当前图版本已有成功缓存的成员。`GET /api/matches?task_id=...` 只返回固定任务成员的状态摘要与进度，不包含轨迹、路径或观测数据。任务和进度仅存在于当前服务会话。
-
-航班详情位于主内容区“观测记录”标签页。记录保持原始顺序并按 100 条分页，默认只展示时空和运动字段，可按需展开全部字段。单条记录定位使用临时地图标记，不会加入地图展示集合。轨迹、匹配路径及观测记录继续按需获取。
-
-## Semantic pipeline (Phase 1)
-
-`build_airport_graph` builds geometry and topology only. It retains Point parking
-entities, splits source intervals at geometric intersections, and preserves the
-immutable source LineStrings. Stand points away from lines remain isolated; no
-nearest-line snapping is inferred. Collinear source overlaps retain parallel edges.
-
-`enrich_airport_semantics(graph, cluster_eps_m=70.0)` returns an independent graph
-with identical topology and geometry. Node defaults are `node_type="unclassified"`,
-`stand_group_id=None`, and `is_manual_lock=False`; edge defaults are
-`edge_zone="backbone"`, `stand_group_id=None`, and `is_manual_lock=False`.
-Runway interfaces use `node_type="runway_interface"` and require both runway and
-taxiway incident source endpoints. Locked attributes survive refresh. Semantic
-fields are the sole source of business identity; the legacy classifier and
-mutable business-node collections have been removed.
-
-`StandEntity`, `StandGroup`, and `SemanticPostProcessor` define the extension
-contract. Entity extraction, spatial clustering and group subgraph inference are
-Phase 2 stubs returning empty results. Phase 1 does not generate automatic portals
-or internal edges. Manually assigned `group_portal` nodes and locked
-`stand_group_internal` edges are supported. `get_backbone_subgraph()` returns an
-independent MultiGraph and an ordered list of portal/runway-interface node IDs;
-it excludes internal edges and retains isolated OD nodes.
-
-Workbench Save and Finish enrich a copy under the existing session lock, persist
-it atomically, and publish it only after successful writing. Semantic changes
-increment `revision`, not `topology_revision`; an unchanged save increments neither.
-The node inspector offers portal lock/unlock. Conflicting locked node annotations
-prevent a merge; compatible locks carry to the surviving node. Edge splits inherit
-edge annotations. Existing undo and optimistic revision checks remain in effect.
-
-JSON schema v1 accepts the additive attributes. Loading verifies the original
-content hash before filling absent semantic defaults. Old files need no offline
-conversion; their next save includes defaults and a newly computed content hash.
-
-旧文件兼容：加载时先校验完整原始 JSON 的 graph_id，再忽略旧的
-`parking_position_nodes` 和 `runway_access_nodes` 顶层字段（即使包含已失效节点）。
-这些旧标注不会转换成新门户或机位组；下次保存不再写出旧字段并重新计算哈希。
-旧 Python 分类 API 与 `/api/nodes/business-annotations` 已移除；命令行参数不变。
-
-建图专用的来源提取、节点归一化、派生图构建及几何交点补齐集中在 `traffic_builder.py`。
-`graph.py` 保留编辑器共用的几何与来源区间操作、校验和 JSON 持久化。
-`traffic` 仍在实际建图入口内延迟导入，普通图加载与保存无需安装该可选依赖。
-
-## 直接绘制缺失连接
-
-编辑模式下选择“直接绘制连接”，先点击现有起点，再点击地图添加可选形状点，
-最后点击现有终点。检查预览，选择线路类型（默认 taxiway）并填写可选编号，
-点击“确认添加”。“撤回最后一点”先撤回终点，再逐个撤回形状点；取消绘制不修改图。
-
-确认后新增一个 manual SourceEdge 及引用完整来源区间的派生边，保留两端节点。
-中间形状点和沿途交叉不自动产生拓扑连接。新增操作可一次撤销，撤销同时移除
-人工来源；点击保存后按现有流程刷新语义并持久化。只读及航班模式禁止补线。
-若编辑版本已变化，提交被拒绝，需要根据当前图重新绘制。
-
-
-## 当前状态：语义算法已撤回
-
-已删除 semantic_processor.py，并撤回拓扑分组、瓶颈切分及机位组展示。
-Workbench 保存/完成只执行图校验和持久化，不自动识别跑道接口或重算机位组。
-已有节点/边语义字段、人工锁定值仍按普通属性保留；基础拓扑编辑及人工补线不变。
-历史 JSON 的 stand_groups 作为不参与计算的原始元数据保留，避免打开再保存时丢失
-历史结果；这些数据不会刷新或用于分组显示。上文的自动语义流程说明不再适用。
+航班工作台以只读方式使用已确认图。地图上的机位索引用于图要素查询，航班机位
+归属保存在各自的 DuckDB 观测记录中。航班目录、匹配任务和结果见[运行说明](path_matching_run.md)。

@@ -1,64 +1,61 @@
 # `path_map`
 
-`path_map` implements a small HMM map matcher for the project's own airport graphs
-and validated `adsb.Flight` trajectories.
-It does not call `AirportGraph.map_flight()` or `intersection_with_flight()`.
+The package matches validated ADS-B observations to directed edge sequences on an
+airport graph. The [algorithm guide](../../docs/path_map.md) explains the HMM and
+its assumptions. The [run guide](../../docs/path_matching_run.md) covers commands,
+TOML settings, and report files.
 
-The single CLI entry point is `uv run python src/__main__.py`. It runs selected
-datasets in batch mode by default; add `--workbench` to load the same normalized
-datasets and `MatchConfig` into the interactive flight workbench without running
-the batch matcher first. `python -m airport_workbench` is reserved for graph
-viewing and editing.
+## Python entry point
+
+`match_batch()` is the shared matching interface used by the batch runner and
+the flight workbench. It yields one outcome at a time, so callers can write
+reports or update task progress without holding the whole batch in memory.
+
+From the repository root, with [local settings](../../config.example.toml) in place:
 
 ```python
-from path_map import MatchConfig, MovementType, load_data, map_flight
+from airport_surface import load_graph
+from config import load_settings
+from flight.flight_repository import open_flight_database
+from path_map import BatchStats, Matcher, match_batch
 
-flights = load_data("data/ADS-B/more_15_arr.csv", MovementType.ARRIVAL)
-
-path = map_flight(
-    airport_graph,
-    flight,
-    MatchConfig(candidate_radius=120, max_candidates=16, gps_sigma=10),
+settings = load_settings()
+database = open_flight_database(settings.database, read_only=True)
+matcher = Matcher(load_graph(settings.graph_path), settings.matching)
+inputs = (
+    (flight.flight_id, flight)
+    for flight in database.iterate("arrival", limit=10)
 )
-print(path.edge_ids)  # directed (u, v, key) tuples
-print(path.total_length)  # metres
+
+stats = BatchStats()
+for outcome in match_batch(matcher, inputs):
+    stats.add(outcome.status, outcome.failure_type, outcome.elapsed_seconds)
+    print(outcome.key, outcome.status, outcome.reason)
+print(stats.summary())
 ```
 
-Each observation is projected with the graph's own transformer. An STRtree finds
-nearby projected edge geometries. Gaussian distance emissions and an exponential
-penalty on `abs(network_distance - observation_distance)` are decoded with
-Viterbi in log space. Candidate-to-candidate network distance includes both edge
-fractions and all shortest-path intermediate edges.
+A work item carries a caller-supplied key and either a loaded flight or a callable
+that loads it. Expected matching errors are recorded in the outcome. Workbench
+supplies lazy loaders and captures per-item system errors to keep task progress
+accurate. The batch runner propagates unexpected exceptions. For a single flight,
+pass a one-item batch.
 
-Each observation performs one complete `candidate_radius` query and keeps at most
-`max_candidates` edges by distance. Endpoint-route choices whose internal local turn
-exceeds `max_transition_turn_angle_deg` are rejected before distance minimization;
-the tangent is sampled from directed projected geometry near the shared node.
-`NetworkRouter` only builds candidate-to-candidate choices, applies injected generic
-transition constraints, and selects the shortest accepted choice. The directed geometry
-cache and turn-angle policy belong to `LocalTurnConstraint`, which `Matcher` constructs
-from `MatchConfig`.
+## Responsibilities
 
-`Path` references its `AirportGraph`, retains traversal direction, parallel-edge
-keys, loops, and reversals, and exposes a WGS84 geometry. `PathRecord` is its
-minimal persistent form: a graph content ID plus directed edge IDs. Resolving a
-record against a modified graph is rejected.
+| Component | Responsibility |
+|---|---|
+| `matcher.py` | `MatchConfig` defaults, graph preparation, and HMM matching of one trajectory inside the batch. |
+| `batch.py` | Ordered batch execution, outcome timing, failure classification, and shared `BatchStats`. |
+| `candidates.py` | Spatial index and candidate generation for observations. |
+| `hmm.py` and `transition_constraints.py` | Network routing, transition scoring and constraints, and Viterbi decoding. |
+| `path.py` | Directed traversal, geometry, and graph-versioned `PathRecord` serialization. |
 
-Current conservative limitations: the network is treated as undirected; heading,
-speed, runway/taxiway semantics, uncertainty varying by observation, outlier
-repair, and long-gap segmentation are not modeled. A transition uses the shortest
-network distance between candidate positions, and defaults must be calibrated for
-the airport and ADS-B source.
+DuckDB queries and connection lifecycle are in
+[`flight/database.py`](../flight/database.py). The batch runner owns files and
+console reports. The workbench owns task queues and HTTP responses. Both use the
+same configuration model and summary fields.
 
-## ZBAA real-data example
-
-The repository's prepared UTM zone 50 graph and selected flight can be matched
-directly:
-
-```powershell
-uv run python tests/example_zbaa_map_match.py
-```
-
-The example loads `data/graphs/zbaa_final.json` through the project's own
-`airport_surface.load_graph()` function and reads
-`data/ADS-B/one_flight.csv` into an `adsb.Flight`.
+Workbench routes are registered in [`airport_workbench/app.py`](../airport_workbench/app.py).
+Add SQL-backed query methods to `FlightDatabase`; keep HTTP parameter handling
+and responses in the route. Session-specific matching state is managed by
+[`airport_workbench/flights.py`](../airport_workbench/flights.py).
