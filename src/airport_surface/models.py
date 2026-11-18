@@ -137,16 +137,11 @@ class AirportGraph:
         """Index nodes incident to both runway and taxiway edges.
 
         Values contain the incident runway and taxiway edge IDs respectively.
-        Source tags take precedence over potentially inherited derived-edge tags.
         """
         incident: dict[Hashable, dict[str, list[tuple[Hashable, Hashable, Hashable]]]] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
-            segments = edge_source_segments(data)
-            kinds = {
-                self.source_edges[s.source_id].attributes.get("aeroway")
-                for s in segments if s.source_id in self.source_edges
-            } if segments else {data.get("aeroway")}
-            for kind in kinds & {"runway", "taxiway"}:
+            kind = data.get("aeroway")
+            if kind in ("runway", "taxiway"):
                 for node in {u, v}:
                     incident.setdefault(node, {"runway": [], "taxiway": []})[kind].append(
                         (u, v, key)
@@ -160,12 +155,11 @@ class AirportGraph:
     def rebuild_stand_index(self) -> None:
         """Map OSM stand refs to edge IDs and back; unlabelled stands are omitted.
 
-        Shared refs are allowed: the forward index keeps the first edge, while
-        the reverse index includes every labelled edge.
+        The forward index groups every labelled edge by ref.
         Direct graph mutations require an explicit rebuild. Edge IDs use the
         orientation returned by graph.edges(), independent of travel direction.
         """
-        forward: dict[str, tuple[Hashable, Hashable, Hashable]] = {}
+        forward: dict[str, list[tuple[Hashable, Hashable, Hashable]]] = {}
         reverse: dict[tuple[Hashable, Hashable, Hashable], str] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
             if data.get("aeroway") != "parking_position":
@@ -175,9 +169,9 @@ class AirportGraph:
                 continue
             stand_id = str(ref)
             edge_id = (u, v, key)
-            forward.setdefault(stand_id, edge_id)
+            forward.setdefault(stand_id, []).append(edge_id)
             reverse[edge_id] = stand_id
-        self.stand_to_edge = forward
+        self.stand_to_edges = {stand_id: tuple(edges) for stand_id, edges in forward.items()}
         self.edge_to_stand = reverse
 
 

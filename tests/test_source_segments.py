@@ -1,3 +1,4 @@
+from dataclasses import replace
 from pathlib import Path
 
 import networkx as nx
@@ -134,6 +135,25 @@ def test_current_single_source_edges_are_normalized_and_round_trip(tmp_path: Pat
 
     assert edge_source_segments(loaded.graph.edges[1, 2, 0]) == segments
     validate_edge_sources(loaded)
+
+
+def test_business_boundary_blocks_node_simplification_and_mixed_source_restore():
+    airport = crossing_graph()
+    airport.source_edges["right"] = replace(
+        airport.source_edges["right"], attributes={"aeroway": "runway"}
+    )
+    airport.graph.edges[2, 3, 0]["aeroway"] = "runway"
+    session = EditorSession(airport)
+
+    with pytest.raises(ValueError, match="必须保留"):
+        session.node_deletion_plan(2, expected_revision=0)
+    with pytest.raises(ValueError, match="必须保留"):
+        session.remove_node_with_pairs(2, [], discard_unpaired=True, expected_revision=0)
+
+    assert session.revision == 0
+    assert session.graph.degree(2) == 4
+    assert session.connection_candidates(1, 3, expected_revision=0).value == []
+    assert set(session.airport_graph.runway_interfaces) == {2}
 
 
 def test_degree_four_node_can_be_removed_with_independent_manual_pairings():

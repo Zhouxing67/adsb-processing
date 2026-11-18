@@ -596,9 +596,12 @@ def create_app(
 
     @app.post("/api/delete-node-preview")
     def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
-        result = session.node_deletion_plan(
-            decode_value(item.node), expected_revision=item.expected_revision
-        )
+        try:
+            result = session.node_deletion_plan(
+                decode_value(item.node), expected_revision=item.expected_revision
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
         return {**result.value, "revision": result.revision}
 
     @app.post("/api/delete-node-confirm")

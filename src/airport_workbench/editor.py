@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 MANUAL_SOURCE_TOLERANCE_M = 0.5
 MERGE_CANDIDATE_TOLERANCE_M = 0.5
 MANUAL_MERGE_MAX_DISTANCE_M = 2.0
+BUSINESS_BOUNDARY_ERROR = "该节点连接不同业务类型的边，必须保留"
 MANUAL_NODE_TO_EDGE_MAX_DISTANCE_M = 10.0
 RESTORE_CANDIDATE_LIMIT = 5
 RESTORE_MAX_SOURCE_EDGES = 8
@@ -474,6 +475,8 @@ class EditorSession:
                 )
                 if length_m > maximum_length:
                     break
+                if len(self._source_aeroways(segments)) > 1:
+                    continue
                 if len(source_ids) > RESTORE_MAX_SOURCE_EDGES:
                     continue
                 geometry = geometry_from_source_segments(self.airport_graph, segments, u, v)
@@ -818,6 +821,18 @@ class EditorSession:
         cosine = max(-1.0, min(1.0, (lx * rx + ly * ry) / denominator))
         return degrees(acos(cosine))
 
+    def _source_aeroways(self, segments: Sequence[SourceSegment]) -> set[str | None]:
+        return {
+            self.airport_graph.get_source_edge(segment.source_id).attributes.get("aeroway")
+            for segment in segments
+        }
+
+    def _is_business_boundary(self, records: Sequence[dict[str, Any]]) -> bool:
+        kinds = {record["data"].get("aeroway") for record in records}
+        for record in records:
+            kinds.update(self._source_aeroways(edge_source_segments(record["data"])))
+        return len(kinds) > 1
+
     def _pair_segments(
         self, node: Any, left: dict[str, Any], right: dict[str, Any]
     ) -> tuple[SourceSegment, ...]:
@@ -829,6 +844,8 @@ class EditorSession:
     def node_deletion_plan(self, node: Any) -> dict[str, Any]:
         self.require_node(node)
         records = self._incident_records(node)
+        if self._is_business_boundary(records):
+            raise ValueError(BUSINESS_BOUNDARY_ERROR)
         candidates = []
         for index, (left, right) in enumerate(combinations(records, 2)):
             if left["outer"] == right["outer"]:
@@ -891,7 +908,10 @@ class EditorSession:
     def remove_node_with_pairs(
         self, node: Any, pair_ids: Sequence[str], discard_unpaired: bool = False
     ) -> None:
+        self.require_node(node)
         record_list = self._incident_records(node)
+        if self._is_business_boundary(record_list):
+            raise ValueError(BUSINESS_BOUNDARY_ERROR)
         records = {record["half_id"]: record for record in record_list}
         candidates = {
             f"p{index}": {
