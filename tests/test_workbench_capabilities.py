@@ -7,10 +7,10 @@ from fastapi.testclient import TestClient
 from pyproj import Proj
 from shapely.geometry import LineString
 
-from adsb import Flight
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
+from flight import Flight
 
 
 @pytest.mark.parametrize(
@@ -46,5 +46,11 @@ def test_capabilities_keep_server_permissions(with_flights, editable):
             "has_flights": with_flights,
             "can_match": with_flights,
         }
-        if not editable:
+        routes = client.get("/openapi.json").json()["paths"]
+        assert ("/api/flights" in routes) == with_flights
+        assert ("/api/update-edge" in routes) == editable
+        if editable:
+            assert client.get("/api/flights").status_code == 404
+            assert client.post("/api/matches", json={"flight_keys": []}).status_code in {404, 405}
+        else:
             assert client.post("/api/undo", json={"expected_revision": 0}).status_code == 405

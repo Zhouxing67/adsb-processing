@@ -4,10 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Sequence
 
-import pandas as pd
 from shapely.geometry import LineString, Point, mapping
 
-from adsb import Flight
+from flight import Flight
 from path_map import Path
 from utils.json_value import to_json_value
 
@@ -16,17 +15,11 @@ def flight_geojson(
     flight: Flight, index: int = 0, *, flight_key: str | None = None
 ) -> dict[str, Any]:
     """Serialize valid Flight observations and their connecting line."""
-    data = flight.data
-    if "longitude" not in data or "latitude" not in data:
-        raise ValueError("Flight data must contain longitude and latitude columns")
-
     features: list[dict[str, Any]] = []
     coordinates: list[list[float]] = []
-    for sequence, (_, row) in enumerate(data.iterrows()):
+    for sequence, row in enumerate(flight.rows):
         longitude = row["longitude"]
         latitude = row["latitude"]
-        if pd.isna(longitude) or pd.isna(latitude):
-            continue
         coordinate = [float(longitude), float(latitude)]
         coordinates.append(coordinate)
         properties = {name: to_json_value(value) for name, value in row.items()}

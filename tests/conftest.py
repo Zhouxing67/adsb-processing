@@ -5,7 +5,7 @@ import pytest
 def flight_samples():
     import pandas as pd
 
-    from adsb import Flight
+    from flight import Flight
 
     return [
         Flight(

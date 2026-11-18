@@ -19,7 +19,8 @@ import networkx as nx
 from shapely.geometry import LineString, Point, mapping
 from shapely.ops import nearest_points, substring, transform
 
-from adsb import Flight
+from flight import Flight
+from flight.flight_repository import FlightDatabase
 from airport_surface import (
     AirportGraph,
     SourceEdge,
@@ -1541,6 +1542,7 @@ def _serve_workbench(
     movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
+    flight_database: FlightDatabase | None = None,
 ) -> AirportGraph:
     """Serve the shared workbench UI with graph-editing or flight capabilities."""
     import uvicorn
@@ -1564,6 +1566,7 @@ def _serve_workbench(
         movement_types=movement_types,
         input_time_semantics=input_time_semantics,
         display_timezone=display_timezone,
+        flight_database=flight_database,
     )
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     if open_browser:
@@ -1587,6 +1590,7 @@ def open_workbench(
     movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
+    flight_database: FlightDatabase | None = None,
 ) -> AirportGraph:
     """Open the editable workbench and block until it is stopped or finished."""
     return _serve_workbench(
@@ -1602,6 +1606,7 @@ def open_workbench(
         movement_types=movement_types,
         input_time_semantics=input_time_semantics,
         display_timezone=display_timezone,
+        flight_database=flight_database,
     )
 
 

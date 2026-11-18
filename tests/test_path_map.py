@@ -8,7 +8,7 @@ import pytest
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString, Point
 
-from adsb import Flight
+from flight import Flight
 from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from path_map import MapMatchingError, MatchConfig, Matcher, Path, PathGraphMismatch, PathRecord
 from path_map.candidates import Candidate
@@ -328,7 +328,7 @@ def test_long_time_gap_does_not_reject_otherwise_valid_observations():
         to_wgs84,
         [(450_001, 4_428_000), (450_019, 4_428_000)],
     )
-    flight.data.loc[1, "timestamp"] += pd.Timedelta(hours=1)
+    flight.rows[1]["timestamp"] += pd.Timedelta(hours=1)
 
     path = robust_matcher(airport_graph).map_flight(flight)
 

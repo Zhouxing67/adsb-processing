@@ -150,14 +150,23 @@ def real_topology(args: argparse.Namespace, *, projected_lengths: bool) -> None:
     )
 
 
+def load_diagnostic_flights(path):
+    if __package__:
+        from .csv_flights import load_csv_flights
+    else:
+        from csv_flights import load_csv_flights
+    return load_csv_flights(path)
+
+
 def load_observation_arrays(args: argparse.Namespace) -> tuple[Any, Any, Any]:
-    from adsb import Flights
+    import numpy as np
+
     from airport_surface import load_graph
 
     airport_graph = load_graph(args.graph)
-    flights = Flights.from_file(args.flights)
-    longitude = flights.data["longitude"].to_numpy(dtype=float)
-    latitude = flights.data["latitude"].to_numpy(dtype=float)
+    flights = load_diagnostic_flights(args.flights)
+    longitude = np.asarray([row["longitude"] for row in flights.rows], dtype=float)
+    latitude = np.asarray([row["latitude"] for row in flights.rows], dtype=float)
     return airport_graph, longitude, latitude
 
 
@@ -186,17 +195,22 @@ def candidates(args: argparse.Namespace) -> None:
 
 
 def full_hmm(args: argparse.Namespace) -> None:
-    from adsb import Flights
     from airport_surface import load_graph
-    from path_map import map_flight
+    from path_map import MapMatchingError, Matcher, match_batch
 
     airport_graph = load_graph(args.graph)
-    flights = Flights.from_file(args.flights)
+    flights = load_diagnostic_flights(args.flights)
     selected = list(flights.iterate(limit=args.limit))
-    for index, flight in enumerate(selected, start=1):
-        print(f"[full-hmm] {index}/{len(selected)} {flight.flight_id} START", flush=True)
-        map_flight(airport_graph, flight)
-        print(f"[full-hmm] {index}/{len(selected)} {flight.flight_id} OK", flush=True)
+    def inputs():
+        for index, flight in enumerate(selected, start=1):
+            print(f"[full-hmm] {index}/{len(selected)} {flight.flight_id} START", flush=True)
+            yield flight.flight_id, flight
+
+    outcomes = match_batch(Matcher(airport_graph), inputs())
+    for index, outcome in enumerate(outcomes, start=1):
+        if outcome.reason is not None:
+            raise MapMatchingError(outcome.reason)
+        print(f"[full-hmm] {index}/{len(selected)} {outcome.key} OK", flush=True)
 
 
 def main() -> None:

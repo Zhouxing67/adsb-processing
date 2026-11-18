@@ -3,9 +3,8 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-import path_map.matcher as matcher_module
-from adsb import Flights
-from path_map import MapMatchingError, map_flights
+from flight import Flights
+from path_map import BatchStats, MapMatchingError, match_batch
 
 
 def flights_with_two_flights() -> Flights:
@@ -21,35 +20,36 @@ def flights_with_two_flights() -> Flights:
     )
 
 
-def test_batch_continues_after_expected_match_failure(monkeypatch):
+def test_batch_continues_after_expected_match_failure():
     expected_path = object()
 
     class FakeMatcher:
-        def __init__(self, graph, config):
-            pass
-
         def map_flight(self, flight):
             if flight.flight_id == "bad":
-                raise MapMatchingError("no candidates")
+                raise MapMatchingError("No edge candidates")
             return expected_path
 
-    monkeypatch.setattr(matcher_module, "Matcher", FakeMatcher)
-    result = map_flights(object(), flights_with_two_flights())
+    inputs = ((flight.flight_id, flight) for flight in flights_with_two_flights())
+    outcomes = list(match_batch(FakeMatcher(), inputs))
 
-    assert result.matches == [("good", expected_path)]
-    assert len(result.failures) == 1
-    assert result.failures[0].flight_id == "bad"
-    assert result.failures[0].reason == "no candidates"
+    bad, good = outcomes
+    assert (bad.key, bad.reason, bad.failure_type) == ("bad", "No edge candidates", "no_candidates")
+    assert (good.key, good.path) == ("good", expected_path)
+    stats = BatchStats()
+    for outcome in outcomes:
+        stats.add(outcome.status, outcome.failure_type, outcome.elapsed_seconds)
+    assert stats.summary()["success_rate"] == 0.5
+    assert stats.summary()["failure_counts"] == {"no_candidates": 1}
 
 
-def test_batch_does_not_hide_programming_errors(monkeypatch):
+def test_batch_does_not_hide_programming_errors():
     class BrokenMatcher:
-        def __init__(self, graph, config):
-            pass
-
         def map_flight(self, flight):
             raise RuntimeError("bug")
 
-    monkeypatch.setattr(matcher_module, "Matcher", BrokenMatcher)
+    inputs = [(flight.flight_id, flight) for flight in flights_with_two_flights()]
     with pytest.raises(RuntimeError, match="bug"):
-        map_flights(object(), flights_with_two_flights())
+        list(match_batch(BrokenMatcher(), inputs))
+
+    captured = list(match_batch(BrokenMatcher(), inputs, capture_system_errors=True))
+    assert [item.failure_type for item in captured] == ["system", "system"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from adsb import Flight, Flights
+from flight import Flight, Flights
 
 
 def observations(**overrides) -> pd.DataFrame:
@@ -23,11 +23,12 @@ def test_flight_validates_normalizes_and_sorts_trajectory():
     flight = Flight(source)
 
     assert flight.flight_id == "A"
-    assert flight.data.timestamp.is_monotonic_increasing
-    assert str(flight.data.timestamp.dtype) == "datetime64[ns, UTC]"
-    assert flight.data.longitude.tolist() == [116.0, 116.1]
+    assert [row["timestamp"].isoformat() for row in flight.rows] == [
+        "2026-01-01T00:00:01+00:00", "2026-01-01T00:00:02+00:00",
+    ]
+    assert [row["longitude"] for row in flight.rows] == [116.0, 116.1]
     source.loc[0, "longitude"] = 0
-    assert flight.data.longitude.tolist() == [116.0, 116.1]
+    assert [row["longitude"] for row in flight.rows] == [116.0, 116.1]
 
 
 @pytest.mark.parametrize("column", ["flight_id", "timestamp", "longitude", "latitude"])
@@ -74,3 +75,22 @@ def test_flights_groups_non_contiguous_observations_and_honors_limit():
     assert [flight.flight_id for flight in collection] == ["A", "B"]
     assert [flight.flight_id for flight in collection.iterate(limit=1)] == ["A"]
     assert list(collection.iterate(limit=0)) == []
+
+
+def test_csv_record_loader_preserves_stand_codes_and_normalizes_time(tmp_path):
+    from scripts.csv_flights import load_csv_flights
+
+    source = tmp_path / "stands.csv"
+    source.write_text(
+        "flight_id,timestamp,longitude,latitude,dep_stand_position,altitude\n"
+        "0001,2024-06-15 00:05:00,116.0,40.0,007,20\n"
+        "0001,2024-06-14T16:06:00Z,116.1,40.0,,21\n",
+        encoding="utf-8",
+    )
+    flight = next(iter(load_csv_flights(source, input_timezone="Asia/Shanghai")))
+    assert flight.flight_id == "0001"
+    assert [row["dep_stand_position"] for row in flight.rows] == ["007", None]
+    assert [row["altitude"] for row in flight.rows] == [20, 21]
+    assert [row["timestamp"].isoformat() for row in flight.rows] == [
+        "2024-06-14T16:05:00+00:00", "2024-06-14T16:06:00+00:00",
+    ]

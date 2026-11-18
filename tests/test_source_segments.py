@@ -7,7 +7,6 @@ import pytest
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
 
-from adsb import Flight
 from airport_surface import (
     AirportGraph,
     SourceEdge,
@@ -21,7 +20,8 @@ from airport_surface import (
 )
 from airport_workbench import EditorSession
 from airport_workbench.editor import GraphObjectNotFound
-from path_map import MatchConfig, map_flight
+from flight import Flight
+from path_map import MatchConfig, Matcher
 
 PROJECTION = Proj("EPSG:3857")
 TO_WGS84 = Transformer.from_proj(PROJECTION, Proj("EPSG:4326"), always_xy=True)
@@ -484,14 +484,14 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
         )
     )
     config = MatchConfig(candidate_radius=5, max_candidates=4, gps_sigma=2, transition_beta=5)
-    before = map_flight(graph, flight, config)
+    before = Matcher(graph, config).map_flight(flight)
 
     session = EditorSession(graph)
     plan = session.node_deletion_plan(2, expected_revision=session.revision).value
     session.remove_node_with_pairs(
         2, [pair_id(plan, {"1", "3"})], expected_revision=session.revision
     )
-    after = map_flight(session.airport_graph, flight, config)
+    after = Matcher(session.airport_graph, config).map_flight(flight)
 
     assert after.total_length == pytest.approx(before.total_length, abs=1e-6)
     assert (

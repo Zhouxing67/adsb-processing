@@ -1,22 +1,22 @@
-"""Session-scoped flight catalogue and asynchronous map-matching state."""
+"""Session-scoped flight catalogue, editing and map geometry."""
 
 from __future__ import annotations
 
 import hashlib
-import math
 import threading
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import asdict, dataclass, replace
+from datetime import date, datetime
 from math import ceil
 from typing import Any, Callable, Iterable, Mapping, Sequence
+from zoneinfo import ZoneInfo
 
-import pandas as pd
+from airport_surface import AirportGraph
+from flight import Flight
+from flight.flight_repository import STAND_COLUMNS, FlightDatabase, database_flight_key
+from path_map import MatchConfig, Path
+from utils.json_value import to_json_value
 
-from adsb import Flight
-from airport_surface import AirportGraph, graph_id
-from path_map import MapMatchingError, MatchConfig, Matcher, Path
-
+from .flight_match_tasks import FlightMatchTasks, MatchResultItem
 from .serializers import flight_geojson, path_geojson
 
 MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed", "stale"}
@@ -34,6 +34,8 @@ BUSINESS_FIELD_NAMES = {
     "origin",
     "destination",
     "movement_type",
+    "dep_stand_position",
+    "arr_stand_position",
 }
 
 
@@ -54,44 +56,18 @@ def flight_key(index: int, source: str, original_flight_id: str) -> str:
     return f"f-{hashlib.sha256(seed).hexdigest()[:16]}"
 
 
-def _graph_identity(airport_graph: AirportGraph) -> str:
-    """Return a content identity, including for small graph doubles used by embedders."""
-    try:
-        return graph_id(airport_graph)
-    except AttributeError:
-        graph = getattr(airport_graph, "graph", None)
-        if graph is None:
-            return hashlib.sha256(type(airport_graph).__qualname__.encode()).hexdigest()
-        content = (list(graph.nodes(data=True)), list(graph.edges(keys=True, data=True)))
-        return hashlib.sha256(repr(content).encode()).hexdigest()
+def _distinct_values(rows: Iterable[Mapping[str, Any]], name: str) -> list[Any]:
+    distinct = []
+    for row in rows:
+        value = to_json_value(row.get(name))
+        if value is not None and value not in distinct:
+            distinct.append(value)
+    return distinct
 
 
-def _scalar(value: Any) -> Any:
-    if value is None:
-        return None
-    try:
-        if pd.isna(value):
-            return None
-    except (TypeError, ValueError):
-        pass
-    if isinstance(value, float) and not math.isfinite(value):
-        return None
-    if isinstance(value, pd.Timestamp):
-        return value.isoformat()
-    if hasattr(value, "item"):
-        return value.item()
-    return value if isinstance(value, (str, int, float, bool)) else str(value)
-
-
-def _consistent_value(frame: pd.DataFrame, names: Iterable[str]) -> tuple[Any, bool]:
+def _consistent_value(flight: Flight, names: Iterable[str]) -> tuple[Any, bool]:
     for name in names:
-        if name not in frame:
-            continue
-        values = [_scalar(value) for value in frame[name].tolist()]
-        distinct = []
-        for value in values:
-            if value is not None and value not in distinct:
-                distinct.append(value)
+        distinct = _distinct_values(flight.rows, name)
         if len(distinct) == 1:
             return distinct[0], True
         if len(distinct) > 1:
@@ -110,46 +86,12 @@ class FlightCatalogItem:
     end_time: str
     point_count: int
     inconsistent_fields: tuple[str, ...] = ()
-
-
-@dataclass(slots=True)
-class MatchResultItem:
-    flight_key: str
-    graph_id: str | None = None
-    config: dict[str, Any] = field(default_factory=dict)
-    status: str = "unmatched"
-    path: Path | None = None
-    error: str | None = None
-    error_kind: str | None = None
-    task_id: str | None = None
-    updated_at: str | None = None
-
-    def public(self) -> dict[str, Any]:
-        # Never dataclasses.asdict() this object: Path owns an AirportGraph containing
-        # immutable mapping proxies that are intentionally not deepcopy-able.
-        return {
-            "flight_key": self.flight_key,
-            "graph_id": self.graph_id,
-            "config": dict(self.config),
-            "status": self.status,
-            "error": self.error,
-            "error_kind": self.error_kind,
-            "task_id": self.task_id,
-            "updated_at": self.updated_at,
-            "has_path": self.path is not None and self.status == "success",
-        }
-
-
-@dataclass(slots=True)
-class MatchTask:
-    task_id: str
-    flight_keys: tuple[str, ...]
-    created_at: str
-    results: dict[str, dict[str, Any]]
+    stand_position: str | None = None
+    can_edit_stand: bool = False
 
 
 class FlightWorkbench:
-    """Own catalogue, result cache and one serial worker for a workbench session."""
+    """Expose flight catalogue and matching actions to the workbench API."""
 
     def __init__(
         self,
@@ -162,38 +104,39 @@ class FlightWorkbench:
         match_config: MatchConfig | None = None,
         input_time_semantics: str = "UTC",
         display_timezone: str = "UTC",
+        flight_database: FlightDatabase | None = None,
         graph_lock: Any | None = None,
         graph_provider: Callable[[], AirportGraph] | None = None,
         revision_provider: Callable[[], Any] | None = None,
     ) -> None:
         self.airport_graph = airport_graph
-        self.graph_provider = graph_provider or (lambda: self.airport_graph)
-        self.revision_provider = revision_provider or (
-            lambda: _graph_identity(self.graph_provider())
-        )
         self.match_config = match_config or MatchConfig()
         self.input_time_semantics = input_time_semantics
         self.display_timezone = display_timezone
         self.lock = threading.RLock()
-        self.graph_lock = graph_lock or self.lock
-        self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flight-match")
-        self._revision = self.revision_provider()
-        self._graph_id = _graph_identity(self.graph_provider())
         self.flights: dict[str, Flight] = {}
         self.items: dict[str, FlightCatalogItem] = {}
-        self.results: dict[str, MatchResultItem] = {}
-        self.tasks: dict[str, MatchTask] = {}
         source_values = list(sources or ())
         movement_values = list(movement_types or ())
+        self.flight_database = flight_database
         for index, flight in enumerate(flights):
             source = source_values[index] if index < len(source_values) else "provided"
             movement = movement_values[index] if index < len(movement_values) else "unknown"
             key = flight_key(index, source, flight.flight_id)
             number, number_consistent = _consistent_value(
-                flight.data,
+                flight,
                 ("flight_number", "NUMBER", "number", "callsign", "flight", "ident"),
             )
             inconsistent = () if number_consistent else ("flight_number",)
+            stand_column = STAND_COLUMNS.get(movement, ("", ""))[1]
+            distinct = {
+                str(value).strip() for value in _distinct_values(flight.rows, stand_column)
+            }
+            distinct.discard("")
+            stand = next(iter(distinct)) if len(distinct) == 1 else None
+            consistent = len(distinct) <= 1
+            if not consistent:
+                inconsistent += (stand_column,)
             self.flights[key] = flight
             self.items[key] = FlightCatalogItem(
                 key,
@@ -201,52 +144,69 @@ class FlightWorkbench:
                 flight.flight_id,
                 number,
                 movement,
-                flight.data.timestamp.min().isoformat(),
-                flight.data.timestamp.max().isoformat(),
-                len(flight.data),
+                flight.rows[0]["timestamp"].isoformat(),
+                flight.rows[-1]["timestamp"].isoformat(),
+                flight.point_count,
                 inconsistent,
+                stand,
+                False,
             )
-            result = MatchResultItem(key)
-            associated_path = (paths_by_flight_key or {}).get(key)
-            if associated_path is not None:
-                result.graph_id = self._graph_id
-                result.config = asdict(self.match_config)
-                result.status = "success"
-                result.path = associated_path
-                result.updated_at = self._now()
-            self.results[key] = result
+        if flight_database:
+            for movement, row in flight_database.summaries():
+                identifier, number, numbers, started, ended, points, stand, count = row
+                key = database_flight_key(movement, identifier)
+                inconsistent = () if numbers <= 1 else ("flight_number",)
+                if count > 1:
+                    inconsistent += (STAND_COLUMNS[movement][1],)
+                self.items[key] = FlightCatalogItem(
+                    key, flight_database.source_name(movement), identifier, number, movement,
+                    started.isoformat(), ended.isoformat(), points, inconsistent,
+                    stand, not flight_database.read_only,
+                )
+        self.match_tasks = FlightMatchTasks(
+            self.items,
+            self._flight,
+            graph_provider=graph_provider or (lambda: self.airport_graph),
+            revision_provider=revision_provider,
+            graph_lock=graph_lock or self.lock,
+            lock=self.lock,
+            config=self.match_config,
+            paths=paths_by_flight_key or {},
+        )
         self.dataset_max_points = max(
             (item.point_count for item in self.items.values()), default=0
         )
 
-    @staticmethod
-    def _now() -> str:
-        return datetime.now(timezone.utc).isoformat()
+    @property
+    def results(self) -> dict[str, MatchResultItem]:
+        return self.match_tasks.results
+
+    def close(self) -> None:
+        self.match_tasks.close()
 
     def sync_graph(self) -> str:
-        """Invalidate results whenever the mutable graph content changes."""
-        with self.graph_lock:
-            revision = self.revision_provider()
-            if revision == self._revision:
-                return self._graph_id
-            current = _graph_identity(self.graph_provider())
+        return self.match_tasks.sync_graph()
+
+    def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
+        return self.match_tasks.submit(flight_keys, force=force)
+
+    def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
+        return self.match_tasks.task_status(task_ids)
+
+    def update_stand(self, key: str, stand: str | None) -> None:
+        stand = (stand.strip() or None) if stand is not None else None
         with self.lock:
-            if current == self._graph_id:
-                self._revision = revision
-                return current
-            self._revision = revision
-            self._graph_id = current
-            for result in self.results.values():
-                if result.status != "unmatched":
-                    result.status = "stale"
-                    result.path = None
-                    result.error = "机场图已变更；结果基于旧图快照，需重新匹配"
-                    result.error_kind = "stale_graph"
-                    result.updated_at = self._now()
-                    self._snapshot_task_result(
-                        result.flight_key, result.task_id, only_if_active=True
-                    )
-            return current
+            item = self.items[key]
+            if not item.can_edit_stand or self.flight_database is None:
+                raise ValueError("该航班没有可编辑的数据库机位记录")
+            _, column = STAND_COLUMNS[item.movement_type]
+            self.flight_database.update_stand(item.movement_type, item.flight_id, stand)
+            self.items[key] = replace(
+                item, stand_position=stand,
+                inconsistent_fields=tuple(
+                    name for name in item.inconsistent_fields if name != column
+                ),
+            )
 
     def catalogue(
         self,
@@ -256,6 +216,9 @@ class FlightWorkbench:
         status: str | None = None,
         min_points: int = 0,
         max_points: int | None = None,
+        stands: Sequence[str] = (),
+        start_date: date | None = None,
+        end_date: date | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -277,25 +240,32 @@ class FlightWorkbench:
             )
         rows = []
         with self.lock:
-            for key in self._filtered_keys(
-                query, movement_type, status, min_points, effective_max
-            ):
+            keys = self._filtered_keys(
+                query, movement_type, status, min_points, effective_max,
+                stands, start_date, end_date,
+            )
+            start = (page - 1) * page_size
+            for key in keys[start : start + page_size]:
                 item = self.items[key]
                 result = self.results[key]
                 row = asdict(item)
                 row["start_time"] = self._display_time(item.start_time)
                 row["end_time"] = self._display_time(item.end_time)
                 rows.append({**row, "match": result.public()})
-        total = len(rows)
+            stand_options = sorted({
+                item.stand_position for item in self.items.values()
+                if item.stand_position is not None
+            })
+        total = len(keys)
         total_pages = ceil(total / page_size) if total else 0
         if total_pages and page > total_pages:
             raise CataloguePageOutOfRange(page, total_pages)
         if not total_pages and page != 1:
             raise CataloguePageOutOfRange(page, 0)
         actual_page = page if total_pages else 0
-        start = (page - 1) * page_size
         return {
-            "items": rows[start : start + page_size],
+            "items": rows,
+            "stand_options": stand_options,
             "total": total,
             "total_pages": total_pages,
             "page": actual_page,
@@ -304,7 +274,7 @@ class FlightWorkbench:
             "min_points": min_points,
             "max_points": effective_max,
             "max_map_flights": MAX_MAP_FLIGHTS,
-            "graph_id": self._graph_id,
+            "graph_id": self.match_tasks.graph_id,
             "time": {
                 "input_semantics": self.input_time_semantics,
                 "display_timezone": self.display_timezone,
@@ -319,6 +289,9 @@ class FlightWorkbench:
         status: str | None = None,
         min_points: int = 0,
         max_points: int | None = None,
+        stands: Sequence[str] = (),
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> dict[str, Any]:
         """Return the fixed key set matching the currently committed filters."""
         self.sync_graph()
@@ -326,7 +299,8 @@ class FlightWorkbench:
         self._validate_filters(status, min_points, effective_max)
         with self.lock:
             keys = self._filtered_keys(
-                query, movement_type, status, min_points, effective_max
+                query, movement_type, status, min_points, effective_max,
+                stands, start_date, end_date,
             )
         return {"flight_keys": keys, "count": len(keys)}
 
@@ -338,45 +312,44 @@ class FlightWorkbench:
         observation_page_size: int = 100,
         all_fields: bool = False,
     ) -> dict[str, Any]:
-        flight = self._flight(flight_key)
         if observation_page < 1 or not 1 <= observation_page_size <= 500:
             raise ValueError("observation page must be >= 1 and page size between 1 and 500")
-        fields: dict[str, Any] = {}
-        inconsistent: dict[str, list[Any]] = {}
-        for column in flight.data.columns:
-            values = []
-            for raw in flight.data[column].tolist():
-                value = _scalar(raw)
-                if value is not None and value not in values:
-                    values.append(value)
-            if len(values) <= 1:
-                fields[column] = values[0] if values else None
-            elif column.casefold() in BUSINESS_FIELD_NAMES:
-                fields[column] = None
-                inconsistent[column] = values
+        start = (observation_page - 1) * observation_page_size
+        with self.lock:
+            item = self.items[flight_key]
+            if self.flight_database:
+                columns, fields, inconsistent, page_records, observation_total = (
+                    self.flight_database.detail(
+                        item.movement_type, item.flight_id, start, observation_page_size,
+                        BUSINESS_FIELD_NAMES,
+                    )
+                )
+                fields = {name: to_json_value(value) for name, value in fields.items()}
+                inconsistent = to_json_value(inconsistent)
             else:
-                fields[column] = None
-        records = flight.data.to_dict(orient="records")
-        observation_total = len(records)
-        observation_pages = ceil(observation_total / observation_page_size) if records else 0
+                flight = self.flights[flight_key]
+                columns = list(dict.fromkeys(name for row in flight.rows for name in row))
+                fields, inconsistent = self._detail_fields(flight, columns)
+                observation_total = flight.point_count
+                page_records = flight.rows[start : start + observation_page_size]
+        observation_pages = ceil(observation_total / observation_page_size)
         if observation_pages and observation_page > observation_pages:
             raise CataloguePageOutOfRange(observation_page, observation_pages)
-        start = (observation_page - 1) * observation_page_size
-        default_names = self._observation_columns(flight.data.columns)
-        column_names = list(flight.data.columns) if all_fields else default_names
+        default_names = self._observation_columns(columns)
+        column_names = columns if all_fields else default_names
         observations = []
-        for offset, row in enumerate(records[start : start + observation_page_size], start=start):
+        for offset, row in enumerate(page_records, start=start):
             observations.append(
                 {
                     "record_index": offset + 1,
-                    **{name: _scalar(row.get(name)) for name in column_names},
+                    **{name: to_json_value(row.get(name)) for name in column_names},
                 }
             )
         return {
             "summary": {
-                **asdict(self.items[flight_key]),
-                "start_time": self._display_time(self.items[flight_key].start_time),
-                "end_time": self._display_time(self.items[flight_key].end_time),
+                **asdict(item),
+                "start_time": self._display_time(item.start_time),
+                "end_time": self._display_time(item.end_time),
             },
             "fields": fields,
             "inconsistent_fields": inconsistent,
@@ -389,6 +362,19 @@ class FlightWorkbench:
             "all_fields": all_fields,
             "match": self.results[flight_key].public(),
         }
+
+    @staticmethod
+    def _detail_fields(
+        flight: Flight, columns: Iterable[str],
+    ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+        fields = {}
+        inconsistent = {}
+        for column in columns:
+            values = _distinct_values(flight.rows, column)
+            fields[column] = values[0] if len(values) == 1 else None
+            if len(values) > 1 and column.casefold() in BUSINESS_FIELD_NAMES:
+                inconsistent[column] = values
+        return fields, inconsistent
 
     def geometry(self, flight_key: str) -> dict[str, Any]:
         flight = self._flight(flight_key)
@@ -403,87 +389,6 @@ class FlightWorkbench:
                 "path": path_geojson(path, flight_key=flight_key) if path else None,
                 "match": result.public(),
             }
-
-    def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
-        keys = list(dict.fromkeys(flight_keys))
-        if not keys:
-            raise ValueError("至少选择一条航班")
-        for key in keys:
-            self._flight(key)
-        snapshot_id = self.sync_graph()
-        task_id = hashlib.sha256(f"{snapshot_id}:{keys}:{self._now()}".encode()).hexdigest()[:20]
-        config = asdict(self.match_config)
-        pending = []
-        skipped: list[dict[str, str]] = []
-        with self.lock:
-            for key in keys:
-                result = self.results[key]
-                if result.status in {"queued", "matching"}:
-                    skipped.append({"flight_key": key, "reason": "already_running"})
-                    continue
-                cache_hit = (
-                    not force
-                    and result.status == "success"
-                    and result.graph_id == snapshot_id
-                    and result.config == config
-                )
-                if cache_hit:
-                    skipped.append({"flight_key": key, "reason": "current_success"})
-                    continue
-                result.graph_id = snapshot_id
-                result.config = config
-                result.status = "queued"
-                result.path = None
-                result.error = None
-                result.error_kind = None
-                result.task_id = task_id
-                result.updated_at = self._now()
-                pending.append(key)
-            self.tasks[task_id] = MatchTask(
-                task_id,
-                tuple(pending),
-                self._now(),
-                {key: self.results[key].public() for key in pending},
-            )
-        if pending:
-            self.executor.submit(self._run, task_id, snapshot_id, tuple(pending))
-        return {
-            "task_id": task_id,
-            "requested_count": len(keys),
-            "queued": pending,
-            "queued_count": len(pending),
-            "skipped": skipped,
-            "skipped_count": len(skipped),
-        }
-
-    def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
-        """Return compact progress without catalogue rows or geometry."""
-        self.sync_graph()
-        wanted = set(task_ids or ())
-        with self.lock:
-            tasks = [
-                task for task_id, task in self.tasks.items() if not wanted or task_id in wanted
-            ]
-            payload = []
-            for task in tasks:
-                statuses = [task.results[key]["status"] for key in task.flight_keys]
-                counts = {name: statuses.count(name) for name in MATCH_STATUSES}
-                payload.append(
-                    {
-                        "task_id": task.task_id,
-                        "flight_keys": list(task.flight_keys),
-                        "total": len(task.flight_keys),
-                        "waiting": counts["queued"],
-                        "running": counts["matching"],
-                        "success": counts["success"],
-                        "failed": counts["failed"] + counts["stale"],
-                        "complete": not any(
-                            status in {"queued", "matching"} for status in statuses
-                        ),
-                        "items": [dict(task.results[key]) for key in task.flight_keys],
-                    }
-                )
-        return {"graph_id": self._graph_id, "tasks": payload}
 
     def _validate_filters(self, status: str | None, min_points: int, max_points: int) -> None:
         if status and status not in MATCH_STATUSES:
@@ -504,7 +409,25 @@ class FlightWorkbench:
         status: str | None,
         min_points: int,
         max_points: int,
+        stands: Sequence[str] = (),
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> list[str]:
+        if start_date and end_date and start_date > end_date:
+            raise ValueError("起始日期不得晚于终止日期")
+        if self.flight_database:
+            return [
+                key
+                for movement, row in self.flight_database.summaries(
+                    movement=movement_type, query=query.strip(),
+                    min_points=min_points, max_points=max_points, stands=tuple(stands),
+                    start_date=start_date, end_date=end_date,
+                    display_timezone=self.display_timezone,
+                )
+                if (key := database_flight_key(movement, row[0])) in self.results
+                and (not status or self.results[key].status == status)
+            ]
+        selected_stands = set(stands)
         needle = query.strip().casefold()
         keys = []
         for key, item in self.items.items():
@@ -517,6 +440,16 @@ class FlightWorkbench:
                 continue
             if status and status != result.status:
                 continue
+            if selected_stands and (
+                item.movement_type not in STAND_COLUMNS
+                or STAND_COLUMNS[item.movement_type][1] in item.inconsistent_fields
+                or (item.stand_position or "") not in selected_stands
+            ):
+                continue
+            if start_date or end_date:
+                day = date.fromisoformat(self._display_time(item.start_time)[:10])
+                if (start_date and day < start_date) or (end_date and day > end_date):
+                    continue
             if min_points <= item.point_count <= max_points:
                 keys.append(key)
         return keys
@@ -541,98 +474,15 @@ class FlightWorkbench:
                 selected.append(match)
         return selected
 
-    def _run(self, task_id: str, snapshot_id: str, keys: tuple[str, ...]) -> None:
-        # The matcher is built for this graph version once per submitted batch.
-        try:
-            with self.graph_lock, self.lock:
-                if self.sync_graph() != snapshot_id:
-                    self.sync_graph()
-                    return
-                matcher = Matcher(self.graph_provider().copy(), self.match_config)
-        except Exception as error:  # infrastructure/initialisation failure, not a normal mismatch
-            self._fail_pending(keys, task_id, f"匹配器异常：{type(error).__name__}: {error}")
-            return
-        for key in keys:
-            with self.graph_lock, self.lock:
-                result = self.results[key]
-                if result.task_id != task_id or self.sync_graph() != snapshot_id:
-                    self.sync_graph()
-                    continue
-                result.status = "matching"
-                result.updated_at = self._now()
-                self._snapshot_task_result(key, task_id)
-            try:
-                path = matcher.map_flight(self.flights[key])
-            except MapMatchingError as error:
-                self._complete(
-                    key, task_id, snapshot_id, "failed", None, str(error), "matching"
-                )
-            except Exception as error:
-                self._complete(
-                    key,
-                    task_id,
-                    snapshot_id,
-                    "failed",
-                    None,
-                    f"系统异常（非正常匹配失败）：{type(error).__name__}: {error}",
-                    "system",
-                )
-            else:
-                self._complete(key, task_id, snapshot_id, "success", path, None, None)
-
-    def _complete(
-        self,
-        key: str,
-        task_id: str,
-        snapshot_id: str,
-        status: str,
-        path: Path | None,
-        error: str | None,
-        error_kind: str | None,
-    ) -> None:
-        with self.graph_lock, self.lock:
-            result = self.results[key]
-            if result.task_id != task_id:
-                return
-            if self.sync_graph() != snapshot_id:
-                self.sync_graph()
-                return
-            result.status = status
-            result.path = path
-            result.error = error
-            result.error_kind = error_kind
-            result.updated_at = self._now()
-            self._snapshot_task_result(key, task_id)
-
-    def _fail_pending(self, keys: Sequence[str], task_id: str, error: str) -> None:
-        with self.lock:
-            for key in keys:
-                result = self.results[key]
-                if result.task_id == task_id and result.status in {"queued", "matching"}:
-                    result.status = "failed"
-                    result.error = error
-                    result.error_kind = "system"
-                    result.updated_at = self._now()
-                    self._snapshot_task_result(key, task_id)
-
-    def _snapshot_task_result(
-        self, key: str, task_id: str | None, *, only_if_active: bool = False
-    ) -> None:
-        """Copy the latest flight result into its owning task's immutable history."""
-        if task_id is None:
-            return
-        task = self.tasks.get(task_id)
-        if task is not None and key in task.results:
-            if only_if_active and task.results[key]["status"] not in {"queued", "matching"}:
-                return
-            task.results[key] = self.results[key].public()
-
     def _flight(self, flight_key: str) -> Flight:
         try:
+            if self.flight_database:
+                item = self.items[flight_key]
+                return self.flight_database.flight(item.movement_type, item.flight_id)
             return self.flights[flight_key]
         except KeyError as error:
             raise KeyError("未知 flight_key") from error
 
     def _display_time(self, value: str) -> str:
-        return pd.Timestamp(value).tz_convert(self.display_timezone).isoformat()
+        return datetime.fromisoformat(value).astimezone(ZoneInfo(self.display_timezone)).isoformat()
 

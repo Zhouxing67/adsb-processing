@@ -9,7 +9,7 @@ import uvicorn
 from pyproj import Proj
 from shapely.geometry import LineString
 
-from adsb import Flight
+from flight import Flight
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
@@ -37,6 +37,8 @@ flights = [
                 "timestamp": pd.date_range("2024-01-01", periods=3, freq="1min", tz="UTC"),
                 "longitude": [116.59, 116.592, 116.595],
                 "latitude": [40.07] * 3,
+                "arr_stand_position": ["A01" if i == 0 else None] * 3,
+                "dep_stand_position": ["D02" if i == 1 else None] * 3,
             }
         )
     )

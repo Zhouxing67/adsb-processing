@@ -1,0 +1,26 @@
+# Copy this file to config.local.toml and set the database path.
+# Relative paths are resolved from the repository root.
+# graph_path = 'data/graphs/zbaa_final.json'
+
+[database]
+path = 'data/flights.duckdb'
+# quack_uri = 'quack:127.0.0.1:9494'
+
+[batch]
+# output_dir = 'outputs/path_map'
+# limit = 10  # Maximum flights per direction. Omit for all flights.
+
+[workbench]
+# host = '127.0.0.1'
+# port = 8765
+# open_browser = true
+# display_timezone = 'Asia/Shanghai'
+
+[matching]
+# Omitted values use MatchConfig defaults.
+# candidate_radius = 120.0
+# max_candidates = 16
+# gps_sigma = 10.0
+# transition_beta = 20.0
+# max_transition_turn_angle_deg = 150.0
+# turn_tangent_sample_m = 10.0

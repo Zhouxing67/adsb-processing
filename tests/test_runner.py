@@ -1,6 +1,7 @@
 import pandas as pd
 
-from path_map import MovementType, load_data
+from flight import MovementType
+from scripts.csv_flights import load_csv_flights
 
 
 def test_iter_flights_groups_non_contiguous_input(tmp_path):
@@ -19,10 +20,12 @@ def test_iter_flights_groups_non_contiguous_input(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    flights = list(load_data(source).iterate())
+    flights = list(load_csv_flights(source).iterate())
 
     assert [flight.flight_id for flight in flights] == ["A", "B"]
-    assert all(flight.data.timestamp.is_monotonic_increasing for flight in flights)
+    for flight in flights:
+        times = [row["timestamp"] for row in flight.rows]
+        assert times == sorted(times)
 
 
 def test_iter_flights_honors_limit(tmp_path):
@@ -36,7 +39,7 @@ def test_iter_flights_honors_limit(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    flights = list(load_data(source).iterate(limit=2))
+    flights = list(load_csv_flights(source).iterate(limit=2))
 
     assert [flight.flight_id for flight in flights] == ["A", "B"]
 
@@ -52,6 +55,6 @@ def test_load_data_attaches_movement_type(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    traffic = load_data(source, MovementType.ARRIVAL)
+    traffic = load_csv_flights(source, MovementType.ARRIVAL)
 
-    assert traffic.data["movement_type"].tolist() == ["arrival", "arrival"]
+    assert [row["movement_type"] for row in traffic.rows] == ["arrival", "arrival"]

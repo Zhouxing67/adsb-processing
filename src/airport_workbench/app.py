@@ -7,22 +7,26 @@ import threading
 import time
 import webbrowser
 from collections import defaultdict
+from contextlib import asynccontextmanager
+from datetime import date
 from pathlib import Path as FilePath
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Annotated, Any, Callable, Mapping, Sequence
 
 import networkx as nx
 import uvicorn
-from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi.concurrency import run_in_threadpool
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 
-from adsb import Flight
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
     load_graph,
 )
+from flight import Flight
+from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
 
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
@@ -124,6 +128,10 @@ class SourceSplitRequest(VersionedRequest):
 class ManualSnapRequest(VersionedRequest):
     node: EncodedValue
     edge: EdgeIdentity
+
+
+class UpdateStandRequest(BaseModel):
+    stand_position: str | None
 
 
 class MatchFlightsRequest(BaseModel):
@@ -314,23 +322,41 @@ def create_app(
     movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
+    flight_database: FlightDatabase | None = None,
 ) -> FastAPI:
     browser = BrowserState(session)
-    flight_workbench = FlightWorkbench(
-        session.airport_graph,
-        flights,
-        sources=flight_sources,
-        movement_types=movement_types,
-        paths_by_flight_key=paths_by_flight_key,
-        match_config=match_config,
-        input_time_semantics=input_time_semantics,
-        display_timezone=display_timezone,
-        graph_lock=session.lock,
-        graph_provider=lambda: session.airport_graph,
-        revision_provider=lambda: getattr(session, "revision", 0),
-    )
-    flight_mode = bool(flights)
-    app = FastAPI(title="Airport Workbench")
+    flight_mode = bool(flights) or flight_database is not None
+    flight_workbench = None
+    if flight_mode:
+        flight_workbench = FlightWorkbench(
+            session.airport_graph,
+            flights,
+            sources=flight_sources,
+            flight_database=flight_database,
+            movement_types=movement_types,
+            paths_by_flight_key=paths_by_flight_key,
+            match_config=match_config,
+            input_time_semantics=input_time_semantics,
+            display_timezone=display_timezone,
+            graph_lock=session.lock,
+            graph_provider=lambda: session.airport_graph,
+            revision_provider=lambda: getattr(session, "revision", 0),
+        )
+        if not flight_workbench.items:
+            flight_workbench.close()
+            raise ValueError("DuckDB 中没有可用的航班")
+
+    @asynccontextmanager
+    async def lifespan(_app: FastAPI):
+        try:
+            yield
+        finally:
+            if flight_workbench is not None:
+                await run_in_threadpool(flight_workbench.close)
+
+    app = FastAPI(title="Airport Workbench", lifespan=lifespan)
+    flight_routes = APIRouter()
+    graph_routes = APIRouter()
 
     @app.exception_handler(RevisionConflict)
     async def revision_conflict_handler(_request: Request, error: RevisionConflict) -> JSONResponse:
@@ -358,7 +384,12 @@ def create_app(
     async def enforce_flight_permissions(request: Request, call_next: Callable[..., Any]) -> Any:
         match_api = request.url.path == "/api/matches" and request.method == "POST"
         safe_method = request.method in {"GET", "HEAD", "OPTIONS"}
-        graph_write_blocked = flight_mode and not match_api
+        route = request.url.path.split("/")
+        stand_api = (
+            request.method == "PATCH" and len(route) == 5
+            and route[1:3] == ["api", "flights"] and route[4] == "stand"
+        )
+        graph_write_blocked = flight_mode and not (match_api or stand_api)
         if graph_write_blocked and not safe_method:
             return JSONResponse(
                 status_code=405,
@@ -368,27 +399,31 @@ def create_app(
 
     @app.get("/api/state")
     def state() -> dict[str, Any]:
-        flight_workbench.sync_graph()
-        value = browser.state(on_finish is not None, save_path)
-        value["flight_count"] = len(flight_workbench.flights)
+        value = browser.state(not flight_mode and on_finish is not None, save_path)
         value["flight_mode"] = flight_mode
         value["capabilities"] = {
             "can_edit_graph": not flight_mode,
-            "has_flights": bool(flights),
-            "can_match": bool(flights),
+            "has_flights": flight_mode,
+            "can_match": flight_mode,
         }
-        value["path_count"] = sum(
-            result.status == "success" for result in flight_workbench.results.values()
-        )
+        if flight_workbench is not None:
+            flight_workbench.sync_graph()
+            value["flight_count"] = len(flight_workbench.items)
+            value["path_count"] = sum(
+                result.status == "success" for result in flight_workbench.results.values()
+            )
         return value
 
-    @app.get("/api/flights")
+    @flight_routes.get("/api/flights")
     def flights_catalogue(
         q: str = "",
         movement_type: str | None = None,
         match_status: str | None = None,
         min_points: int = 0,
         max_points: int | None = None,
+        stands: Annotated[list[str] | None, Query()] = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -399,6 +434,9 @@ def create_app(
                 status=match_status,
                 min_points=min_points,
                 max_points=max_points,
+                stands=stands or (),
+                start_date=start_date,
+                end_date=end_date,
                 page=page,
                 page_size=page_size,
             )
@@ -414,7 +452,20 @@ def create_app(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
-    @app.get("/api/flights/{flight_key}")
+    @flight_routes.patch(
+        "/api/flights/{flight_key}/stand", status_code=204, response_class=Response
+    )
+    def update_stand(flight_key: str, item: UpdateStandRequest) -> None:
+        try:
+            flight_workbench.update_stand(flight_key, item.stand_position)
+        except KeyError as error:
+            raise HTTPException(404, "未知 flight_key") from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(503, str(error)) from error
+
+    @flight_routes.get("/api/flights/{flight_key}")
     def flight_detail(
         flight_key: str,
         observation_page: int = 1,
@@ -433,13 +484,16 @@ def create_app(
         except (ValueError, CataloguePageOutOfRange) as error:
             raise HTTPException(400, str(error)) from error
 
-    @app.get("/api/flight-selection")
+    @flight_routes.get("/api/flight-selection")
     def flight_selection(
         q: str = "",
         movement_type: str | None = None,
         match_status: str | None = None,
         min_points: int = 0,
         max_points: int | None = None,
+        stands: Annotated[list[str] | None, Query()] = None,
+        start_date: date | None = None,
+        end_date: date | None = None,
     ) -> dict[str, Any]:
         try:
             return flight_workbench.filtered_keys(
@@ -448,18 +502,21 @@ def create_app(
                 status=match_status,
                 min_points=min_points,
                 max_points=max_points,
+                stands=stands or (),
+                start_date=start_date,
+                end_date=end_date,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
-    @app.get("/api/flights/{flight_key}/geometry")
+    @flight_routes.get("/api/flights/{flight_key}/geometry")
     def flight_geometry(flight_key: str) -> dict[str, Any]:
         try:
             return flight_workbench.geometry(flight_key)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
-    @app.post("/api/matches")
+    @flight_routes.post("/api/matches")
     def match_flights(item: MatchFlightsRequest) -> dict[str, Any]:
         try:
             return flight_workbench.submit(item.flight_keys, force=item.force)
@@ -468,11 +525,11 @@ def create_app(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
-    @app.get("/api/matches")
-    def match_status(task_id: list[str] | None = None) -> dict[str, Any]:
+    @flight_routes.get("/api/matches")
+    def match_status(task_id: Annotated[list[str] | None, Query()] = None) -> dict[str, Any]:
         return flight_workbench.task_status(task_id)
 
-    @app.post("/api/draw-connection")
+    @graph_routes.post("/api/draw-connection")
     def draw_connection(item: DrawConnectionRequest) -> dict[str, Any]:
         start, end = decode_value(item.start), decode_value(item.end)
         try:
@@ -488,7 +545,7 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         return {"message": "已添加人工连接，可撤销；点击保存持久化", "revision": result.revision}
 
-    @app.post("/api/restore-options")
+    @graph_routes.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
         start, end = decode_value(item.start), decode_value(item.end)
         if start == end:
@@ -510,7 +567,7 @@ def create_app(
             ],
         }
 
-    @app.post("/api/restore-confirm")
+    @graph_routes.post("/api/restore-confirm")
     def restore_confirm(item: RestoreRequest) -> dict[str, Any]:
         if item.candidate_id is None:
             raise HTTPException(400, "必须选择一个来源路径")
@@ -529,7 +586,7 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.get("/api/merge-candidates")
+    @graph_routes.get("/api/merge-candidates")
     def merge_candidates() -> dict[str, Any]:
         with session.lock:
             candidates = session.merge_candidates()
@@ -543,7 +600,7 @@ def create_app(
                 "candidates": payload,
             }
 
-    @app.post("/api/merge-nodes-preview")
+    @graph_routes.post("/api/merge-nodes-preview")
     def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
         node_ids = [decode_value(node) for node in item.node_ids]
         canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
@@ -563,7 +620,7 @@ def create_app(
             node["id"] = encoded
         return value
 
-    @app.post("/api/merge-nodes-confirm")
+    @graph_routes.post("/api/merge-nodes-confirm")
     def merge_nodes_confirm(item: MergeNodesRequest) -> dict[str, Any]:
         node_ids = [decode_value(node) for node in item.node_ids]
         canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
@@ -578,14 +635,14 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.post("/api/delete-edge-preview")
+    @graph_routes.post("/api/delete-edge-preview")
     def delete_edge_preview(item: EdgeRequest) -> dict[str, Any]:
         result = session.derived_edge_removal_preview(
             *decode_edge(item.edge), expected_revision=item.expected_revision
         )
         return {**result.value, "revision": result.revision}
 
-    @app.post("/api/delete-edge-confirm")
+    @graph_routes.post("/api/delete-edge-confirm")
     def delete_edge_confirm(item: EdgeRequest) -> dict[str, Any]:
         edge = decode_edge(item.edge)
         result = session.remove_derived_edge(*edge, expected_revision=item.expected_revision)
@@ -594,7 +651,7 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.post("/api/delete-node-preview")
+    @graph_routes.post("/api/delete-node-preview")
     def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
         try:
             result = session.node_deletion_plan(
@@ -604,7 +661,7 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         return {**result.value, "revision": result.revision}
 
-    @app.post("/api/delete-node-confirm")
+    @graph_routes.post("/api/delete-node-confirm")
     def delete_node_confirm(item: NodeDeletionRequest) -> dict[str, Any]:
         node = decode_value(item.node)
         try:
@@ -621,7 +678,7 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.post("/api/split-source-preview")
+    @graph_routes.post("/api/split-source-preview")
     def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
         try:
             result = session.source_split_preview(
@@ -640,7 +697,7 @@ def create_app(
             value["recommended_node"] = encode_value(value["recommended_node"])
         return value
 
-    @app.post("/api/split-source-confirm")
+    @graph_routes.post("/api/split-source-confirm")
     def split_source_confirm(item: SourceSplitRequest) -> dict[str, Any]:
         try:
             node = session.split_source_edge(
@@ -657,7 +714,7 @@ def create_app(
             "revision": node.revision,
         }
 
-    @app.post("/api/manual-snap-preview")
+    @graph_routes.post("/api/manual-snap-preview")
     def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
         node = decode_value(item.node)
         edge = decode_edge(item.edge)
@@ -669,7 +726,7 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         return {**to_json_value(result.value), "revision": result.revision}
 
-    @app.post("/api/manual-snap-confirm")
+    @graph_routes.post("/api/manual-snap-confirm")
     def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
         node = decode_value(item.node)
         edge = decode_edge(item.edge)
@@ -684,7 +741,7 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.post("/api/update-node")
+    @graph_routes.post("/api/update-node")
     def update_node(item: UpdatedNodeAttributes) -> dict[str, Any]:
         node = decode_value(item.node)
         result = session.update_node_attributes(
@@ -692,7 +749,7 @@ def create_app(
         )
         return {"message": f"已更新节点 {node!r} 的属性", "revision": result.revision}
 
-    @app.post("/api/update-edge")
+    @graph_routes.post("/api/update-edge")
     def update_edge(item: UpdatedEdgeAttributes) -> dict[str, Any]:
         edge = decode_edge(item.edge)
         result = session.update_edge_attributes(
@@ -700,7 +757,7 @@ def create_app(
         )
         return {"message": f"已更新边 {edge!r} 的属性", "revision": result.revision}
 
-    @app.post("/api/save")
+    @graph_routes.post("/api/save")
     def save(item: VersionedRequest) -> dict[str, Any]:
         result = session.save(save_path, expected_revision=item.expected_revision)
         output = result.value
@@ -712,7 +769,7 @@ def create_app(
             "revision": result.revision,
         }
 
-    @app.post("/api/undo")
+    @graph_routes.post("/api/undo")
     def undo(item: VersionedRequest) -> dict[str, Any]:
         try:
             result = session.undo(expected_revision=item.expected_revision)
@@ -720,7 +777,7 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         return {"message": "已撤销上一步操作", "revision": result.revision}
 
-    @app.post("/api/finish")
+    @graph_routes.post("/api/finish")
     def finish(item: VersionedRequest) -> dict[str, Any]:
         if on_finish is None:
             raise HTTPException(400, "当前为独立编辑模式")
@@ -730,6 +787,8 @@ def create_app(
             "message": f"已保存 {output}，编辑完成，正在返回 AirportGraph",
             "revision": result.revision,
         }
+
+    app.include_router(flight_routes if flight_mode else graph_routes)
 
     from .frontend import mount_frontend
 

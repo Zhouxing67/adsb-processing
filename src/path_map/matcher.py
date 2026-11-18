@@ -5,14 +5,12 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass
-from typing import Any
 
 import networkx as nx
-import pandas as pd
 from shapely.geometry import Point
 
-from adsb import Flight, Flights
 from airport_surface import AirportGraph
+from flight import Flight
 
 from .candidates import Candidate, CandidateIndex
 from .hmm import NetworkRouter, Transition, viterbi
@@ -32,7 +30,7 @@ class MatchConfig:
     max_candidates: int = 16
     gps_sigma: float = 10.0
     transition_beta: float = 20.0
-    max_transition_turn_angle_deg: float = 120.0
+    max_transition_turn_angle_deg: float = 150.0
     turn_tangent_sample_m: float = 10.0
 
     def __post_init__(self) -> None:
@@ -53,22 +51,6 @@ class MatchConfig:
             raise ValueError("max_candidates must be a positive integer")
         if self.max_candidates < 1:
             raise ValueError("max_candidates must be a positive integer")
-
-
-@dataclass(frozen=True, slots=True)
-class MatchFailure:
-    """One flight that could not be matched, together with the reason."""
-
-    flight_id: Any
-    reason: str
-
-
-@dataclass(frozen=True, slots=True)
-class BatchMatchResult:
-    """Successful matches and expected data-quality failures for one batch."""
-
-    matches: list[tuple[Any, Path]]
-    failures: list[MatchFailure]
 
 
 class Matcher:
@@ -151,23 +133,13 @@ class Matcher:
 
 
 def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
-    required = {"longitude", "latitude"}
-    if not required <= set(flight.data.columns):
-        raise MapMatchingError("Flight must contain longitude and latitude columns")
-    columns = ["longitude", "latitude"]
-    if "timestamp" in flight.data.columns:
-        columns.append("timestamp")
-    frame = flight.data.loc[:, columns].dropna(subset=["longitude", "latitude"])
-    if "timestamp" in frame:
-        try:
-            frame = frame.assign(timestamp=pd.to_datetime(frame.timestamp, utc=True))
-        except (TypeError, ValueError) as exc:
-            raise MapMatchingError("Flight contains invalid timestamps") from exc
-        frame = frame.sort_values("timestamp", kind="stable")
-    if len(frame) < 2:
+    if flight.point_count < 2:
         raise MapMatchingError("At least two valid observations are required")
-    x, y = ag.project.transform(frame.longitude.to_numpy(), frame.latitude.to_numpy())
+    coordinates = [(row["longitude"], row["latitude"]) for row in flight.rows]
+    longitude, latitude = zip(*coordinates)
+    x, y = ag.project.transform(longitude, latitude)
     return [Point(float(px), float(py)) for px, py in zip(x, y)]
+
 
 def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEdge]:
     if not transitions:
@@ -184,34 +156,3 @@ def _append_transition_edges(
     """Join transitions, collapsing only continued travel on their shared boundary edge."""
     start = 1 if output and edges and output[-1] == edges[0] else 0
     output.extend(edges[start:])
-
-
-def map_flight(
-    AG: AirportGraph,
-    f: Flight,
-    config: MatchConfig = MatchConfig(),
-) -> Path:
-    """Match ADS-B observations to a continuous airport-network path with an HMM."""
-    return Matcher(AG, config).map_flight(f)
-
-
-def map_flights(
-    airport_graph: AirportGraph,
-    flights: Flights,
-    config: MatchConfig = MatchConfig(),
-) -> BatchMatchResult:
-    """Match every flight independently without stopping on matching failures."""
-    matches: list[tuple[Any, Path]] = []
-    failures: list[MatchFailure] = []
-    matcher = Matcher(airport_graph, config)
-
-    for flight in flights:
-        flight_id = flight.flight_id
-        try:
-            path = matcher.map_flight(flight)
-        except MapMatchingError as error:
-            failures.append(MatchFailure(flight_id, str(error)))
-            continue
-        matches.append((flight_id, path))
-
-    return BatchMatchResult(matches, failures)

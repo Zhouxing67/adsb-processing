@@ -4,11 +4,13 @@ from pathlib import Path
 
 import pytest
 
+from flight import MovementType
 from airport_surface import load_graph
-from path_map import MatchConfig, Matcher, MovementType, load_data
+from path_map import MatchConfig, Matcher
 from path_map.candidates import CandidateIndex
 from path_map.path import DirectedEdge
 from path_map.transition_constraints import LocalTurnConstraint
+from scripts.csv_flights import load_csv_flights
 
 ROOT = Path(__file__).resolve().parents[1]
 GRAPH_FILE = ROOT / "data" / "graphs" / "zbaa_final.json"
@@ -21,7 +23,7 @@ def target_case():
     if not GRAPH_FILE.exists() or not DEPARTURES_FILE.exists():
         pytest.skip("ZBAA graph or departure regression data is not available")
     airport_graph = load_graph(GRAPH_FILE)
-    flights = load_data(DEPARTURES_FILE, MovementType.DEPARTURE)
+    flights = load_csv_flights(DEPARTURES_FILE, MovementType.DEPARTURE)
     flight = next(item for item in flights if item.flight_id == TARGET_FLIGHT_ID)
     return airport_graph, flight
 

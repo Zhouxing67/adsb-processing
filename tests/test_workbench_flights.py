@@ -7,10 +7,10 @@ import networkx as nx
 import numpy as np
 import pandas as pd
 import pytest
+from fastapi.testclient import TestClient
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
 
-from adsb import Flight
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
@@ -19,6 +19,7 @@ from airport_workbench.flights import (
     FlightWorkbench,
     flight_key,
 )
+from flight import Flight
 from path_map import MapMatchingError, Path
 
 
@@ -188,18 +189,22 @@ def test_partial_match_failure_keeps_other_success(monkeypatch: pytest.MonkeyPat
                 raise MapMatchingError("no candidate")
             return object()
 
-    monkeypatch.setattr("airport_workbench.flights.Matcher", FakeMatcher)
+    monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", FakeMatcher)
     workbench = FlightWorkbench(SmallGraph(), [flight("good"), flight("bad")])
     keys = list(workbench.flights)
     submitted = workbench.submit(keys)
-    workbench.executor.shutdown(wait=True)
+    workbench.match_tasks.executor.shutdown(wait=True)
 
     assert workbench.results[keys[0]].status == "success"
     assert workbench.results[keys[1]].status == "failed"
     assert workbench.results[keys[1]].error == "no candidate"
-    progress = workbench.task_status([submitted["task_id"]])["tasks"][0]
+    status = workbench.task_status([submitted["task_id"]])
+    progress = status["tasks"][0]
     assert (progress["total"], progress["success"], progress["failed"]) == (2, 1, 1)
     assert progress["complete"] is True
+    assert status["progress"]["summary"] == progress["summary"]
+    assert progress["summary"]["success_rate"] == 0.5
+    assert progress["summary"]["failure_counts"] == {"matching_error": 1}
 
 
 def test_retry_does_not_rewrite_completed_task_progress(
@@ -222,10 +227,10 @@ def test_retry_does_not_rewrite_completed_task_progress(
         def submit(self, function: object, *args: object) -> None:
             function(*args)  # type: ignore[operator]
 
-    monkeypatch.setattr("airport_workbench.flights.Matcher", FakeMatcher)
+    monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", FakeMatcher)
     workbench = FlightWorkbench(SmallGraph(), [flight("retry")])
-    workbench.executor.shutdown(wait=True)
-    workbench.executor = InlineExecutor()  # type: ignore[assignment]
+    workbench.match_tasks.executor.shutdown(wait=True)
+    workbench.match_tasks.executor = InlineExecutor()  # type: ignore[assignment]
     key = next(iter(workbench.flights))
 
     first = workbench.submit([key])
@@ -240,7 +245,7 @@ def test_retry_does_not_rewrite_completed_task_progress(
     assert second_status["complete"] is True
     assert second_status["success"] == 1
 
-    workbench.graph_provider().graph.add_node("changed", pos=(116.2, 40.2))
+    workbench.match_tasks.graph_provider().graph.add_node("changed", pos=(116.2, 40.2))
     workbench.sync_graph()
 
     assert workbench.results[key].status == "stale"
@@ -260,7 +265,7 @@ def test_batch_rejects_unknown_atomically_and_reports_skip_reasons() -> None:
 
     workbench.results[first].status = "matching"
     workbench.results[second].status = "success"
-    workbench.results[second].graph_id = workbench._graph_id
+    workbench.results[second].graph_id = workbench.match_tasks.graph_id
     workbench.results[second].config = asdict(workbench.match_config)
     result = workbench.submit([first, second])
 
@@ -273,7 +278,7 @@ def test_batch_rejects_unknown_atomically_and_reports_skip_reasons() -> None:
 
 def test_observation_detail_is_paginated_and_can_expand_fields() -> None:
     item = flight_with_points("many", 205)
-    item.data["aircraft_type"] = "A320"
+    item = Flight({**row, "aircraft_type": "A320"} for row in item.rows)
     workbench = FlightWorkbench(SmallGraph(), [item])
     key = next(iter(workbench.flights))
 
@@ -295,7 +300,7 @@ def test_graph_change_invalidates_old_result() -> None:
         paths_by_flight_key={flight_key(0, "provided", "one"): object()},
     )
     key = next(iter(workbench.flights))
-    workbench.graph_provider().graph.add_node("b", pos=(116.1, 40.1))
+    workbench.match_tasks.graph_provider().graph.add_node("b", pos=(116.1, 40.1))
 
     workbench.sync_graph()
 
@@ -333,15 +338,15 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
         paths_by_flight_key={key: Path(airport_graph, [("a", "b", "ab")])},
     )
 
-    endpoints = {
-        route.path: route.endpoint
-        for route in app.routes
-        if hasattr(route, "endpoint")
-    }
-    catalogue = endpoints["/api/flights"]()
-    detail = endpoints["/api/flights/{flight_key}"](key)
-    geometry = endpoints["/api/flights/{flight_key}/geometry"](key)
-    statuses = endpoints["/api/matches"]()
+    with TestClient(app) as client:
+        catalogue = client.get("/api/flights").json()
+        detail = client.get(f"/api/flights/{key}").json()
+        geometry = client.get(f"/api/flights/{key}/geometry").json()
+        statuses = client.get("/api/matches").json()
+        first = client.post("/api/matches", json={"flight_keys": [key]}).json()
+        client.post("/api/matches", json={"flight_keys": [key]}).raise_for_status()
+        filtered = client.get("/api/matches", params={"task_id": first["task_id"]}).json()
+        assert [task["task_id"] for task in filtered["tasks"]] == [first["task_id"]]
 
     assert catalogue["items"][0]["flight_number"] == "CCA123"
     assert catalogue["items"][0]["match"]["status"] == "success"
@@ -351,3 +356,119 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
     assert statuses["tasks"] == []
     assert geometry["match"]["has_path"] is True
     json.dumps([catalogue, detail, geometry, statuses], allow_nan=False)
+
+
+def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
+    from datetime import date
+
+    from flight.database import BEIJING, FlightDatabase, database_flight_key
+
+    duckdb = pytest.importorskip("duckdb")
+    database = tmp_path / "catalogue.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        for movement, stand_column in (
+            ("arr", "arr_stand_position"), ("dep", "dep_stand_position"),
+        ):
+            connection.execute(f"""
+                CREATE TABLE adsb_202406_{movement} (
+                    flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+                    longitude DOUBLE, latitude DOUBLE,
+                    {stand_column} VARCHAR CHECK ({stand_column} <> 'invalid')
+                );
+                INSERT INTO adsb_202406_{movement} VALUES
+                    ('same', 'CA1', '2024-06-15 00:05:00', 116.0, 40.0, NULL),
+                    ('same', 'CA1', '2024-06-15 00:06:00', 116.1, 40.0, NULL);
+            """)
+
+    store = FlightDatabase(database)
+    workbench = FlightWorkbench(
+        SmallGraph(), flight_database=store, display_timezone=BEIJING, input_time_semantics=BEIJING,
+    )
+    arrival = database_flight_key("arrival", "same")
+    departure = database_flight_key("departure", "same")
+    criteria = {"start_date": date(2024, 6, 15), "end_date": date(2024, 6, 15), "stands": [""]}
+    assert not workbench.flights
+    assert workbench.catalogue(**criteria)["total"] == 2
+    assert workbench.catalogue(end_date=date(2024, 6, 14))["total"] == 0
+    assert workbench.catalogue(movement_type="arrival")["items"][0]["flight_key"] == arrival
+    detail = workbench.detail(arrival, observation_page=2, observation_page_size=1)
+    assert detail["summary"]["start_time"] == "2024-06-15T00:05:00+08:00"
+    assert detail["observations"][0]["timestamp"] == "2024-06-14T16:06:00+00:00"
+    assert detail["observations"][0]["record_index"] == 2
+    assert detail["observation_total"] == 2
+    assert len(workbench.geometry(arrival)["flight"]["features"]) == 3
+
+    with pytest.raises(RuntimeError, match="事务失败"):
+        workbench.update_stand(arrival, "invalid")
+    assert workbench.filtered_keys(**criteria)["count"] == 2
+    workbench.update_stand(arrival, "009")
+    assert workbench.filtered_keys(**criteria)["flight_keys"] == [departure]
+    assert workbench.detail(arrival)["fields"]["arr_stand_position"] == "009"
+    assert workbench.detail(departure)["fields"]["dep_stand_position"] is None
+    assert [flight.point_count for flight in store.iterate("arrival", None)] == [2]
+    assert list(store.iterate("arrival", 0)) == []
+
+    with store.connection() as db:
+        assert db.execute(
+            "SELECT arr_stand_position FROM adsb_202406_arr ORDER BY timestamp"
+        ).fetchall() == [("009",), ("009",)]
+    restarted = FlightWorkbench(SmallGraph(), flight_database=store)
+    assert restarted.detail(arrival)["fields"]["arr_stand_position"] == "009"
+
+    graph = SmallGraph().graph
+    graph.add_node("b", pos=(116.001, 40.001))
+    graph.add_edge("a", "b", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
+    editor = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
+    with TestClient(create_app(editor, flight_database=store)) as client:
+        response = client.patch(f"/api/flights/{arrival}/stand", json={"stand_position": None})
+        assert response.status_code == 204
+        assert client.get("/api/flight-selection", params={"stands": ""}).json()["count"] == 2
+        assert client.get(f"/api/flights/{arrival}").json()["fields"]["arr_stand_position"] is None
+
+
+def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    started, release, closing = Event(), Event(), Event()
+    calls = []
+
+    class BlockingMatcher:
+        def __init__(self, _graph, _config):
+            pass
+
+        def map_flight(self, item):
+            calls.append(item.flight_id)
+            started.set()
+            if not release.wait(5):
+                raise RuntimeError("test did not release matcher")
+            return object()
+
+    monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", BlockingMatcher)
+    workbench = FlightWorkbench(SmallGraph(), [flight("active"), flight("next"), flight("queued")])
+    active, following, queued = workbench.flights
+    workbench.submit([active, following])
+    workbench.submit([queued])
+    shutdown = workbench.match_tasks.executor.shutdown
+
+    def observe_shutdown(**options):
+        closing.set()
+        shutdown(**options)
+
+    monkeypatch.setattr(workbench.match_tasks.executor, "shutdown", observe_shutdown)
+    with ThreadPoolExecutor() as pool:
+        try:
+            assert started.wait(5)
+            stopped = pool.submit(workbench.close)
+            assert closing.wait(5)
+            assert not stopped.done()
+            with pytest.raises(ValueError, match="正在关闭"):
+                workbench.submit([queued])
+        finally:
+            release.set()
+        stopped.result(timeout=5)
+
+    assert calls == ["active"]
+    assert [workbench.results[key].status for key in workbench.flights] == [
+        "success", "failed", "failed",
+    ]

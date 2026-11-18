@@ -24,7 +24,8 @@ data/Geojson
 
 outputs/
 
-# Local databases
+# Local databases and configuration
+/config.local.toml
 *.duckdb
 *.duckdb.wal
 .duckdb_temp/

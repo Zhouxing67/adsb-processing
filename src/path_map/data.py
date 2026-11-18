@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import csv
+from collections.abc import Iterator
 from enum import Enum
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-import pandas as pd
+from flight import Flights
+from flight.models import REQUIRED_FLIGHT_COLUMNS, utc_timestamp
 
-from adsb import Flights
+IDENTIFIER_COLUMNS = frozenset({"flight_id", "dep_stand_position", "arr_stand_position"})
 
 
 class MovementType(str, Enum):
@@ -34,18 +38,40 @@ def load_data(
         raise ValueError(f"Unknown input timezone: {input_timezone}") from error
 
     movement_type = MovementType(movement_type)
-    frame = pd.read_csv(path)
-    if "timestamp" not in frame:
-        raise ValueError(f"ADS-B input is missing timestamp column: {path}")
-    try:
-        normalized = []
-        for value in frame["timestamp"]:
-            timestamp = pd.Timestamp(value)
-            if timestamp.tzinfo is None:
-                timestamp = timestamp.tz_localize(timezone)
-            normalized.append(timestamp.tz_convert("UTC"))
-        frame["timestamp"] = pd.to_datetime(normalized, utc=True)
-    except (TypeError, ValueError) as error:
-        raise ValueError(f"ADS-B input contains invalid timestamps: {path}") from error
-    frame["movement_type"] = movement_type.value
-    return Flights(frame)
+    rows = []
+    for row in _read_csv_records(path):
+        try:
+            row["timestamp"] = utc_timestamp(row["timestamp"], timezone)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"ADS-B input contains invalid timestamps: {path}") from error
+        row["movement_type"] = movement_type.value
+        rows.append(row)
+    return Flights(rows)
+
+
+def _read_csv_records(path: Path) -> Iterator[dict[str, Any]]:
+    with path.open(encoding="utf-8-sig", newline="") as stream:
+        reader = csv.DictReader(stream)
+        columns = reader.fieldnames or []
+        missing = REQUIRED_FLIGHT_COLUMNS.difference(columns)
+        if missing:
+            raise ValueError(f"ADS-B input is missing required columns: {sorted(missing)}")
+        rows = list(reader)
+    if any(None in row for row in rows):
+        raise ValueError(f"ADS-B input contains a row with too many fields: {path}")
+    for name in columns:
+        present = [row[name] for row in rows if row[name] not in (None, "")]
+        numeric = name.lower() not in IDENTIFIER_COLUMNS | {"timestamp"} and present
+        converter = str
+        if numeric:
+            for candidate in (int, float):
+                try:
+                    for value in present:
+                        candidate(value)
+                except ValueError:
+                    continue
+                converter = candidate
+                break
+        for row in rows:
+            row[name] = None if row[name] in (None, "") else converter(row[name])
+    yield from rows
