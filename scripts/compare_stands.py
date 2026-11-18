@@ -54,6 +54,7 @@ def main() -> None:
     print(f"OSM 唯一停机位数量：{len(osm_stands)}")
     print(f"双方共有停机位数量：{len(common)}")
     print(f"仅 ADS-B 存在：{len(adsb_only)}")
+    print(adsb_only)
     print(f"仅 OSM 存在：{len(osm_only)}")
 
     if adsb_stands:

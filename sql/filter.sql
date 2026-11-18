@@ -20,7 +20,7 @@ FROM adsb_202406;
 --- km/h转节 ---
 UPDATE adsb_202406
 SET groundspeed = groundspeed * 0.54
-WHERE 1 = 1;
+WHERE TRUE;
 
 
 --- 按照速度过滤非场面数据 ---
@@ -53,11 +53,11 @@ WHERE org_name = '北京首都';
 
 UPDATE adsb_202406_dep
 SET flight_id = number || '_' || STRFTIME(actual_dep, '%Y%m%d%H%M%S')
-WHERE 1 = 1;
+WHERE TRUE;
 
 UPDATE adsb_202406_arr
 SET flight_id = number || '_' || STRFTIME(actual_arr, '%Y%m%d%H%M%S')
-WHERE 1 = 1;
+WHERE TRUE;
 
 --- 统计单航班的数据点 ---
 SELECT COUNT(*) FILTER (WHERE sample_num < 15) / COUNT(*) AS less_15,
@@ -79,15 +79,21 @@ FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_arr);
 SELECT COUNT(*) * 0.65
 FROM (SELECT DISTINCT flight_id FROM main.adsb_202406_dep);
 
-SELECT dep_stand_position AS stand
-FROM main.adsb_202406_dep
-WHERE dep_stand_position IS NOT NULL
-GROUP BY dep_stand_position
-UNION
-SELECT arr_stand_position AS stand
-FROM adsb_202406_arr
-WHERE arr_stand_position IS NOT NULL
-GROUP BY arr_stand_position;
+WITH have_stand_flight AS (SELECT flight_id, COUNT(*) AS fligt_points
+                           FROM main.adsb_202406_dep
+                           WHERE dep_stand_position IS NOT NULL
+                           GROUP BY flight_id
+                           HAVING fligt_points > 15
+                           UNION
+                           SELECT flight_id, COUNT(*) AS flight_points
+                           FROM adsb_202406_arr
+                           WHERE arr_stand_position IS NOT NULL
+                           GROUP BY flight_id
+                           HAVING flight_points > 15)
+
+SELECT COUNT(*) AS sum_m
+FROM have_stand_flight;
+; --19165
 
 
 SELECT COUNT(*)
@@ -107,5 +113,38 @@ SELECT flight_id AS stand, COUNT(*) AS points_num
 FROM adsb_202406_arr
 WHERE arr_stand_position IS NULL
 GROUP BY flight_id
-HAVING points_num > 15;
+HAVING points_num > 15; --4245
 
+WITH all_flights AS (SELECT flight_id, COUNT(*) AS flight_points
+                     FROM adsb_202406_dep
+                     WHERE dep_stand_position IS NOT NULL
+                       AND dep_stand_position IN ('952L', '14', '504', '506', '951L', '952R')
+                     GROUP BY flight_id
+                     HAVING flight_points > 30
+
+                     UNION ALL
+
+                     SELECT adsb_202406_arr.flight_id, COUNT(*) AS flight_points
+                     FROM adsb_202406_arr
+                     WHERE arr_stand_position IS NOT NULL
+                       AND arr_stand_position IN ('952L', '14', '504', '506', '951L', '952R')
+                     GROUP BY flight_id
+                     HAVING flight_points > 30)
+
+SELECT COUNT(*)
+FROM all_flights; ---166
+
+WITH not_stand_flights AS (SELECT DISTINCT number, flight_id, COUNT(*) OVER (PARTITION BY flight_id) AS adsb_points
+                           FROM adsb_202406_dep
+                           WHERE dep_stand_position IS NULL
+                           UNION
+                           SELECT DISTINCT adsb_202406_arr.number, adsb_202406_arr.flight_id,
+                                           COUNT(*) OVER (PARTITION BY adsb_202406_arr.flight_id) AS adsb_points
+                           FROM adsb_202406_arr
+                           WHERE arr_stand_position IS NULL)
+
+SELECT * from not_stand_flights where adsb_points > 30;
+
+SELECT * FROM adsb_202406 WHERE number = 'CA1579' and actual_dep = '2024-06-14 19:58:00';
+
+SELECT current_database(), current_schema();
