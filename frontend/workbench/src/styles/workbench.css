@@ -774,7 +774,7 @@ body.read-only:not(.flight-mode):has(#details:not(.hidden)) .workspace {
   overflow: hidden;
 }
 
-.flight-mode #undo,.flight-mode #save,.flight-mode #finish,.flight-mode #flights-toggle {
+.flight-mode #undo,.flight-mode #save,.flight-mode #finish {
   display: none;
 }
 
@@ -3607,4 +3607,194 @@ body.unified-workbench.hide-left-rail .workspace {
   background: #f6f8fb;
   border-color: transparent;
   cursor: default;
+}
+
+/* Stand and date filters share the flight sheet toolbar's control sizing. */
+.flight-extra-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sheet-toolbar-gap);
+}
+
+#flight-stands,
+.flight-date-filter {
+  position: relative;
+}
+
+#flight-query-host #flight-stands summary,
+#flight-query-host .flight-date-trigger {
+  box-sizing: border-box;
+  height: var(--sheet-control-height);
+  min-width: 88px;
+  padding: 0 9px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--hairline-color);
+  border-radius: 5px;
+  background: var(--surface-raised);
+  color: var(--ink);
+  font-size: var(--font-ui-small);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+#flight-query-host #flight-stands summary {
+  list-style: none;
+}
+
+#flight-stands summary::-webkit-details-marker {
+  display: none;
+}
+
+#flight-stands summary::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  border-right: 1px solid currentColor;
+  border-bottom: 1px solid currentColor;
+  transform: rotate(45deg) translateY(-1px);
+  color: var(--muted);
+}
+
+#flight-stands[open] summary::after {
+  transform: rotate(225deg) translateY(-1px);
+}
+
+#flight-query-host #flight-stands summary:hover,
+#flight-query-host #flight-stands[open] summary,
+#flight-query-host .flight-date-trigger:hover {
+  border-color: var(--selection-accent);
+}
+
+#flight-stands summary:focus-visible,
+.flight-date-trigger:focus-visible {
+  outline: 2px solid var(--selection-accent);
+  outline-offset: 2px;
+}
+
+#flight-query-host .flight-date-trigger {
+  min-width: 112px;
+  color: var(--muted);
+}
+
+#flight-query-host .flight-date-trigger.has-date {
+  color: var(--ink);
+}
+
+.flight-date-trigger svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+#flight-query-host .flight-date-filter:not(.flight-date-native) input {
+  position: absolute;
+  inset: 0;
+  box-sizing: border-box;
+  width: 100%;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.flight-date-native .flight-date-trigger {
+  display: none !important;
+}
+
+.stand-options-panel {
+  position: absolute;
+  top: calc(100% + 4px);
+  left: 0;
+  z-index: 10;
+  width: 172px;
+  padding: 6px;
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline-color);
+  border-radius: 6px;
+  box-shadow: 0 4px 12px #172b4d26;
+}
+
+#flight-stand-search {
+  box-sizing: border-box;
+  width: 100%;
+}
+
+#flight-stand-options {
+  max-height: 180px;
+  margin-top: 4px;
+  overflow-y: auto;
+  color: var(--muted);
+  font-size: var(--font-ui-small);
+}
+
+#flight-stand-options label {
+  display: flex;
+  flex-direction: row-reverse;
+  align-items: center;
+  justify-content: space-between;
+  min-height: 27px;
+  padding: 0 7px;
+  border-radius: 4px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+#flight-stand-options label:hover {
+  background: var(--surface-rail);
+}
+
+#flight-stand-options label:has(input:checked) {
+  color: var(--selection-accent);
+  background: var(--surface-selected);
+}
+
+#flight-stand-options label:has(input:focus-visible) {
+  outline: 1px solid var(--selection-accent);
+  outline-offset: -1px;
+}
+
+#flight-query-host #flight-stand-options input {
+  appearance: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+}
+
+#flight-stand-options input:checked::after {
+  content: "";
+  width: 4px;
+  height: 8px;
+  border: solid var(--selection-accent);
+  border-width: 0 1.5px 1.5px 0;
+  transform: translateY(-1px) rotate(45deg);
+}
+
+.stand-cell > button {
+  margin-left: 6px;
+}
+
+.stand-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-width: 145px;
+}
+
+.stand-editor input {
+  width: 76px;
+}
+
+.stand-editor .field-error {
+  flex-basis: 100%;
+  white-space: normal;
 }

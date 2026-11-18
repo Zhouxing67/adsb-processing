@@ -8,20 +8,22 @@ const iconPaths={
  'topology-toggle':['M8 6h8M6 8v8m12-8v8M8 18h8','M3 3h5v5H3zM16 3h5v5h-5zM3 16h5v5H3zM16 16h5v5h-5z'],
  left:['M3 4h18v16H3z','M9 4v16'],right:['M3 4h18v16H3z','M15 4v16']};
 function studioIcon(name){return React.createElement('svg',{width:18,height:18,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.5,strokeLinecap:'round',strokeLinejoin:'round','aria-hidden':true},...(iconPaths[name]||[]).map((d,i)=>React.createElement('path',{key:i,d})));}
+const flightMode = document.body.classList.contains('flight-mode');
 lifecycle.own(initializeMapState());
 function mountOwned(element,content){const root=createRoot(element);root.render(content);lifecycle.own(()=>root.unmount());}
 const h=React.createElement, old=document.querySelector('.top-actions');
 const root=document.createElement('div');root.className='react-actions';old.before(root);
 const nav=document.createElement('div');document.querySelector('.dock-title').after(nav);
 const mapToolsRoot=document.createElement('div');mapToolsRoot.className='map-tools';document.querySelector('#map-view').append(mapToolsRoot);const mapToolsMount=document.createElement('div');mapToolsRoot.append(mapToolsMount);mountOwned(mapToolsMount,h(MapToolbar,{mapTools:true}));
-mountOwned(root,h(MapToolbar));mountOwned(nav,h(MapToolbar,{dock:true}));
+mountOwned(root,h(MapToolbar));
+if (!flightMode) mountOwned(nav,h(MapToolbar,{dock:true}));
 // Keep legacy actions available if the module fails to load.
 document.body.classList.add('react-ready');
 
 
 
 const inspector=document.createElement('aside');inspector.className='studio-inspector';document.querySelector('.workspace').after(inspector);
-function Inspector(){React.useLayoutEffect(()=>{movePanels();organizeFlightPanels()},[]);const state=useMapState();const counts=`${state.nodeCount} 节点 · ${state.edgeCount} 边 · ${state.flightCount} 航班`;return h(ConfigProvider,{theme:{token:{colorPrimary:'#2563eb',borderRadius:4,fontSize:13}}},h('div',{className:'inspector-inner'},h('h1',null,'机场地面网络'),h('div',{className:'studio-metrics'},counts.split(' · ').map((c,i)=>h('div',{key:i},h('strong',null,c.split(' ')[0]),h('span',null,c.split(' ').slice(1).join(' '))))),h('section',null,h('h3',null,'图层与底图'),h('div',{id:'studio-layers'})),h('section',null,h('h3',null,'地图图例'),h('div',{id:'studio-legend'})),h('section',{className:'inspector-empty'},h('div',{className:'selection-symbol'},'⌖'),h('h3',null,'选择一个图要素'),null)))}
+function Inspector(){React.useLayoutEffect(()=>{movePanels();if(flightMode)organizeFlightPanels()},[]);const state=useMapState();const counts=`${state.nodeCount} 节点 · ${state.edgeCount} 边${flightMode ? ` · ${state.flightCount} 航班` : ""}`;return h(ConfigProvider,{theme:{token:{colorPrimary:'#2563eb',borderRadius:4,fontSize:13}}},h('div',{className:'inspector-inner'},h('h1',null,'机场地面网络'),h('div',{className:'studio-metrics'},counts.split(' · ').map((c,i)=>h('div',{key:i},h('strong',null,c.split(' ')[0]),h('span',null,c.split(' ').slice(1).join(' '))))),h('section',null,h('h3',null,'图层与底图'),h('div',{id:'studio-layers'})),h('section',null,h('h3',null,'地图图例'),h('div',{id:'studio-legend'})),h('section',{className:'inspector-empty'},h('div',{className:'selection-symbol'},'⌖'),h('h3',null,'选择一个图要素'),null)))}
 mountOwned(inspector,h(Inspector));
 const movePanels=()=>{const a=document.querySelector('#studio-layers'),b=document.querySelector('#studio-legend');if(!a||!b)throw new Error('Inspector slots are not mounted');a.append(document.querySelector('#layer-control-slot'));b.append(document.querySelector('.legend'));};
 // Shared rail sizing: pointer + keyboard, persisted per browser.
@@ -92,7 +94,7 @@ function compactFlightControls(){
  document.querySelector('.point-filter>span').textContent='点数';
  document.querySelector('#flight-min-points').setAttribute('aria-label','最小观测点数');
 }
-compactFlightControls();
+if(flightMode)compactFlightControls();
 
 const headerBar=document.querySelector('.topbar');
 function addRailToggle(side){
@@ -104,17 +106,20 @@ function addRailToggle(side){
 }
 addRailToggle('left');addRailToggle('right');
 
-const queryHost=document.querySelector('#flight-query-host');queryHost.prepend(document.querySelector('.flight-query'));
-const resetButton=document.querySelector('.filter-reset');if(resetButton)queryHost.prepend(resetButton);
-document.querySelector('.flight-sidebar-header h2').textContent='地图展示';
 for(const selector of ['#search-panel','#topology-panel'])document.querySelector('#map-view').append(document.querySelector(selector));
 
-const filterButton=document.createElement('button');filterButton.className='secondary-button flight-filter-submit';filterButton.textContent='过滤';filterButton.onclick=()=>window.dispatchEvent(new Event('submit-flight-filters'));
-const filterActions=document.querySelector('#match-selected').parentElement;filterActions.prepend(filterButton);if(resetButton)filterActions.append(resetButton);
+if (flightMode) {
+ const queryHost=document.querySelector('#flight-query-host');queryHost.prepend(document.querySelector('.flight-query'));
+ const resetButton=document.querySelector('.filter-reset');if(resetButton)queryHost.prepend(resetButton);
+ document.querySelector('.flight-sidebar-header h2').textContent='地图展示';
+
+ const filterButton=document.createElement('button');filterButton.className='secondary-button flight-filter-submit';filterButton.textContent='过滤';filterButton.onclick=()=>window.dispatchEvent(new Event('submit-flight-filters'));
+ const filterActions=document.querySelector('#match-selected').parentElement;filterActions.prepend(filterButton);if(resetButton)filterActions.append(resetButton);
+}
 
 // A single rail owns layout, resizing and visibility; only its content changes.
 const leftRail=document.createElement('aside');leftRail.id='left-rail';leftRail.setAttribute('aria-label','左侧栏');
-const editorTools=document.querySelector('.tool-dock');editorTools.before(leftRail);
-leftRail.append(editorTools,document.querySelector('#flights-panel'));
+const editorTools=document.querySelector('.tool-dock');editorTools.replaceWith(leftRail);
+leftRail.append(flightMode ? document.querySelector('#flights-panel') : editorTools);
 
 lifecycle.own(()=>{railHandles.forEach(({handle})=>handle.remove());document.body.classList.remove("sidebar-resizing");});

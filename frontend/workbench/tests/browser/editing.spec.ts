@@ -1,6 +1,12 @@
 import { test, expect } from '@playwright/test';
 test('property edit, undo, sidebar visibility and reload', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', request => requests.push(new URL(request.url()).pathname));
   await page.goto('/');
+  await expect(page.getByRole('button', { name: '编辑图', exact: true })).toBeVisible();
+  await expect(page.locator('#observations-tab')).toHaveCount(0);
+  await expect(page.locator('#flight-table-root')).toHaveCount(0);
+  expect(requests).not.toContain('/api/flights');
   await page.getByRole('button', { name: '编辑图', exact: true }).click();
   await page.getByRole('button', { name: '搜索', exact: true }).click();
   await page.locator('#search-stand-ref').fill('A01');

@@ -12,7 +12,6 @@
     <div class="top-actions">
       <button id="search-toggle" class="text-button"><span>⌕</span> 搜索</button>
       <button id="topology-toggle" class="text-button"><span>◇</span> 拓扑检查</button>
-      <button id="flights-toggle" class="text-button"><span>✈</span> 全部航班</button>
       <button id="undo" class="text-button" disabled><span>↶</span> 撤销</button>
       <button id="save" class="save-button"><span>✓</span> 保存</button>
       <button id="finish" class="finish-button hidden"><span>→</span> 完成</button>
@@ -30,7 +29,7 @@
     <button class="tool danger" data-mode="delete"><span>×</span><em>删除 / 简化</em></button>
   </nav>
   <main class="workspace">
-    <nav class="main-tabs" aria-label="航班主视图"><button id="map-tab" class="active">地图</button><button id="observations-tab">观测记录</button></nav>
+    <nav class="main-tabs hidden" aria-label="航班主视图"><button id="map-tab" class="active">地图</button><button id="observations-tab">观测记录</button></nav>
     <section id="map-view" class="main-view"><div id="map" aria-label="机场工作台地图"></div></section>
     <section id="observations-view" class="main-view observations-view hidden">
       <header class="observations-header"><div><small>当前查看航班</small><h2 id="observations-title">尚未选择航班</h2><p id="observations-summary" class="field-note"></p></div><div><button id="clear-observation-highlight" class="secondary-button" disabled>清除地图定位点</button></div></header>
@@ -63,6 +62,35 @@
       <div class="flight-query">
         <input id="flight-search" placeholder="搜索航班号或 flight_id，按 Enter 应用">
         <div class="flight-filters"><select id="flight-movement"><option value="">全部进出港</option><option value="arrival">进港</option><option value="departure">离港</option><option value="unknown">未知</option></select><select id="flight-status"><option value="">全部状态</option><option value="unmatched">未匹配</option><option value="queued">排队中</option><option value="matching">匹配中</option><option value="success">成功</option><option value="failed">失败</option><option value="stale">已失效</option></select></div>
+        <div class="flight-extra-filters">
+          <details id="flight-stands">
+            <summary class="secondary-button">机位</summary>
+            <div class="stand-options-panel">
+              <input id="flight-stand-search" type="search" placeholder="搜索机位" aria-label="搜索机位">
+              <div id="flight-stand-options" role="group" aria-label="机位选项"></div>
+            </div>
+          </details>
+          <div class="flight-date-filter">
+            <button type="button" class="secondary-button flight-date-trigger" data-placeholder="起始日期">
+              <span>起始日期</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/>
+                  <path d="M5 2v3m6-3v3M3 7h10"/>
+                </svg>
+            </button>
+            <input id="flight-start-date" type="date" aria-hidden="true" tabindex="-1">
+          </div>
+          <div class="flight-date-filter">
+            <button type="button" class="secondary-button flight-date-trigger" data-placeholder="终止日期">
+              <span>终止日期</span>
+              <svg viewBox="0 0 16 16" aria-hidden="true" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="2.5" y="3.5" width="11" height="10" rx="1.5"/>
+                  <path d="M5 2v3m6-3v3M3 7h10"/>
+                </svg>
+            </button>
+            <input id="flight-end-date" type="date" aria-hidden="true" tabindex="-1">
+          </div>
+        </div>
         <div class="point-filter"><span>观测点数</span><input id="flight-min-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最小观测点数"><span>～</span><input id="flight-max-points" type="number" min="0" step="1" inputmode="numeric" aria-label="最大观测点数"><button id="apply-point-filter" class="secondary-button">应用</button><button id="reset-point-filter" class="text-button">重置点数</button></div>
         <p id="flight-query-error" class="field-error hidden" role="alert"></p>
       </div>

@@ -1,6 +1,6 @@
 import { applicationLifecycle as lifecycle } from './lifecycle.js';
 import { map } from './map-controller.js';
-import { catalogueItems, matchFor, matchSelection, mapSelection, persistState, renderSelected, renderCatalogue, showDetail, toggleMapFlight, focusFlight, switchMainTab, navigationState, datasetMaxPoints, pointFilterDraft, submitFlightFilters } from './flight-controller.js';
+import { displayTimezone, resetExtraFilters, saveStand, catalogueItems, matchFor, matchSelection, mapSelection, persistState, renderSelected, renderCatalogue, showDetail, toggleMapFlight, focusFlight, switchMainTab, navigationState, datasetMaxPoints, pointFilterDraft, submitFlightFilters } from './flight-controller.js';
 // Persistent workspace containers. React owns the flight table subtree.
 const queryHost=document.createElement('section');queryHost.id='flight-query-host';
 const flightSheet=document.createElement('section');flightSheet.id='flight-sheet';flightSheet.className='main-view hidden';
@@ -14,8 +14,10 @@ function renderFlightSheet(){
  if(typeof syncBatchControls==='function'&&typeof pageCheckbox!=='undefined')syncBatchControls();
 }
 window.workbenchFlights={
+ timezone:()=>displayTimezone,
  snapshot:()=>catalogueItems.map(item=>({...item,result:matchFor(item),selected:matchSelection.has(item.flight_key),onMap:mapSelection.has(item.flight_key)})),
  select:(key,checked)=>{if(checked)matchSelection.add(key);else matchSelection.delete(key);persistState();renderSelected();renderCatalogue()},
+ saveStand,
  detail:key=>showDetail(key),
  toggleMap:key=>{const item=catalogueItems.find(item=>item.flight_key===key);if(item)toggleMapFlight(item)},
  focus:key=>focusFlight(key),
@@ -86,7 +88,7 @@ renderFlightSheet();
 
 // Filter edits remain a draft until explicitly submitted.
 for(const id of ['flight-search','flight-movement','flight-status','flight-min-points','flight-max-points']){const element=document.getElementById(id);element.onchange=null;element.onkeydown=null;}
-resetFilters.onclick=()=>{document.querySelector('#flight-search').value='';document.querySelector('#flight-movement').value='';document.querySelector('#flight-status').value='';document.querySelector('#flight-min-points').value=0;document.querySelector('#flight-max-points').value=datasetMaxPoints;pointFilterDraft.edit()};
+resetFilters.onclick=()=>{resetExtraFilters();document.querySelector('#flight-search').value='';document.querySelector('#flight-movement').value='';document.querySelector('#flight-status').value='';document.querySelector('#flight-min-points').value=0;document.querySelector('#flight-max-points').value=datasetMaxPoints;pointFilterDraft.edit()};
 
 lifecycle.listen(window,'submit-flight-filters',submitFlightFilters);
 

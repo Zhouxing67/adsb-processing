@@ -27,6 +27,7 @@ const matchSelection = new Set(), mapSelection = new Map(), geometries = new Map
 const detailState = new Map();
 const navigationState={tab:"map"};
 let currentDetailKey=null,observationHighlight=null,detailRequest=0;
+let displayTimezone = "UTC";
 let catalogueItems = [], cataloguePage = 1, cataloguePages = 0, catalogueRequest = 0;
 let catalogueAbort = null, pollTimer = null, selectionVersion = 0;
 let appliedMovement = "", appliedStatus = "";
@@ -39,8 +40,95 @@ function showFlightError(message) { const node=document.querySelector("#flight-e
 function showQueryError(message){const node=document.querySelector("#flight-query-error");node.textContent=message||"";node.classList.toggle("hidden",!message);}
 function showPageError(message){const node=document.querySelector("#flight-page-error");node.textContent=message||"";node.classList.toggle("hidden",!message);}
 function savedState(){try{return JSON.parse(sessionStorage.getItem(storageKey)||"{}");}catch{return {};}}
-function persistState(){const filters={q:activeSearch,movement:appliedMovement,status:appliedStatus,minPoints:appliedMinPoints,maxPoints:appliedMaxPoints,page:cataloguePage};const displayed=[...mapSelection].map(([key,value])=>({key,slot:value.slot,label:value.label,trajectory:value.trajectory,path:value.path}));sessionStorage.setItem(storageKey,JSON.stringify({filters,displayed,matchSelection:[...matchSelection]}));}
-function restoreState(){const saved=savedState();restoredFilters=saved.filters||{};activeSearch=String(restoredFilters.q||"").trim();document.querySelector("#flight-search").value=activeSearch;document.querySelector("#flight-movement").value=restoredFilters.movement||"";document.querySelector("#flight-status").value=restoredFilters.status||"";appliedMovement=restoredFilters.movement||"";appliedStatus=restoredFilters.status||"";const legacy=saved.displayed||saved.selected||[];legacy.forEach(item=>{if(Number.isInteger(item.slot)&&item.slot>=0&&item.slot<10)mapSelection.set(item.key,{slot:item.slot,label:item.label||item.key,trajectory:item.trajectory!==false,path:item.path!==false,state:"loading",error:null});});(saved.matchSelection||[]).forEach(key=>matchSelection.add(key));}
+const standPicker = document.querySelector("#flight-stands");
+const standSearch = document.querySelector("#flight-stand-search");
+const standOptionsNode = document.querySelector("#flight-stand-options");
+const startDateInput = document.querySelector("#flight-start-date");
+const endDateInput = document.querySelector("#flight-end-date");
+let standOptions = [], draftStands = new Set();
+let appliedExtra = { stands: [], start_date: "", end_date: "" };
+
+function renderStandOptions() {
+  const search = standSearch.value.trim().toLowerCase();
+  const values = new Set(["", ...standOptions, ...draftStands]);
+  standPicker.querySelector("summary").textContent = draftStands.size ? `机位（${draftStands.size}）` : "机位";
+  const options = [];
+  for (const value of values) {
+    const name = value || "空机位";
+    if (!name.toLowerCase().includes(search)) continue;
+    const label = document.createElement("label");
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = draftStands.has(value);
+    checkbox.onchange = () => {
+      if (checkbox.checked) draftStands.add(value);
+      else draftStands.delete(value);
+      standPicker.querySelector("summary").textContent = draftStands.size ? `机位（${draftStands.size}）` : "机位";
+    };
+    label.append(checkbox, name);
+    options.push(label);
+  }
+  standOptionsNode.replaceChildren(...(options.length ? options : ["无匹配机位"]));
+}
+standSearch.oninput = renderStandOptions;
+lifecycle.listen(document, "click", event => {
+  if (!standPicker.contains(event.target)) standPicker.open = false;
+});
+lifecycle.listen(standPicker, "keydown", event => {
+  if (event.key === "Escape" && standPicker.open) {
+    standPicker.open = false;
+    standPicker.querySelector("summary").focus();
+  }
+});
+const dateFilters = [startDateInput, endDateInput].map(input => {
+  const button = input.previousElementSibling;
+  const caption = button.querySelector("span");
+  const placeholder = button.dataset.placeholder;
+  const refresh = () => {
+    caption.textContent = input.value || placeholder;
+    button.classList.toggle("has-date", Boolean(input.value));
+    button.setAttribute("aria-label", input.value ? `${placeholder} ${input.value}` : placeholder);
+  };
+  if (typeof input.showPicker === "function") {
+    lifecycle.listen(button, "click", () => input.showPicker());
+    lifecycle.listen(input, "input", refresh);
+  } else {
+    input.parentElement.classList.add("flight-date-native");
+    input.removeAttribute("aria-hidden");
+    input.removeAttribute("tabindex");
+    input.setAttribute("aria-label", placeholder);
+  }
+  return refresh;
+});
+function refreshDateFilters() {
+  dateFilters.forEach(refresh => refresh());
+}
+function resetExtraFilters() {
+  draftStands.clear();
+  startDateInput.value = endDateInput.value = standSearch.value = "";
+  refreshDateFilters();
+  standPicker.open = false;
+  renderStandOptions();
+}
+function appendExtraFilters(params) {
+  appliedExtra.stands.forEach(value => params.append("stands", value));
+  if (appliedExtra.start_date) params.set("start_date", appliedExtra.start_date);
+  if (appliedExtra.end_date) params.set("end_date", appliedExtra.end_date);
+}
+async function saveStand(key, value) {
+  const response = await fetch(`/api/flights/${encodeURIComponent(key)}/stand`, {
+    method: "PATCH",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({stand_position: value.trim() || null}),
+  });
+  if (!response.ok) await readResponse(response);
+  const refreshed = await queryCatalogue(cataloguePage);
+  setStatus(refreshed ? "机位已保存" : "机位已保存，列表尚未刷新");
+}
+function persistState(){const filters={...appliedExtra,q:activeSearch,movement:appliedMovement,status:appliedStatus,minPoints:appliedMinPoints,maxPoints:appliedMaxPoints,page:cataloguePage};const displayed=[...mapSelection].map(([key,value])=>({key,slot:value.slot,label:value.label,trajectory:value.trajectory,path:value.path}));sessionStorage.setItem(storageKey,JSON.stringify({filters,displayed,matchSelection:[...matchSelection]}));}
+function restoreState(){const saved=savedState();restoredFilters=saved.filters||{};appliedExtra={
+    stands: restoredFilters.stands || [], start_date: restoredFilters.start_date || "", end_date: restoredFilters.end_date || ""
+  };draftStands=new Set(appliedExtra.stands);startDateInput.value=appliedExtra.start_date;endDateInput.value=appliedExtra.end_date;refreshDateFilters();renderStandOptions();activeSearch=String(restoredFilters.q||"").trim();document.querySelector("#flight-search").value=activeSearch;document.querySelector("#flight-movement").value=restoredFilters.movement||"";document.querySelector("#flight-status").value=restoredFilters.status||"";appliedMovement=restoredFilters.movement||"";appliedStatus=restoredFilters.status||"";const legacy=saved.displayed||saved.selected||[];legacy.forEach(item=>{if(Number.isInteger(item.slot)&&item.slot>=0&&item.slot<10)mapSelection.set(item.key,{slot:item.slot,label:item.label||item.key,trajectory:item.trajectory!==false,path:item.path!==false,state:"loading",error:null});});(saved.matchSelection||[]).forEach(key=>matchSelection.add(key));}
 function nextSlot(){for(let slot=0;slot<10;slot++)if(![...mapSelection.values()].some(item=>item.slot===slot))return slot;return -1;}
 function matchFor(item){return matchStates.get(item.flight_key)||item.match;}
 function geometrySignature(result){return [result.graph_id,result.has_path,result.status==="stale"?"stale":""].join("|");}
@@ -68,7 +156,7 @@ function renderSelected(){window.dispatchEvent(new Event("flight-selection-chang
 function renderCatalogue(){window.dispatchEvent(new Event('flight-catalogue-changed'));}
 async function readCatalogueResponse(response){const text=await response.text();let value;try{value=text?JSON.parse(text):{};}catch{value={detail:text};}if(response.ok)return value;const detail=value.detail;const error=new Error(typeof detail==="object"?(detail.message||`HTTP ${response.status}`):(detail||value.message||`HTTP ${response.status}`));if(detail?.code==="page_out_of_range")error.totalPages=detail.total_pages;throw error;}
 function updatePointControls(){const disabled=datasetMaxPoints===0;["#flight-min-points","#flight-max-points","#apply-point-filter","#reset-point-filter"].forEach(selector=>document.querySelector(selector).disabled=disabled);document.querySelector("#flight-min-points").max=datasetMaxPoints;document.querySelector("#flight-max-points").max=datasetMaxPoints;}
-async function performCatalogueQuery(targetPage,{recoverPage=true,background=false}={}){const requestId=++catalogueRequest;catalogueAbort?.abort();catalogueAbort=new AbortController();const params=new URLSearchParams({page:targetPage,page_size:15,min_points:appliedMinPoints});if(appliedMaxPoints!==null)params.set("max_points",appliedMaxPoints);const movement=appliedMovement,statusFilter=appliedStatus;if(activeSearch)params.set("q",activeSearch);if(movement)params.set("movement_type",movement);if(statusFilter)params.set("match_status",statusFilter);try{const value=await readCatalogueResponse(await fetch(`/api/flights?${params}`,{signal:catalogueAbort.signal}));if(requestId!==catalogueRequest)return false;catalogueItems=value.items;cataloguePages=value.total_pages;cataloguePage=value.page||1;datasetMaxPoints=value.dataset_max_points;appliedMinPoints=value.min_points;appliedMaxPoints=value.max_points;if(pointFilterDraft.shouldSync()){document.querySelector("#flight-min-points").value=appliedMinPoints;document.querySelector("#flight-max-points").value=appliedMaxPoints;}updatePointControls();document.querySelector("#flight-time-note").textContent=`输入无时区时间按 ${value.time.input_semantics} 解释；展示时区 ${value.time.display_timezone}。成功表示算法返回有效路径，不代表每个观测点均贴合。`;const empty=value.total===0;document.querySelector("#flight-page").textContent=empty?"无符合条件的航班":`第 ${value.page} / ${cataloguePages} 页（${value.total} 条）`;document.querySelector("#flight-prev").disabled=empty||value.page<=1;document.querySelector("#flight-next").disabled=empty||value.page>=cataloguePages;document.querySelector("#flight-page-input").disabled=empty;document.querySelector("#flight-page-jump").disabled=empty;document.querySelector("#flight-page-input").value=empty?"":value.page;value.items.forEach(item=>matchStates.set(item.flight_key,item.match));renderCatalogue();persistState();showFlightError("");showPageError("");return true;}catch(error){if(error.name==="AbortError")return false;if(recoverPage&&Number.isInteger(error.totalPages)){return performCatalogueQuery(Math.max(1,error.totalPages),{recoverPage:false,background});}showFlightError(`目录更新失败：${error.message}`);return false;}}
+async function performCatalogueQuery(targetPage,{recoverPage=true,background=false}={}){const requestId=++catalogueRequest;catalogueAbort?.abort();catalogueAbort=new AbortController();const params=new URLSearchParams({page:targetPage,page_size:15,min_points:appliedMinPoints});if(appliedMaxPoints!==null)params.set("max_points",appliedMaxPoints);const movement=appliedMovement,statusFilter=appliedStatus;if(activeSearch)params.set("q",activeSearch);if(movement)params.set("movement_type",movement);if(statusFilter)params.set("match_status",statusFilter);appendExtraFilters(params);try{const value=await readCatalogueResponse(await fetch(`/api/flights?${params}`,{signal:catalogueAbort.signal}));if(requestId!==catalogueRequest)return false;catalogueItems=value.items;displayTimezone=value.time.display_timezone;const options=value.stand_options||[];if(JSON.stringify(options)!==JSON.stringify(standOptions)){standOptions=options;renderStandOptions();}cataloguePages=value.total_pages;cataloguePage=value.page||1;datasetMaxPoints=value.dataset_max_points;appliedMinPoints=value.min_points;appliedMaxPoints=value.max_points;if(pointFilterDraft.shouldSync()){document.querySelector("#flight-min-points").value=appliedMinPoints;document.querySelector("#flight-max-points").value=appliedMaxPoints;}updatePointControls();document.querySelector("#flight-time-note").textContent=`输入无时区时间按 ${value.time.input_semantics} 解释；展示时区 ${value.time.display_timezone}。成功表示算法返回有效路径，不代表每个观测点均贴合。`;const empty=value.total===0;document.querySelector("#flight-page").textContent=empty?"无符合条件的航班":`第 ${value.page} / ${cataloguePages} 页（${value.total} 条）`;document.querySelector("#flight-prev").disabled=empty||value.page<=1;document.querySelector("#flight-next").disabled=empty||value.page>=cataloguePages;document.querySelector("#flight-page-input").disabled=empty;document.querySelector("#flight-page-jump").disabled=empty;document.querySelector("#flight-page-input").value=empty?"":value.page;value.items.forEach(item=>matchStates.set(item.flight_key,item.match));renderCatalogue();persistState();showFlightError("");showPageError("");return true;}catch(error){if(error.name==="AbortError")return false;if(recoverPage&&Number.isInteger(error.totalPages)){return performCatalogueQuery(Math.max(1,error.totalPages),{recoverPage:false,background});}showFlightError(`目录更新失败：${error.message}`);return false;}}
 function queryCatalogue(targetPage=cataloguePage,{background=false}={}){return catalogueCoordinator.run({background,request:()=>performCatalogueQuery(targetPage,{background}),refresh:()=>queryCatalogue(cataloguePage,{background:true})});}
 function parsePointValue(selector,label){const raw=document.querySelector(selector).value.trim();if(!/^\d+$/.test(raw))throw new Error(`${label}必须是非负整数`);const value=Number(raw);if(!Number.isSafeInteger(value))throw new Error(`${label}超出有效范围`);return value;}
 function applyPointFilter(){try{const minimum=parsePointValue("#flight-min-points","最小观测点数"),maximum=parsePointValue("#flight-max-points","最大观测点数");if(minimum>maximum)throw new Error("最小观测点数不得大于最大观测点数");if(maximum>datasetMaxPoints)throw new Error(`最大观测点数不得超过 ${datasetMaxPoints}`);appliedMinPoints=minimum;appliedMaxPoints=maximum;pointFilterDraft.commit();showQueryError("");queryCatalogue(1);}catch(error){showQueryError(error.message);}}
@@ -78,17 +166,24 @@ function switchMainTab(tab){if(window.workbenchNavigation){window.workbenchNavig
 function observationCoordinate(row){const value=name=>row[name]??row[Object.keys(row).find(key=>key.toLowerCase()===name)];const longitude=Number(value("longitude")??value("lon")),latitude=Number(value("latitude")??value("lat"));return Number.isFinite(longitude)&&Number.isFinite(latitude)?[latitude,longitude]:null;}
 function locateObservation(row){const coordinate=observationCoordinate(row);if(!coordinate)return;if(observationHighlight)map.removeLayer(observationHighlight);observationHighlight=L.circleMarker(coordinate,{pane:"selectionPane",radius:9,color:"#111827",weight:3,fillColor:"#facc15",fillOpacity:1}).addTo(map);document.querySelector("#clear-observation-highlight").disabled=false;switchMainTab("map");requestAnimationFrame(()=>{map.invalidateSize();const currentZoom=map.getZoom();map.setView(coordinate,Number.isFinite(currentZoom)?Math.max(currentZoom,18):18);});}
 async function showDetail(key,page,allFields){const requestId=++detailRequest,saved=detailState.get(key)||{page:1,allFields:false,scrollTop:0};const requestedPage=page??saved.page,showAll=allFields??saved.allFields;switchMainTab("observations");try{const value=await readResponse(await fetch(`/api/flights/${encodeURIComponent(key)}?observation_page=${requestedPage}&observation_page_size=100&all_fields=${showAll}`));if(requestId!==detailRequest)return;currentDetailKey=key;detailState.set(key,{page:requestedPage,allFields:showAll,scrollTop:saved.scrollTop});document.querySelector("#observations-title").textContent=value.summary.flight_number||value.summary.flight_id;document.querySelector("#observations-summary").textContent=`${value.summary.flight_id} · ${value.summary.movement_type} · ${STATUS_LABELS[value.match.status]} · ${value.summary.point_count} 点 · ${value.summary.start_time} ～ ${value.summary.end_time}`;const columns=value.observation_columns;const rows=value.observations.map((row,index)=>{const coordinate=observationCoordinate(row);return `<tr>${columns.map(name=>`<td>${escapeHtml(row[name]??"—")}</td>`).join("")}<td><button class="locate-observation secondary-button" data-index="${index}" ${coordinate?"":"disabled"}>在地图中定位</button></td></tr>`;}).join("");const conflicts=Object.entries(value.inconsistent_fields).map(([name,values])=>`<p class="warning">业务字段 ${escapeHtml(name)} 不一致：${escapeHtml(values.join(" / "))}</p>`).join("");const content=document.querySelector("#observations-content");content.innerHTML=`${conflicts}<div class="observation-toolbar"><button id="toggle-observation-fields" class="secondary-button">${showAll?"显示默认字段":"显示全部字段"}</button><span>第 ${value.observation_page||0} / ${value.observation_pages} 页，共 ${value.observation_total} 条</span></div><div class="observation-table-wrap"><table class="observation-table"><thead><tr>${columns.map(name=>`<th>${escapeHtml(name==="record_index"?"序号":name)}</th>`).join("")}<th>操作</th></tr></thead><tbody>${rows}</tbody></table></div><div class="observation-pager"><button id="observation-prev" class="secondary-button" ${value.observation_page<=1?"disabled":""}>上一页</button><button id="observation-next" class="secondary-button" ${value.observation_page>=value.observation_pages?"disabled":""}>下一页</button></div>`;content.querySelector("#toggle-observation-fields").onclick=()=>showDetail(key,1,!showAll);content.querySelector("#observation-prev").onclick=()=>showDetail(key,requestedPage-1,showAll);content.querySelector("#observation-next").onclick=()=>showDetail(key,requestedPage+1,showAll);content.querySelectorAll(".locate-observation").forEach(button=>button.onclick=()=>locateObservation(value.observations[Number(button.dataset.index)]));content.scrollTop=saved.scrollTop;content.onscroll=()=>{const state=detailState.get(key);if(state)state.scrollTop=content.scrollTop;};}catch(error){if(requestId===detailRequest)showFlightError(`详情加载失败：${error.message}`);}}
-async function selectFiltered(){const params=new URLSearchParams({min_points:appliedMinPoints});if(appliedMaxPoints!==null)params.set("max_points",appliedMaxPoints);const movement=appliedMovement,status=appliedStatus;if(activeSearch)params.set("q",activeSearch);if(movement)params.set("movement_type",movement);if(status)params.set("match_status",status);try{const value=await readResponse(await fetch(`/api/flight-selection?${params}`));value.flight_keys.forEach(key=>matchSelection.add(key));persistState();renderCatalogue();renderSelected();setStatus(`已按当前筛选固定选择 ${value.count} 条航班`);}catch(error){setStatus(`选择筛选结果失败：${error.message}`);}}
-async function submitMatches(){const keys=[...matchSelection];if(!keys.length||!window.confirm(`确认提交当前选择的 ${keys.length} 条航班进行匹配？`))return;try{const result=await readResponse(await fetch("/api/matches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({flight_keys:keys})}));if(result.queued_count)trackedTasks.set(result.task_id,new Set(result.queued));setStatus(`请求 ${result.requested_count} 条：实际入队 ${result.queued_count}，跳过 ${result.skipped_count}`);renderProgress();if(result.queued_count)schedulePoll(0);}catch(error){setStatus(`匹配提交失败：${error.message}`);}}
+async function selectFiltered(){const params=new URLSearchParams({min_points:appliedMinPoints});if(appliedMaxPoints!==null)params.set("max_points",appliedMaxPoints);const movement=appliedMovement,status=appliedStatus;if(activeSearch)params.set("q",activeSearch);if(movement)params.set("movement_type",movement);if(status)params.set("match_status",status);appendExtraFilters(params);try{const value=await readResponse(await fetch(`/api/flight-selection?${params}`));value.flight_keys.forEach(key=>matchSelection.add(key));persistState();renderCatalogue();renderSelected();setStatus(`已按当前筛选固定选择 ${value.count} 条航班`);}catch(error){setStatus(`选择筛选结果失败：${error.message}`);}}
+async function submitMatches(){const keys=[...matchSelection];if(!keys.length||!window.confirm(`确认提交当前选择的 ${keys.length} 条航班进行匹配？`))return;try{const result=await readResponse(await fetch("/api/matches",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({flight_keys:keys})}));if(result.queued_count)trackedTasks.set(result.task_id,new Set(result.queued));setStatus(`请求 ${result.requested_count} 条：实际入队 ${result.queued_count}，跳过 ${result.skipped_count}`);if(result.queued_count)schedulePoll(0);}catch(error){setStatus(`匹配提交失败：${error.message}`);}}
 function schedulePoll(delay=1000){clearTimeout(pollTimer);if(!trackedTasks.size)return;pollTimer=setTimeout(pollMatches,delay);}
-function renderProgress(tasks=[]){const node=document.querySelector("#match-progress"),all=tasks.length?tasks:[...trackedTasks].map(([task_id,keys])=>({task_id,total:keys.size,waiting:keys.size,running:0,success:0,failed:0}));if(!all.length){node.classList.add("hidden");return;}const sum=name=>all.reduce((total,task)=>total+(task[name]||0),0);node.classList.remove("hidden");document.querySelector("#match-progress-text").textContent=`总计 ${sum("total")} · 等待 ${sum("waiting")} · 运行 ${sum("running")} · 成功 ${sum("success")} · 失败 ${sum("failed")}`;}
-async function pollMatches(){try{const params=new URLSearchParams();trackedTasks.forEach((_keys,id)=>params.append("task_id",id));const value=await readResponse(await fetch(`/api/matches?${params}`));if(lifecycle.disposed)return;showFlightError("");for(const task of value.tasks){for(const result of task.items){matchStates.set(result.flight_key,result);if(mapSelection.has(result.flight_key)&&needsGeometryRefresh(result.flight_key,result))await loadGeometry(result.flight_key,{resultChanged:true});}if(task.complete)trackedTasks.delete(task.task_id);}renderProgress(value.tasks);renderCatalogue();renderSelected();if(trackedTasks.size)schedulePoll(1000);else queryCatalogue(cataloguePage,{background:true});}catch(error){showFlightError(`结果更新失败：${error.message}`);schedulePoll(2000);}}
+function renderProgress(progress) {
+  const node = document.querySelector("#match-progress");
+  node.classList.toggle("hidden", !progress.total);
+  if (!progress.total) return;
+  const { total, waiting, running, success, failed } = progress;
+  document.querySelector("#match-progress-text").textContent =
+    `总计 ${total} · 等待 ${waiting} · 运行 ${running} · 成功 ${success} · 失败 ${failed}`;
+}
+async function pollMatches(){try{const requested=[...trackedTasks.keys()],params=new URLSearchParams();requested.forEach(id=>params.append("task_id",id));const value=await readResponse(await fetch(`/api/matches?${params}`));if(lifecycle.disposed)return;showFlightError("");for(const task of value.tasks){for(const result of task.items){matchStates.set(result.flight_key,result);if(mapSelection.has(result.flight_key)&&needsGeometryRefresh(result.flight_key,result))await loadGeometry(result.flight_key,{resultChanged:true});}}renderProgress(value.progress);renderCatalogue();renderSelected();if(value.progress.complete){requested.forEach(id=>trackedTasks.delete(id));queryCatalogue(cataloguePage,{background:true});}if(trackedTasks.size)schedulePoll(1000);}catch(error){showFlightError(`结果更新失败：${error.message}`);schedulePoll(2000);}}
 function restoreSelections(){for(const [key,item] of mapSelection){item.requestVersion=selectionVersion+1;loadGeometry(key).catch(()=>{});}renderSelected();}
 
 restoreState();renderSelected();
 document.querySelector("#flight-search").onkeydown=event=>{if(event.key!=="Enter"||event.isComposing||event.keyCode===229)return;activeSearch=event.currentTarget.value.trim();event.currentTarget.value=activeSearch;showQueryError("");queryCatalogue(1);};["#flight-movement","#flight-status"].forEach(selector=>document.querySelector(selector).onchange=()=>queryCatalogue(1));document.querySelector("#flight-prev").onclick=()=>queryCatalogue(cataloguePage-1);document.querySelector("#flight-next").onclick=()=>queryCatalogue(cataloguePage+1);document.querySelector("#flight-page-jump").onclick=jumpToPage;document.querySelector("#flight-page-input").onkeydown=event=>{if(event.key==="Enter")jumpToPage();};document.querySelector("#apply-point-filter").onclick=applyPointFilter;document.querySelector("#reset-point-filter").onclick=resetPointFilter;["#flight-min-points","#flight-max-points"].forEach(selector=>{document.querySelector(selector).oninput=()=>pointFilterDraft.edit();document.querySelector(selector).onkeydown=event=>{if(event.key==="Enter"&&!event.isComposing&&event.keyCode!==229)applyPointFilter();};});document.querySelector("#fit-selected").onclick=fitSelected;document.querySelector("#match-selected").onclick=submitMatches;document.querySelector("#select-page").onclick=()=>{catalogueItems.forEach(item=>matchSelection.add(item.flight_key));persistState();renderCatalogue();renderSelected();};document.querySelector("#select-filtered").onclick=selectFiltered;document.querySelector("#clear-match-selection").onclick=()=>{matchSelection.clear();persistState();renderCatalogue();renderSelected();};document.querySelector("#clear-map-selection").onclick=()=>{[...mapSelection.keys()].forEach(removeSelected);};document.querySelector("#map-tab").onclick=()=>switchMainTab("map");document.querySelector("#observations-tab").onclick=()=>switchMainTab("observations");document.querySelector("#clear-observation-highlight").onclick=()=>{if(observationHighlight)map.removeLayer(observationHighlight);observationHighlight=null;document.querySelector("#clear-observation-highlight").disabled=true;};lifecycle.listen(window,"resize",()=>map.invalidateSize());
 async function validateRestoredSelections(){try{const value=await readResponse(await fetch("/api/flight-selection")),valid=new Set(value.flight_keys);[...matchSelection].forEach(key=>{if(!valid.has(key))matchSelection.delete(key);});[...mapSelection.keys()].forEach(key=>{if(!valid.has(key))mapSelection.delete(key);});persistState();}catch(error){showFlightError(`恢复选择校验失败：${error.message}`);}}
-async function restoreActiveTasks(){try{const value=await readResponse(await fetch("/api/matches")),active=[];for(const task of value.tasks){for(const result of task.items)matchStates.set(result.flight_key,result);if(!task.complete){trackedTasks.set(task.task_id,new Set(task.flight_keys));active.push(task);}}renderProgress(active);if(trackedTasks.size)schedulePoll();}catch(error){showFlightError(`任务状态恢复失败：${error.message}`);}}
+async function restoreActiveTasks(){try{const value=await readResponse(await fetch("/api/matches"));for(const task of value.tasks){for(const result of task.items)matchStates.set(result.flight_key,result);if(!task.complete){trackedTasks.set(task.task_id,new Set(task.flight_keys));}}renderProgress(value.progress);if(trackedTasks.size)schedulePoll();}catch(error){showFlightError(`任务状态恢复失败：${error.message}`);}}
 async function initializeCatalogue(){setCatalogueControlsInitializing(catalogueControlRegions,true);try{const initialized=await queryCatalogue(1);if(!initialized)return;await validateRestoredSelections();await restoreActiveTasks();const savedMin=Number(restoredFilters.minPoints),savedMax=Number(restoredFilters.maxPoints),savedPage=Number(restoredFilters.page);const validSavedRange=Number.isInteger(savedMin)&&Number.isInteger(savedMax)&&savedMin>=0&&savedMin<=savedMax&&savedMax<=datasetMaxPoints;if(validSavedRange){appliedMinPoints=savedMin;appliedMaxPoints=savedMax;}else{appliedMinPoints=0;appliedMaxPoints=datasetMaxPoints;}const targetPage=Number.isInteger(savedPage)&&savedPage>=1?savedPage:1;if(appliedMinPoints!==0||appliedMaxPoints!==datasetMaxPoints||targetPage!==1)await queryCatalogue(targetPage);}finally{setCatalogueControlsInitializing(catalogueControlRegions,false);restoreSelections();}}
 initializeCatalogue();
 
@@ -97,12 +192,15 @@ function submitFlightFilters(){
  const minimum=parsePointValue('#flight-min-points','最小观测点数'),maximum=parsePointValue('#flight-max-points','最大观测点数');
  if(minimum>maximum)throw new Error('最小观测点数不得大于最大观测点数');
  if(maximum>datasetMaxPoints)throw new Error(`最大观测点数不得超过 ${datasetMaxPoints}`);
+ if(startDateInput.value && endDateInput.value && startDateInput.value>endDateInput.value)throw new Error('起始日期不得晚于终止日期');
+ appliedExtra={stands:[...draftStands],start_date:startDateInput.value,end_date:endDateInput.value};
+ standPicker.open=false;
  activeSearch=document.querySelector('#flight-search').value.trim();
  appliedMovement=document.querySelector('#flight-movement').value;appliedStatus=document.querySelector('#flight-status').value;
  appliedMinPoints=minimum;appliedMaxPoints=maximum;pointFilterDraft.commit();showQueryError('');queryCatalogue(1);
  }catch(error){showQueryError(error.message)}
 }
 
-export { catalogueItems, matchFor, matchSelection, mapSelection, persistState, renderSelected, renderCatalogue, showDetail, toggleMapFlight, focusFlight, switchMainTab, navigationState, datasetMaxPoints, pointFilterDraft, submitFlightFilters };
+export { displayTimezone, resetExtraFilters, saveStand, catalogueItems, matchFor, matchSelection, mapSelection, persistState, renderSelected, renderCatalogue, showDetail, toggleMapFlight, focusFlight, switchMainTab, navigationState, datasetMaxPoints, pointFilterDraft, submitFlightFilters };
 
 lifecycle.own(()=>{clearTimeout(pollTimer);catalogueAbort?.abort();catalogueRequest++;detailRequest++;mapSelection.clear();geometries.clear();trackedTasks.clear();});

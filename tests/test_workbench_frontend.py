@@ -488,6 +488,9 @@ def test_invalid_filter_submit_does_not_change_applied_snapshot():
     script = """
 let activeSearch='old',appliedMovement='arrival',appliedStatus='success',appliedMinPoints=0,appliedMaxPoints=50;
 const datasetMaxPoints=100;
+let appliedExtra={stands:['old']};
+const draftStands=new Set(['new']),standPicker={open:true};
+const startDateInput={value:'2024-01-02'},endDateInput={value:'2024-01-01'};
 let queries=0,error='';let valid=false;
 const draft={'#flight-search':{value:'new'},'#flight-movement':{value:'departure'},'#flight-status':{value:'failed'}};
 const document={querySelector:s=>draft[s]};
@@ -499,6 +502,9 @@ function submitFlightFilters(){FUNCTION
 submitFlightFilters();
 if(queries||activeSearch!=='old'||appliedMovement!=='arrival')throw Error('invalid draft changed applied filters');
 valid=true;submitFlightFilters();
+if(queries||appliedExtra.stands[0]!=='old'||!error)throw Error('invalid dates changed applied filters');
+endDateInput.value='2024-01-02';submitFlightFilters();
+if(appliedExtra.stands[0]!=='new'||standPicker.open)throw Error('stand filters not committed');
 if(queries!==1||appliedMovement!=='departure'||appliedStatus!=='failed'||appliedMinPoints!==10)throw Error('valid filters not committed');
 """.replace("FUNCTION", function)
     subprocess.run([node, "-e", script], check=True, capture_output=True, text=True)
