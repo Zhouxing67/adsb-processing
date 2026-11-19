@@ -150,23 +150,20 @@ def real_topology(args: argparse.Namespace, *, projected_lengths: bool) -> None:
     )
 
 
-def load_diagnostic_flights(path):
-    if __package__:
-        from .csv_flights import load_csv_flights
-    else:
-        from csv_flights import load_csv_flights
-    return load_csv_flights(path)
-
-
 def load_observation_arrays(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     import numpy as np
 
     from airport_surface import load_graph
 
+    if __package__:
+        from .csv_flights import read_csv_observations
+    else:
+        from csv_flights import read_csv_observations
+
     airport_graph = load_graph(args.graph)
-    flights = load_diagnostic_flights(args.flights)
-    longitude = np.asarray([row["longitude"] for row in flights.rows], dtype=float)
-    latitude = np.asarray([row["latitude"] for row in flights.rows], dtype=float)
+    rows = list(read_csv_observations(args.flights))
+    longitude = np.asarray([row["longitude"] for row in rows], dtype=float)
+    latitude = np.asarray([row["latitude"] for row in rows], dtype=float)
     return airport_graph, longitude, latitude
 
 
@@ -198,9 +195,13 @@ def full_hmm(args: argparse.Namespace) -> None:
     from airport_surface import load_graph
     from path_map import MapMatchingError, Matcher, match_batch
 
+    if __package__:
+        from .csv_flights import load_csv_flights
+    else:
+        from csv_flights import load_csv_flights
+
     airport_graph = load_graph(args.graph)
-    flights = load_diagnostic_flights(args.flights)
-    selected = list(flights.iterate(limit=args.limit))
+    selected = list(load_csv_flights(args.flights, limit=args.limit))
     def inputs():
         for index, flight in enumerate(selected, start=1):
             print(f"[full-hmm] {index}/{len(selected)} {flight.flight_id} START", flush=True)

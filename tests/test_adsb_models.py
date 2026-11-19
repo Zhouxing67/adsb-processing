@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from flight import Flight, Flights
+from flight import Flight
 
 
 def observations(**overrides) -> pd.DataFrame:
@@ -23,10 +23,10 @@ def test_flight_validates_normalizes_and_sorts_trajectory():
     flight = Flight(source)
 
     assert flight.flight_id == "A"
-    assert [row["timestamp"].isoformat() for row in flight.rows] == [
+    assert [point.timestamp.isoformat() for point in flight.observations] == [
         "2026-01-01T00:00:01+00:00", "2026-01-01T00:00:02+00:00",
     ]
-    assert [row["longitude"] for row in flight.rows] == [116.0, 116.1]
+    assert [point.longitude for point in flight.observations] == [116.0, 116.1]
     source.loc[0, "longitude"] = 0
     assert [row["longitude"] for row in flight.rows] == [116.0, 116.1]
 
@@ -42,11 +42,6 @@ def test_flight_rejects_multiple_ids():
         Flight(observations(flight_id=["A", "B"]))
 
 
-def test_flights_requires_core_columns():
-    with pytest.raises(ValueError, match="required columns"):
-        Flights(observations().drop(columns="timestamp"))
-
-
 @pytest.mark.parametrize(
     ("column", "values"),
     [
@@ -58,23 +53,6 @@ def test_flights_requires_core_columns():
 def test_flight_rejects_invalid_required_values(column, values):
     with pytest.raises(ValueError):
         Flight(observations(**{column: values}))
-
-
-def test_flights_groups_non_contiguous_observations_and_honors_limit():
-    collection = Flights(
-        pd.DataFrame(
-            {
-                "flight_id": ["B", "A", "B", "A"],
-                "timestamp": pd.date_range("2026-01-01", periods=4, freq="1s"),
-                "longitude": [116.0] * 4,
-                "latitude": [40.0] * 4,
-            }
-        )
-    )
-
-    assert [flight.flight_id for flight in collection] == ["A", "B"]
-    assert [flight.flight_id for flight in collection.iterate(limit=1)] == ["A"]
-    assert list(collection.iterate(limit=0)) == []
 
 
 def test_csv_record_loader_preserves_stand_codes_and_normalizes_time(tmp_path):
@@ -90,7 +68,7 @@ def test_csv_record_loader_preserves_stand_codes_and_normalizes_time(tmp_path):
     flight = next(iter(load_csv_flights(source, input_timezone="Asia/Shanghai")))
     assert flight.flight_id == "0001"
     assert [row["dep_stand_position"] for row in flight.rows] == ["007", None]
-    assert [row["altitude"] for row in flight.rows] == [20, 21]
+    assert [point.altitude for point in flight.observations] == [20.0, 21.0]
     assert [row["timestamp"].isoformat() for row in flight.rows] == [
         "2024-06-14T16:05:00+00:00", "2024-06-14T16:06:00+00:00",
     ]

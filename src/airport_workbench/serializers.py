@@ -17,12 +17,10 @@ def flight_geojson(
     """Serialize valid Flight observations and their connecting line."""
     features: list[dict[str, Any]] = []
     coordinates: list[list[float]] = []
-    for sequence, row in enumerate(flight.rows):
-        longitude = row["longitude"]
-        latitude = row["latitude"]
-        coordinate = [float(longitude), float(latitude)]
+    for sequence, point in enumerate(flight.observations):
+        coordinate = [point.longitude, point.latitude]
         coordinates.append(coordinate)
-        properties = {name: to_json_value(value) for name, value in row.items()}
+        properties = {name: to_json_value(value) for name, value in point.to_record().items()}
         properties.update(
             kind="observation", sequence=sequence, flight_index=index, flight_key=flight_key
         )

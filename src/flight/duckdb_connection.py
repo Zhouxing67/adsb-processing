@@ -26,37 +26,48 @@ def attach_sql(uri: str, token: str, read_only: bool = False) -> str:
     return f"ATTACH {sql_literal(uri)} AS adsb (TOKEN {sql_literal(token)}{access});"
 
 
-@contextmanager
-def client_connection(connect, uri: str, read_only: bool = False):
-    """Connect to the running Quack server."""
-    with connect() as con:
-        con.execute("LOAD quack")
-        con.execute(attach_sql(uri, get_token(), read_only))
-        con.execute("USE adsb.main")
-        yield con
+class DuckDBSession:
+    def __init__(self, connection):
+        self._connection = connection
+
+    def execute(self, sql, parameters=()):
+        return self._connection.exec_driver_sql(sql, parameters)
 
 
 class DuckDBConnection:
     def __init__(self, database: str | Path, *, read_only: bool, quack_uri: str | None):
         try:
-            import duckdb
+            import duckdb_engine  # noqa: F401
+            from sqlalchemy import URL, create_engine, event
+            from sqlalchemy.exc import SQLAlchemyError
+            from sqlalchemy.pool import NullPool
         except ImportError as error:
-            raise ValueError("Install DuckDB with: uv sync --extra stand-editing") from error
+            raise ValueError(
+                "Install database support with: uv sync --extra stand-editing"
+            ) from error
 
-        self._path = Path(database).resolve(strict=True)
+        path = Path(database).resolve(strict=True)
         self.read_only = read_only
         self._quack_uri = quack_uri
-        self._connect = duckdb.connect
-        self.database_error = duckdb.Error
+        self.database_error = SQLAlchemyError
+        self._engine = create_engine(
+            URL.create("duckdb", database=":memory:" if quack_uri else str(path)),
+            connect_args={"read_only": read_only and not quack_uri},
+            poolclass=NullPool,
+        )
+        if quack_uri:
+            event.listen(self._engine, "connect", self._initialize_quack)
+
+    def _initialize_quack(self, connection, _record):
+        connection.execute("LOAD quack")
+        connection.execute(attach_sql(self._quack_uri, get_token(), self.read_only))
+        connection.execute("USE adsb.main")
 
     @contextmanager
-    def connection(self):
-        if self._quack_uri:
-            with client_connection(self._connect, self._quack_uri, self.read_only) as connection:
-                yield connection
-            return
-        with self._connect(str(self._path), read_only=self.read_only) as connection:
-            yield connection
+    def connection(self, *, write: bool = False):
+        scope = self._engine.begin() if write else self._engine.connect()
+        with scope as connection:
+            yield DuckDBSession(connection)
 
     def bind(self, connection, *values):
         """Return SQL placeholders and parameters for this connection."""
@@ -68,6 +79,6 @@ class DuckDBConnection:
         placeholders = []
         for index, value in enumerate(values):
             name = f"flight_query_parameter_{index}"
-            connection.execute(f"SET VARIABLE {name} = ?", [value])
+            connection.execute(f"SET VARIABLE {name} = ?", (value,))
             placeholders.append(f"getvariable('{name}')")
         return tuple(placeholders), ()

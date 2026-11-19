@@ -3,21 +3,20 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from flight import Flights
+from flight import Flight
 from path_map import BatchStats, MapMatchingError, match_batch
 
 
-def flights_with_two_flights() -> Flights:
-    return Flights(
-        pd.DataFrame(
-            {
-                "flight_id": ["good", "good", "bad", "bad"],
-                "timestamp": pd.date_range("2026-01-01", periods=4, freq="1min", tz="UTC"),
-                "longitude": [116.0, 116.1, 116.2, 116.3],
-                "latitude": [40.0, 40.1, 40.2, 40.3],
-            }
-        )
+def flights_with_two_flights() -> tuple[Flight, ...]:
+    records = pd.DataFrame(
+        {
+            "flight_id": ["good", "good", "bad", "bad"],
+            "timestamp": pd.date_range("2026-01-01", periods=4, freq="1min", tz="UTC"),
+            "longitude": [116.0, 116.1, 116.2, 116.3],
+            "latitude": [40.0, 40.1, 40.2, 40.3],
+        }
     )
+    return tuple(Flight(group) for _, group in records.groupby("flight_id"))
 
 
 def test_batch_continues_after_expected_match_failure():

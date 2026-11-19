@@ -1,6 +1,6 @@
 """Validated ADS-B flight trajectory models."""
 
-from .models import Flight, Flights
+from .models import Flight, FlightObservation
 from .movement import MovementType
 
-__all__ = ["Flight", "Flights", "MovementType"]
+__all__ = ["Flight", "FlightObservation", "MovementType"]

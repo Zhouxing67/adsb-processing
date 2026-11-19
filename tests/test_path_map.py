@@ -328,7 +328,9 @@ def test_long_time_gap_does_not_reject_otherwise_valid_observations():
         to_wgs84,
         [(450_001, 4_428_000), (450_019, 4_428_000)],
     )
-    flight.rows[1]["timestamp"] += pd.Timedelta(hours=1)
+    rows = flight.rows
+    rows[1]["timestamp"] += pd.Timedelta(hours=1)
+    flight = Flight(rows)
 
     path = robust_matcher(airport_graph).map_flight(flight)
 

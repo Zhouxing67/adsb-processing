@@ -23,6 +23,8 @@ dependencies = [
 [project.optional-dependencies]
 stand-editing = [
     "duckdb>=2.0.0",
+    "duckdb-engine>=0.17",
+    "sqlalchemy>=2.0,<3",
 ]
 
 [dependency-groups]

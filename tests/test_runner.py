@@ -20,11 +20,11 @@ def test_iter_flights_groups_non_contiguous_input(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    flights = list(load_csv_flights(source).iterate())
+    flights = list(load_csv_flights(source))
 
     assert [flight.flight_id for flight in flights] == ["A", "B"]
     for flight in flights:
-        times = [row["timestamp"] for row in flight.rows]
+        times = [point.timestamp for point in flight.observations]
         assert times == sorted(times)
 
 
@@ -39,9 +39,10 @@ def test_iter_flights_honors_limit(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    flights = list(load_csv_flights(source).iterate(limit=2))
+    flights = list(load_csv_flights(source, limit=2))
 
     assert [flight.flight_id for flight in flights] == ["A", "B"]
+    assert list(load_csv_flights(source, limit=0)) == []
 
 
 def test_load_data_attaches_movement_type(tmp_path):
@@ -55,6 +56,8 @@ def test_load_data_attaches_movement_type(tmp_path):
         }
     ).to_csv(source, index=False)
 
-    traffic = load_csv_flights(source, MovementType.ARRIVAL)
+    flight = next(load_csv_flights(source, MovementType.ARRIVAL))
 
-    assert [row["movement_type"] for row in traffic.rows] == ["arrival", "arrival"]
+    assert [point.metadata["movement_type"] for point in flight.observations] == [
+        "arrival", "arrival",
+    ]

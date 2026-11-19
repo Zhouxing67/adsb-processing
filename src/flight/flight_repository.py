@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Iterator
 from zoneinfo import ZoneInfo
 
 from .duckdb_connection import DuckDBConnection
-from .models import Flight, utc_timestamp
+from .models import Flight, FlightSummary, utc_timestamp
 
 if TYPE_CHECKING:
     from config import DatabaseSettings
@@ -57,26 +57,19 @@ class FlightDatabase:
     def update_stand(self, movement: str, flight_id: str, stand: str | None) -> None:
         table, column = STAND_COLUMNS[movement]
         try:
-            with self.connection() as connection:
+            with self._database.connection(write=True) as connection:
                 (stand_value, identifier), parameters = self._database.bind(
                     connection, stand, flight_id
                 )
-                connection.begin()
-                try:
-                    count = connection.execute(
-                        f"UPDATE main.{table} SET {column} = {stand_value} "
-                        f"WHERE flight_id = {identifier}",
-                        parameters,
-                    ).fetchone()
-                    if not count or not count[0]:
-                        raise ValueError("数据库中没有该航班的观测记录")
-                    connection.commit()
-                except Exception:
-                    connection.rollback()
-                    raise
+                count = connection.execute(
+                    f"UPDATE main.{table} SET {column} = {stand_value} "
+                    f"WHERE flight_id = {identifier}",
+                    parameters,
+                ).fetchone()
+                if not count or not count[0]:
+                    raise ValueError("数据库中没有该航班的观测记录")
         except self.database_error as error:
             raise RuntimeError("机位更新事务失败") from error
-
 
     update = update_stand
 
@@ -91,7 +84,7 @@ class FlightDatabase:
         start_date: date | None = None,
         end_date: date | None = None,
         display_timezone: str = BEIJING,
-    ) -> Iterator[tuple[str, tuple]]:
+    ) -> Iterator[FlightSummary]:
         with self.connection() as connection:
             for direction, (table, column) in STAND_COLUMNS.items():
                 if movement and movement != direction:
@@ -133,14 +126,21 @@ class FlightDatabase:
                 for identifier, number, numbers, start, end, points, stand, count in rows:
                     if start is None or end is None:
                         continue
-                    yield direction, (
-                        identifier, number if numbers == 1 else None, numbers,
-                        _utc(start), _utc(end), points, stand if count <= 1 else None, count,
+                    yield FlightSummary(
+                        movement=direction,
+                        flight_id=identifier,
+                        flight_number=str(number) if numbers == 1 else None,
+                        number_count=numbers,
+                        start_time=_utc(start),
+                        end_time=_utc(end),
+                        point_count=points,
+                        stand_position=stand if count <= 1 else None,
+                        stand_count=count,
                     )
 
     @staticmethod
     def _records(cursor) -> Iterator[dict[str, Any]]:
-        columns = [column[0] for column in cursor.description]
+        columns = list(cursor.keys())
         while batch := cursor.fetchmany(2048):
             for values in batch:
                 row = dict(zip(columns, values))
@@ -170,7 +170,7 @@ class FlightDatabase:
             )
             source = f"FROM main.{table} WHERE flight_id = {flight_id}"
             description = connection.execute(f"SELECT * {source} LIMIT 0", parameters[:1])
-            columns = [column[0] for column in description.description]
+            columns = list(description.keys())
             aggregates = ["COUNT(*)"]
             for column in columns:
                 quoted = '"' + column.replace('"', '""') + '"'

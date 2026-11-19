@@ -65,9 +65,11 @@ def _distinct_values(rows: Iterable[Mapping[str, Any]], name: str) -> list[Any]:
     return distinct
 
 
-def _consistent_value(flight: Flight, names: Iterable[str]) -> tuple[Any, bool]:
+def _consistent_value(
+    rows: tuple[dict[str, Any], ...], names: Iterable[str],
+) -> tuple[Any, bool]:
     for name in names:
-        distinct = _distinct_values(flight.rows, name)
+        distinct = _distinct_values(rows, name)
         if len(distinct) == 1:
             return distinct[0], True
         if len(distinct) > 1:
@@ -123,14 +125,15 @@ class FlightWorkbench:
             source = source_values[index] if index < len(source_values) else "provided"
             movement = movement_values[index] if index < len(movement_values) else "unknown"
             key = flight_key(index, source, flight.flight_id)
+            rows = flight.rows
             number, number_consistent = _consistent_value(
-                flight,
+                rows,
                 ("flight_number", "NUMBER", "number", "callsign", "flight", "ident"),
             )
             inconsistent = () if number_consistent else ("flight_number",)
             stand_column = STAND_COLUMNS.get(movement, ("", ""))[1]
             distinct = {
-                str(value).strip() for value in _distinct_values(flight.rows, stand_column)
+                str(value).strip() for value in _distinct_values(rows, stand_column)
             }
             distinct.discard("")
             stand = next(iter(distinct)) if len(distinct) == 1 else None
@@ -144,24 +147,32 @@ class FlightWorkbench:
                 flight.flight_id,
                 number,
                 movement,
-                flight.rows[0]["timestamp"].isoformat(),
-                flight.rows[-1]["timestamp"].isoformat(),
+                flight.observations[0].timestamp.isoformat(),
+                flight.observations[-1].timestamp.isoformat(),
                 flight.point_count,
                 inconsistent,
                 stand,
                 False,
             )
         if flight_database:
-            for movement, row in flight_database.summaries():
-                identifier, number, numbers, started, ended, points, stand, count = row
-                key = database_flight_key(movement, identifier)
-                inconsistent = () if numbers <= 1 else ("flight_number",)
-                if count > 1:
+            for summary in flight_database.summaries():
+                movement = summary.movement
+                key = database_flight_key(movement, summary.flight_id)
+                inconsistent = () if summary.number_count <= 1 else ("flight_number",)
+                if summary.stand_count > 1:
                     inconsistent += (STAND_COLUMNS[movement][1],)
                 self.items[key] = FlightCatalogItem(
-                    key, flight_database.source_name(movement), identifier, number, movement,
-                    started.isoformat(), ended.isoformat(), points, inconsistent,
-                    stand, not flight_database.read_only,
+                    flight_key=key,
+                    source=flight_database.source_name(movement),
+                    flight_id=summary.flight_id,
+                    flight_number=summary.flight_number,
+                    movement_type=movement,
+                    start_time=summary.start_time.isoformat(),
+                    end_time=summary.end_time.isoformat(),
+                    point_count=summary.point_count,
+                    inconsistent_fields=inconsistent,
+                    stand_position=summary.stand_position,
+                    can_edit_stand=not flight_database.read_only,
                 )
         self.match_tasks = FlightMatchTasks(
             self.items,
@@ -328,10 +339,11 @@ class FlightWorkbench:
                 inconsistent = to_json_value(inconsistent)
             else:
                 flight = self.flights[flight_key]
-                columns = list(dict.fromkeys(name for row in flight.rows for name in row))
-                fields, inconsistent = self._detail_fields(flight, columns)
+                rows = flight.rows
+                columns = list(dict.fromkeys(name for row in rows for name in row))
+                fields, inconsistent = self._detail_fields(rows, columns)
                 observation_total = flight.point_count
-                page_records = flight.rows[start : start + observation_page_size]
+                page_records = rows[start : start + observation_page_size]
         observation_pages = ceil(observation_total / observation_page_size)
         if observation_pages and observation_page > observation_pages:
             raise CataloguePageOutOfRange(observation_page, observation_pages)
@@ -365,12 +377,12 @@ class FlightWorkbench:
 
     @staticmethod
     def _detail_fields(
-        flight: Flight, columns: Iterable[str],
+        rows: tuple[dict[str, Any], ...], columns: Iterable[str],
     ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
         fields = {}
         inconsistent = {}
         for column in columns:
-            values = _distinct_values(flight.rows, column)
+            values = _distinct_values(rows, column)
             fields[column] = values[0] if len(values) == 1 else None
             if len(values) > 1 and column.casefold() in BUSINESS_FIELD_NAMES:
                 inconsistent[column] = values
@@ -418,13 +430,13 @@ class FlightWorkbench:
         if self.flight_database:
             return [
                 key
-                for movement, row in self.flight_database.summaries(
+                for summary in self.flight_database.summaries(
                     movement=movement_type, query=query.strip(),
                     min_points=min_points, max_points=max_points, stands=tuple(stands),
                     start_date=start_date, end_date=end_date,
                     display_timezone=self.display_timezone,
                 )
-                if (key := database_flight_key(movement, row[0])) in self.results
+                if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
                 and (not status or self.results[key].status == status)
             ]
         selected_stands = set(stands)

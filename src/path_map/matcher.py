@@ -135,7 +135,7 @@ class Matcher:
 def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
     if flight.point_count < 2:
         raise MapMatchingError("At least two valid observations are required")
-    coordinates = [(row["longitude"], row["latitude"]) for row in flight.rows]
+    coordinates = [(point.longitude, point.latitude) for point in flight.observations]
     longitude, latitude = zip(*coordinates)
     x, y = ag.project.transform(longitude, latitude)
     return [Point(float(px), float(py)) for px, py in zip(x, y)]
