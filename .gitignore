@@ -21,6 +21,7 @@ Untitled*.ipynb
 # Local datasets and generated outputs
 data/ADS-B
 data/Geojson
+data/database
 
 outputs/
 
