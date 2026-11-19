@@ -77,12 +77,12 @@ function FlightTable() {
     <thead><tr><th>选择</th><th>航班</th><th>进出港</th><th>机位</th><th>状态</th><th>观测点</th><th>开始时间 <small>{controller.timezone()}</small></th><th>操作</th></tr></thead>
     <tbody>{items.map(item => <tr key={item.flight_key}>
       <td><input type="checkbox" aria-label={`选择航班 ${item.flight_id}`} checked={item.selected} onChange={event => controller.select(item.flight_key, event.target.checked)} /></td>
-      <td><strong>{item.flight_number || item.flight_id}</strong><small>{item.flight_id}</small></td>
+      <td><strong>{item.flight_id}</strong></td>
       <td>{item.movement_type === 'arrival' ? '进港' : item.movement_type === 'departure' ? '离港' : '未知'}</td>
       <td className="stand-cell"><StandCell item={item} /></td>
       <td><span className={`flight-status ${item.result.status}`}>{labels[item.result.status] || item.result.status}</span></td>
       <td>{item.point_count}</td><td>{item.start_time?.replace('T', ' ').replace(/(?:Z|[+-]\d{2}:\d{2})$/, '')}</td>
-      <td><button className="secondary-button" onClick={() => controller.detail(item.flight_key)}>详情</button><button className="secondary-button" onClick={() => controller.toggleMap(item.flight_key)}>{item.onMap ? '移出地图' : '加入地图'}</button><button className="secondary-button" disabled={!item.onMap} onClick={() => controller.focus(item.flight_key)}>定位</button></td>
+      <td><button className="secondary-button" onClick={() => controller.detail(item.flight_key)}>详情</button><button className="secondary-button" onClick={() => controller.toggleMap(item.flight_key)}>{item.onMap ? '移出地图' : '加入地图'}</button><button disabled={!item.onMap} onClick={() => controller.focus(item.flight_key)} className="flight-locate-action" title="在地图中突出显示此航班">⌖ 定位</button></td>
     </tr>)}</tbody>
   </table>;
 }

@@ -682,7 +682,7 @@ button,input {
   width: min(390px,calc(100vw - 28px));
 }
 
-body:not(.flight-mode):has(#details:not(.hidden)) .workspace {
+body:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) .workspace {
   grid-column: 2;
 }
 
@@ -716,7 +716,7 @@ body:not(.flight-mode) .topology-panel .topology-details {
   max-height: none;
 }
 
-body.read-only:not(.flight-mode):has(#details:not(.hidden)) .workspace {
+body.read-only:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) .workspace {
   grid-column: 1;
 }
 
@@ -1632,7 +1632,7 @@ body .status,body.read-only .status,body.flight-mode .status {
   opacity: .65;
 }
 
-body:has(#details:not(.hidden)) .studio-inspector {
+body:has(#details:not(.hidden):not(.property-popup)) .studio-inspector {
   display: none;
 }
 
@@ -1739,7 +1739,7 @@ body:not(.flight-mode):has(#topology-panel:not(.hidden)) .studio-inspector {
   grid-column: 3;
 }
 
-body:not(.flight-mode):has(#topology-panel:not(.hidden)):has(#details:not(.hidden)) {
+body:not(.flight-mode):has(#topology-panel:not(.hidden)):has(#details:not(.hidden):not(.property-popup)) {
   grid-template-columns: var(--sidebar-width) minmax(0,1fr) var(--sidebar-width);
 }
 
@@ -1821,11 +1821,11 @@ body:not(.flight-mode) .details {
   z-index: 999;
 }
 
-body:not(.flight-mode):has(#details:not(.hidden)) {
+body:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) {
   grid-template-columns: var(--sidebar-width) minmax(0,1fr) var(--sidebar-width);
 }
 
-body.read-only:not(.flight-mode):has(#details:not(.hidden)) {
+body.read-only:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) {
   grid-template-columns: minmax(0,1fr) var(--sidebar-width);
 }
 
@@ -1959,7 +1959,7 @@ body.read-only:not(.flight-mode):has(#details:not(.hidden)) {
 }
 
 @media (max-width:1050px) {
-  body:not(.flight-mode):has(#topology-panel:not(.hidden)),body:not(.flight-mode):has(#topology-panel:not(.hidden)):has(#details:not(.hidden)) {
+  body:not(.flight-mode):has(#topology-panel:not(.hidden)),body:not(.flight-mode):has(#topology-panel:not(.hidden)):has(#details:not(.hidden):not(.property-popup)) {
     grid-template-columns: var(--sidebar-width) minmax(0,1fr);
   }
 
@@ -1972,7 +1972,7 @@ body.read-only:not(.flight-mode):has(#details:not(.hidden)) {
     grid-row: 2;
   }
 
-  body:not(.flight-mode):has(#details:not(.hidden)) {
+  body:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) {
     grid-template-columns: minmax(0,1fr) var(--sidebar-width);
   }
 
@@ -1980,7 +1980,7 @@ body.read-only:not(.flight-mode):has(#details:not(.hidden)) {
     grid-column: 2;
   }
 
-  body.read-only:not(.flight-mode):has(#details:not(.hidden)) {
+  body.read-only:not(.flight-mode):has(#details:not(.hidden):not(.property-popup)) {
     grid-template-columns: minmax(0,1fr) var(--sidebar-width);
   }
 
@@ -3090,7 +3090,7 @@ body.hide-left-rail .tool-dock,body.hide-left-rail #topology-panel,body.hide-lef
   display: none !important;
 }
 
-body.hide-right-rail .studio-inspector,body.hide-right-rail #details {
+body.hide-right-rail .studio-inspector,body.hide-right-rail #details:not(.property-popup) {
   display: none !important;
 }
 
@@ -3359,18 +3359,6 @@ body.unified-workbench .details.property-popup {
 .property-popup #save-properties {
   padding: 5px 9px;
   font-size: 11px;
-}
-
-body.unified-workbench:has(.details.property-popup:not(.hidden)) {
-  grid-template-columns: var(--sidebar-width) minmax(0,1fr) var(--sidebar-width);
-}
-
-body.unified-workbench:has(.details.property-popup:not(.hidden)) .studio-inspector {
-  display: block;
-}
-
-body.unified-workbench:has(.details.property-popup:not(.hidden)) .workspace {
-  grid-column: 2;
 }
 
 #flight-query-host .footer-actions {
@@ -3798,3 +3786,50 @@ body.unified-workbench.hide-left-rail .workspace {
   flex-basis: 100%;
   white-space: normal;
 }
+
+/* Editor workflows occupy the right rail; inspection remains on the map. */
+body.unified-workbench.editor-panel-open > .details:not(.property-popup) {
+  position: relative;
+  grid-column: 3;
+  grid-row: 2;
+  inset: auto;
+  width: 100%;
+  height: 100%;
+  max-height: none;
+  overflow: auto;
+  border-radius: 0;
+  padding: 18px;
+  z-index: 1100;
+  background: var(--surface);
+  border-left: var(--hairline-width) solid var(--hairline-color);
+}
+
+body.hide-left-rail.editor-panel-open > .details:not(.property-popup) {
+  grid-column: 2;
+}
+
+.flight-locate-action {
+  border: 1px solid #a9bfd8;
+  background: var(--blue-soft);
+  color: #214f85;
+  padding: 6px 10px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.flight-locate-action:disabled {
+  opacity: .4;
+  cursor: default;
+}
+
+.selected-chip { max-width: 100%; }
+.selected-chip span { white-space: normal; overflow-wrap: anywhere; }
+
+.flight-map-label.located-flight span {
+  border: 2px solid var(--blue);
+  box-shadow: 0 0 0 4px rgb(37 99 235 / 18%);
+  font-weight: 600;
+}
+
+body.editor-panel-open .details .source-choice { padding: 8px 10px; gap: 3px; }
+body.editor-panel-open .details h3 { font-size: var(--font-ui); margin: 16px 0 8px; }

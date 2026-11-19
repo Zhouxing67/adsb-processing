@@ -123,3 +123,13 @@ const editorTools=document.querySelector('.tool-dock');editorTools.replaceWith(l
 leftRail.append(flightMode ? document.querySelector('#flights-panel') : editorTools);
 
 lifecycle.own(()=>{railHandles.forEach(({handle})=>handle.remove());document.body.classList.remove("sidebar-resizing");});
+
+if(flightMode){
+ const bulkMapButton=document.createElement('button');
+ bulkMapButton.id='add-selected-to-map';
+ bulkMapButton.disabled=document.querySelector('#match-selected').disabled;
+ bulkMapButton.className='secondary-button';
+ bulkMapButton.textContent='所选加入地图';
+ bulkMapButton.onclick=()=>window.dispatchEvent(new Event('add-selected-to-map'));
+ document.querySelector('#match-selected')?.after(bulkMapButton);
+}

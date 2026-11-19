@@ -156,7 +156,7 @@ def test_business_node_markers_and_point_review_are_wired() -> None:
     assert "sortedNodeReviewSnapshot(nodeFeatures)" in source
     assert "nodeFeatureIndex.set(nodeKey(feature),feature)" in source
     assert "nodeFeatureIndex.get(nodeKey(feature))" in source
-    assert "if(selected)selectNode(selected);else closeDetails()" in source
+    assert 'if(selected&&mode!=="delete")selectNode(selected);else if(!selected)closeDetails()' in source
     assert "is_manual_lock:!properties.is_manual_lock" not in source
     assert "lastTopologyRevision!==data.topology_revision" in source
     assert "遍历位置" in source
@@ -414,10 +414,10 @@ let invalidations=0;
 const context={
   topologyPanel,details,topologyBack,narrowDetailsReturnToTopology:false,
   topologyInspectionActive:false,topologyPreviousNodeVisibility:false,
-  currentState:{flight_mode:true},nodeLayer:null,edgeGroup:null,renderEdges(){},
+  currentState:{flight_mode:true},nodeLayer:null,edgeGroup:null,parkingGroup:null,renderEdges(){},
   window:{matchMedia(){return{matches:true};}},requestAnimationFrame(callback){callback();},lifecycle:{frame(callback){callback();}},
   map:{invalidateSize(){invalidations++;}},
-  document:{querySelector(selector){if(selector==="#topology-toggle")return toggle;}}
+  document:{body:{append(){},classList:classes([])},querySelector(selector){if(selector==="#topology-toggle")return toggle;}}
 };
 vm.createContext(context);
 const names=["refreshMapLayout","isNarrowLayout","shouldSwapTopologyPanel",

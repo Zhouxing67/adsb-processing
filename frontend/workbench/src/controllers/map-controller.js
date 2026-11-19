@@ -18,7 +18,7 @@ const blankBase = L.layerGroup().addTo(map);
 const layers = L.control.layers({"OpenStreetMap": osm, "ESRI 卫星": satellite, "无底图（精细编辑）": blankBase}, {}, {collapsed: false, position: "topleft"}).addTo(map);
 document.querySelector("#layer-control-slot").appendChild(layers.getContainer());
 
-let mode = "inspect", nodeLayer, edgeLayer, edgeGroup, previewLayer, endpointLayer, selectionLayer;
+let mode = "inspect", nodeLayer, edgeLayer, edgeGroup, parkingGroup, previewLayer, endpointLayer, selectionLayer;
 let splitValidation = false, currentState = null;
 let dataLayers = [];
 let nodeFeatures = [], fitted = false, savePath = "", firstNode = null;
@@ -27,7 +27,7 @@ let firstNodeRevision = null, mergeSelectionRevision = null;
 let nodeReviewSnapshot = [], nodeReviewIndex = -1, lastTopologyRevision = null, selectedNodeKey = null;
 let activeOperationRevision = null;
 let narrowDetailsReturnToTopology = false;
-let topologyInspectionActive = false, topologyPreviousNodeVisibility = false, topologyPreviousEdgeVisibility = true;
+let topologyInspectionActive = false, topologyPreviousNodeVisibility = false, topologyPreviousEdgeVisibility = true, topologyPreviousParkingVisibility = true;
 function identityKey(value){return JSON.stringify(value);}
 function nodeKey(value){return identityKey(value?.properties?.id??value);}
 function edgeKey(value){return identityKey(value?.properties?.id??value);}
@@ -64,10 +64,10 @@ function clearSelection() { if (selectionLayer) { map.removeLayer(selectionLayer
 function refreshMapLayout(){lifecycle.frame(()=>map.invalidateSize());}
 function isNarrowLayout(){return window.matchMedia("(max-width: 1050px)").matches;}
 function shouldSwapTopologyPanel(){return Boolean(currentState?.flight_mode)||isNarrowLayout();}
-function setTopologyInspection(active){if(active===topologyInspectionActive)return;if(active){topologyPreviousNodeVisibility=Boolean(nodeLayer&&map.hasLayer(nodeLayer));topologyPreviousEdgeVisibility=Boolean(edgeGroup&&map.hasLayer(edgeGroup));}topologyInspectionActive=active;if(active&&nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);else if(!active&&nodeLayer&&!topologyPreviousNodeVisibility&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);if(currentState)renderEdges(currentState);if(active&&edgeGroup&&!map.hasLayer(edgeGroup))edgeGroup.addTo(map);else if(!active&&edgeGroup&&!topologyPreviousEdgeVisibility&&map.hasLayer(edgeGroup))map.removeLayer(edgeGroup);}
-function openDetails(propertyPopup=false){if(!propertyPopup)details.classList.remove("property-popup");const returnToTopology=shouldSwapTopologyPanel()&&!topologyPanel.classList.contains("hidden");if(returnToTopology){narrowDetailsReturnToTopology=true;topologyPanel.classList.add("hidden");setTopologyInspection(false);}topologyBack.classList.toggle("hidden",!narrowDetailsReturnToTopology);details.classList.remove("hidden");refreshMapLayout();}
-function closeDetails() { selectedNodeKey=null;activeOperationRevision=null;narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");clearPreview();clearEndpointHighlight();clearSelection();refreshMapLayout(); }
-function returnToTopology(){narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");topologyPanel.classList.remove("hidden");document.querySelector("#topology-toggle").classList.add("active");setTopologyInspection(true);refreshMapLayout();}
+function setTopologyInspection(active){if(active===topologyInspectionActive)return;if(active){topologyPreviousNodeVisibility=Boolean(nodeLayer&&map.hasLayer(nodeLayer));topologyPreviousEdgeVisibility=Boolean(edgeGroup&&map.hasLayer(edgeGroup));topologyPreviousParkingVisibility=Boolean(parkingGroup&&map.hasLayer(parkingGroup));}topologyInspectionActive=active;if(active&&nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);else if(!active&&nodeLayer&&!topologyPreviousNodeVisibility&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);if(currentState)renderEdges(currentState);if(active&&edgeGroup&&!map.hasLayer(edgeGroup))edgeGroup.addTo(map);else if(!active&&edgeGroup&&!topologyPreviousEdgeVisibility&&map.hasLayer(edgeGroup))map.removeLayer(edgeGroup);if(active&&parkingGroup&&!map.hasLayer(parkingGroup))parkingGroup.addTo(map);else if(!active&&parkingGroup&&!topologyPreviousParkingVisibility&&map.hasLayer(parkingGroup))map.removeLayer(parkingGroup);}
+function openDetails(propertyPopup=false){(propertyPopup?document.querySelector("#map-view"):document.body).append(details);document.body.classList.toggle("editor-panel-open",!propertyPopup);if(!propertyPopup)details.classList.remove("property-popup");const returnToTopology=shouldSwapTopologyPanel()&&!topologyPanel.classList.contains("hidden");if(returnToTopology){narrowDetailsReturnToTopology=true;topologyPanel.classList.add("hidden");setTopologyInspection(false);}topologyBack.classList.toggle("hidden",!narrowDetailsReturnToTopology);details.classList.remove("hidden");refreshMapLayout();}
+function closeDetails() { document.body.classList.remove("editor-panel-open"); selectedNodeKey=null;activeOperationRevision=null;narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");clearPreview();clearEndpointHighlight();clearSelection();refreshMapLayout(); }
+function returnToTopology(){document.body.classList.remove("editor-panel-open");narrowDetailsReturnToTopology=false;details.classList.add("hidden");topologyBack.classList.add("hidden");topologyPanel.classList.remove("hidden");document.querySelector("#topology-toggle").classList.add("active");setTopologyInspection(true);refreshMapLayout();}
 let propertyTarget=null, propertyAnchor=null;
 const propertyFields=['aeroway','name','ref'];
 let propertyView=null;
@@ -232,13 +232,16 @@ async function previewEdgeDeletion(edge) {
   catch(error) { setStatus(`无法删除：${error.message}`); }
 }
 
+let deletionPreviewRequest=0;
 async function previewNodeDeletion(node) {
+  const request=++deletionPreviewRequest;
   try {
     const result = await post("/api/delete-node-preview", {node,expected_revision:currentState.revision});
+    if(request!==deletionPreviewRequest||mode!=="delete"||result.revision!==currentState.revision)return;
     const halves=result.half_edges.map(half=>`<div class="source-choice"><strong>${escapeHtml(half.half_id)} · 通向 ${escapeHtml(half.outer_node)}</strong><span>${escapeHtml(half.edge)}</span><span>${escapeHtml(half.source_ids.join(" + "))}</span></div>`).join("");
     const pairs=result.pair_candidates.map(pair=>`<label class="source-option pair-option" data-pair="${pair.pair_id}"><input type="checkbox" name="node-pair" value="${pair.pair_id}" ${pair.recommended?"checked":""}><span><strong>${escapeHtml(pair.endpoints.join(" ↔ "))}</strong><br>${escapeHtml(pair.source_ids.join(" + "))}<br>转角 ${pair.angle_degrees}°${pair.same_source?" · 同源":" · 跨来源"}</span></label>`).join("");
-    const unpaired=result.recommended_unpaired.length?`<p class="warning">推荐方案仍有未配对半边：${escapeHtml(result.recommended_unpaired.join(", "))}</p>`:"";
-    showConfirmation("删除节点并重组连接", `<p>节点 ${escapeHtml(result.node)} · ${result.half_edges.length} 条关联半边</p><h3>关联半边</h3><div class="source-options">${halves||"<p>无关联边</p>"}</div><h3>选择半边配对</h3><div class="source-options">${pairs||"<p>没有可配对的半边</p>"}</div><p id="pair-stats" class="field-note"></p>${unpaired}<label class="source-option"><input id="discard-unpaired" type="checkbox"><span>明确删除所有未配对半边（可能改变拓扑）</span></label><p class="field-note">同一条半边可以参加多组连接。新边会从有序 SourceSegment 链重建，不会画直线；原始 SourceEdge 不会修改。</p>`, "执行人工重组", async () => {
+    const unpaired=result.recommended_unpaired.length?`<p class="warning">未配对：${escapeHtml(result.recommended_unpaired.join(", "))}</p>`:"";
+    showConfirmation("半边配对", `<p>节点 ${escapeHtml(result.node)} · ${result.half_edges.length} 条关联半边</p><h3>关联半边</h3><div class="source-options">${halves||"<p>无关联边</p>"}</div><h3>选择半边配对</h3><div class="source-options">${pairs||"<p>没有可配对的半边</p>"}</div><p id="pair-stats" class="field-note"></p>${unpaired}<label class="source-option"><input id="discard-unpaired" type="checkbox"><span>删除未配对半边</span></label>`, "确认删除与连接", async () => {
       const pair_ids=[...document.querySelectorAll('input[name="node-pair"]:checked')].map(input=>input.value); const discard_unpaired=document.querySelector("#discard-unpaired").checked;
       closeDetails(); try { const response=await post("/api/delete-node-confirm", {node,pair_ids,discard_unpaired,expected_revision:result.revision}, true); setStatus(response.message); } catch(error) { setStatus(`删除失败：${error.message}`); }
     },result.revision);
@@ -253,7 +256,7 @@ async function previewSplit(edge, latlng) {
     const result=await post("/api/split-source-preview",body);
     const choices=result.candidates.map((candidate,index)=>`<label class="source-option"><input type="radio" name="split-node" value="${index}" ${index===0?"checked":""}><span>OSM Node ${escapeHtml(candidate.id.value)} · 距离 ${candidate.distance_m.toFixed(2)} m</span></label>`).join("");
     const manual=result.candidates.length?"":`<label class="source-option"><input type="radio" name="split-node" value="" checked><span>没有合适 OSM Node，创建负数 ID 人工节点</span></label>`;
-    showConfirmation("补充图分割点", `<p class="field-note">在当前派生边中加入一个拓扑节点，并把该边按原始 SourceEdge 曲线切成两段；原始曲线本身不会改变。</p><dl><dt>命中来源</dt><dd>${escapeHtml(result.source_id)}</dd></dl><div class="source-options">${choices}${manual}</div>`, "确认切分", async()=>{
+    showConfirmation("补充图分割点", `<dl><dt>命中来源</dt><dd>${escapeHtml(result.source_id)}</dd></dl><div class="source-options">${choices}${manual}</div>`, "确认切分", async()=>{
       const selected=document.querySelector('input[name="split-node"]:checked'); const request={...body,osm_node_id:selected.value===""?null:result.candidates[Number(selected.value)].id,expected_revision:result.revision};
       closeDetails(); try { const response=await post("/api/split-source-confirm",request,true); setStatus(response.message); } catch(error){setStatus(`切分失败：${error.message}`);}
     },result.revision);
@@ -273,8 +276,8 @@ async function previewManualSnap(node, edge, expectedRevision) {
 function nodeClicked(feature,event) {
   L.DomEvent.stopPropagation(event); const p=feature.properties;
   if(mode==="draw")return drawingNodeClicked(feature);
+  if(mode==="delete"){closeDetails();return previewNodeDeletion(p.id);}
   selectNode(feature);
-  if(mode==="delete") return previewNodeDeletion(p.id);
   if(mode==="restore") { if(!firstNode){firstNode=p.id;firstNodeRevision=currentState.revision;event.target.setStyle({radius:6,color:"#2563eb",weight:2});return setStatus(`已选择 ${p.node_id}，请选择另一个 OSM 图节点`);} if(nodeKey(firstNode)===nodeKey(p.id))return setStatus("两个端点不能相同"); return previewRestore(firstNode,p.id,firstNodeRevision); }
   if(mode==="snap") { firstNode=p.id;firstNodeRevision=currentState.revision;return setStatus(`已选择节点 ${p.node_id}，请点击需要接入的目标派生边`); }
   if(mode==="merge") { if(!mergeNodeIds.length)mergeSelectionRevision=currentState.revision;if(!mergeNodeIds.some(id=>nodeKey(id)===nodeKey(p.id)))mergeNodeIds.push(p.id);showManualMergeSelection();return setStatus(`已选择 ${mergeNodeIds.length} 个待合并节点`); }
@@ -287,15 +290,45 @@ function renderNodes() {
   if(!currentState?.flight_mode||topologyInspectionActive)nodeLayer.addTo(map); layers.addOverlay(nodeLayer,`图节点 (${nodeFeatures.length})`);
 }
 function renderEdges(data) {
-  const wasVisible=!edgeGroup||map.hasLayer(edgeGroup);
-  if(edgeGroup){layers.removeLayer(edgeGroup);map.removeLayer(edgeGroup);}
+  const edgeVisible=!edgeGroup||map.hasLayer(edgeGroup);
+  const parkingVisible=!parkingGroup||map.hasLayer(parkingGroup);
+  for(const group of [edgeGroup,parkingGroup]){
+    if(group){layers.removeLayer(group);map.removeLayer(group);}
+  }
   const flightMode=Boolean(data.flight_mode);
   const inspection=topologyInspectionActive||splitValidation;
-  const casing=L.geoJSON(data.edges,{pane:"edgeCasingPane",interactive:false,style:{color:"rgba(255,255,255,.8)",weight:flightMode&&!inspection?4.5:5,opacity:flightMode&&!inspection?.58:.65}});
   edgeSearchIndex.clear();
   edgeIdentityIndex.clear();
-  edgeLayer=L.geoJSON(data.edges,{pane:"edgesPane",style:feature=>({color:feature.properties.aeroway==="parking_position"?"#dc6b32":splitValidation?feature.properties.validation_color:flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),onEachFeature:(feature,layer)=>{layer.on("click",event=>edgeClicked(feature,event));layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));layer.on("mouseout",()=>edgeLayer.resetStyle(layer));const key=edgePairKey(feature.properties.u,feature.properties.v);if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);edgeSearchIndex.get(key).push({feature,layer});edgeIdentityIndex.set(edgeKey(feature),{feature,layer});}});
-  edgeGroup=L.layerGroup([casing,edgeLayer]);if(wasVisible)edgeGroup.addTo(map);layers.addOverlay(edgeGroup,`派生边 (${data.edge_count})`);
+  const ordinary=[],parking=[];
+  for(const feature of data.edges.features){
+    (feature.properties.aeroway==="parking_position"?parking:ordinary).push(feature);
+  }
+  function createEdgeOverlay(features){
+    const collection={type:"FeatureCollection",features};
+    const casing=L.geoJSON(collection,{pane:"edgeCasingPane",interactive:false,style:{color:"rgba(255,255,255,.8)",weight:flightMode&&!inspection?4.5:5,opacity:flightMode&&!inspection?.58:.65}});
+    const accent=L.geoJSON(collection,{
+      pane:"edgesPane",
+      style:feature=>({color:feature.properties.aeroway==="parking_position"?"#dc6b32":splitValidation?feature.properties.validation_color:flightMode&&!topologyInspectionActive?"#526875":"#9a684d",weight:splitValidation?3.4:flightMode&&!topologyInspectionActive?3:2.8,opacity:splitValidation?.95:flightMode&&!topologyInspectionActive?.78:.78}),
+      onEachFeature:(feature,layer)=>{
+        layer.on("click",event=>edgeClicked(feature,event));
+        layer.on("mouseover",()=>layer.setStyle({weight:5,color:"#243746",opacity:1}));
+        layer.on("mouseout",()=>accent.resetStyle(layer));
+        const key=edgePairKey(feature.properties.u,feature.properties.v);
+        if(!edgeSearchIndex.has(key))edgeSearchIndex.set(key,[]);
+        edgeSearchIndex.get(key).push({feature,layer});
+        edgeIdentityIndex.set(edgeKey(feature),{feature,layer});
+      }
+    });
+    return {group:L.layerGroup([casing,accent]),accent};
+  }
+  const edges=createEdgeOverlay(ordinary),stands=createEdgeOverlay(parking);
+  edgeGroup=edges.group;
+  parkingGroup=stands.group;
+  edgeLayer=L.featureGroup([edges.accent,stands.accent]);
+  if(edgeVisible)edgeGroup.addTo(map);
+  if(parkingVisible)parkingGroup.addTo(map);
+  layers.addOverlay(edgeGroup,`派生边 (${ordinary.length})`);
+  layers.addOverlay(parkingGroup,`停机位 (${parking.length})`);
 }
 function renderReferenceLayers(data) {
 
@@ -311,7 +344,7 @@ function endNodeReview(message=""){nodeReviewSnapshot=[];nodeReviewIndex=-1;upda
 function showNodeReviewPosition(fit=true){const feature=nodeReviewSnapshot[nodeReviewIndex];if(!feature)return endNodeReview("节点快照已失效，请重新开始逐点检查");if(nodeLayer&&!map.hasLayer(nodeLayer))nodeLayer.addTo(map);selectNode(feature,fit);updateNodeReviewControls();if(nodeReviewIndex===nodeReviewSnapshot.length-1)setStatus("已到最后一个节点；这不表示全部复核通过");}
 function startNodeReview(){if(!nodeFeatures.length)return setStatus("当前图没有可检查节点");nodeReviewSnapshot=sortedNodeReviewSnapshot(nodeFeatures);nodeReviewIndex=0;showNodeReviewPosition(true);}
 function moveNodeReview(delta){if(nodeReviewIndex<0)return;const target=nodeReviewIndex+delta;if(target<0||target>=nodeReviewSnapshot.length)return;nodeReviewIndex=target;showNodeReviewPosition(true);}
-async function loadState(){const data=await readResponse(await fetch("/api/state"));if(lifecycle.disposed)return;const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||!data.capabilities?.can_edit_graph))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;window.dispatchEvent(new CustomEvent("workbench-state",{detail:data}));document.body.classList.add("unified-workbench");document.body.classList.toggle("flight-mode",Boolean(data.flight_mode));document.title="Airport Workbench";document.querySelector(".brand-copy strong").textContent="Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected)selectNode(selected);else closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边${data.flight_mode ? ` · ${data.flight_count} 航班` : ""}`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.flight_mode)setStatus("航班模式 · 待匹配可批量选择，地图最多展示 10 条");if(!fitted){if(nodeLayer&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);const nodeBounds=nodeLayer.getBounds(),edgeBounds=edgeLayer.getBounds();if(nodeBounds.isValid()){map.fitBounds(nodeBounds,{padding:[24,24]});fitted=true;}else if(edgeBounds.isValid()){map.fitBounds(edgeBounds,{padding:[24,24]});fitted=true;}}validateOperationRevisions();lifecycle.timeout(()=>map.invalidateSize(),0);return data;}
+async function loadState(){const data=await readResponse(await fetch("/api/state"));if(lifecycle.disposed)return;const topologyChanged=lastTopologyRevision!==null&&lastTopologyRevision!==data.topology_revision;if(nodeReviewIndex>=0&&(topologyChanged||!data.capabilities?.can_edit_graph))endNodeReview(topologyChanged?"拓扑已变更，逐点检查已结束，请重新开始":"已离开编辑模式，逐点检查已结束");lastTopologyRevision=data.topology_revision;currentState=data;window.dispatchEvent(new CustomEvent("workbench-state",{detail:data}));document.body.classList.add("unified-workbench");document.body.classList.toggle("flight-mode",Boolean(data.flight_mode));document.title="Airport Workbench";document.querySelector(".brand-copy strong").textContent="Airport Workbench";renderEdges(data);nodeFeatures=data.nodes.features;nodeFeatureIndex.clear();nodeSearchIndex.clear();nodeFeatures.forEach(feature=>{nodeFeatureIndex.set(nodeKey(feature),feature);const searchKey=normalizeId(feature.properties.node_id);if(!nodeSearchIndex.has(searchKey))nodeSearchIndex.set(searchKey,[]);nodeSearchIndex.get(searchKey).push(feature);});if(nodeReviewIndex>=0)nodeReviewSnapshot=nodeReviewSnapshot.map(feature=>nodeFeatureIndex.get(nodeKey(feature))).filter(Boolean);renderNodes();renderReferenceLayers(data);renderTopologySummary(data.topology);updateNodeReviewControls();if(selectedNodeKey){const selected=nodeFeatureIndex.get(selectedNodeKey);if(selected&&mode!=="delete")selectNode(selected);else if(!selected)closeDetails();}document.querySelector("#counts").textContent=`${data.node_count} 节点 · ${data.edge_count} 边${data.flight_mode ? ` · ${data.flight_count} 航班` : ""}`;savePath=data.save_path;document.querySelector("#undo").disabled=!data.can_undo;document.querySelector("#finish").classList.toggle("hidden",!data.can_finish);if(data.flight_mode)setStatus("航班模式");if(!fitted){if(nodeLayer&&map.hasLayer(nodeLayer))map.removeLayer(nodeLayer);const nodeBounds=nodeLayer.getBounds(),edgeBounds=edgeLayer.getBounds();if(nodeBounds.isValid()){map.fitBounds(nodeBounds,{padding:[24,24]});fitted=true;}else if(edgeBounds.isValid()){map.fitBounds(edgeBounds,{padding:[24,24]});fitted=true;}}validateOperationRevisions();lifecycle.timeout(()=>map.invalidateSize(),0);return data;}
 function validateOperationRevisions(){if(!currentState)return;const staleOperation=activeOperationRevision!==null&&activeOperationRevision!==currentState.revision;const staleSelection=(firstNodeRevision!==null&&firstNodeRevision!==currentState.revision)||(mergeSelectionRevision!==null&&mergeSelectionRevision!==currentState.revision);if(staleOperation||staleSelection){closeDetails();firstNode=null;firstNodeRevision=null;mergeNodeIds=[];mergeSelectionRevision=null;setStatus("图已变更，旧操作已失效，请重新检查");}};
 
 function renderTopologySummary(topology) {

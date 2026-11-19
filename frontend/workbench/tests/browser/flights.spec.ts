@@ -78,3 +78,23 @@ test('stand search, multiple selections, empty stands and inclusive dates', asyn
   await page.getByRole('button', { name: '过滤', exact: true }).click();
   await expect(page.locator('#flight-query-error')).toBeVisible();
 });
+
+
+test('batch map selection has no ten-flight cap and location highlights the full ID', async ({ page }) => {
+  await page.goto('/');
+  await page.locator('#observations-tab').click();
+  await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
+  await page.getByRole('button', { name: '全部结果', exact: true }).click();
+  await expect(page.locator('.sheet-selected-count')).toHaveText('已选 18 条');
+  await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
+  await expect(page.locator('#map-selection-count')).toHaveText('地图展示 18');
+  await expect(page.locator('.flight-map-label')).toHaveCount(18);
+  const id = await page.locator('.sheet-table tbody tr strong').first().innerText();
+  await page.locator('.flight-locate-action').first().click();
+  await expect(page.locator('#map-view')).toBeVisible();
+  await expect(page.locator('.located-flight')).toContainText(id);
+  await expect(page.locator('.status')).toContainText('已定位');
+  await page.locator('#observations-tab').click();
+  await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
+  await expect(page.locator('#map-selection-count')).toHaveText('地图展示 18');
+});
