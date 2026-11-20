@@ -42,12 +42,12 @@ test('selection and map display survive paging and reload', async ({ page }) => 
   await page.locator('.sheet-table tbody input[type=checkbox]').first().check();
   await expect(page.getByText('已选 2 条')).toBeVisible();
   await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
-  await expect(page.getByText('地图展示 2')).toBeVisible();
+  await expect(page.locator('.map-selection .selected-chip')).toHaveCount(2);
   await page.reload();
   await expect(page.getByRole('button', { name: '航班', exact: true })).toBeVisible();
   await page.getByRole('button', { name: '航班', exact: true }).click();
   await expect(page.getByText('已选 2 条')).toBeVisible();
-  await expect(page.getByText('地图展示 2')).toBeVisible();
+  await expect(page.locator('.map-selection .selected-chip')).toHaveCount(2);
 });
 
 test('stand/date filters validate before committing', async ({ page }) => {

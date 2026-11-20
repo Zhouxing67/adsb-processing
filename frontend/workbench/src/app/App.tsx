@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { WorkbenchProvider, useWorkbench } from './WorkbenchContext';
 import type { EditorTool } from './WorkbenchContext';
-import type { EdgeProperties, FlightDetail, GeoFeature, LineGeometry, NodeProperties, PointGeometry, SelectedFeature } from '../api/types';
+import type { FlightDetail, GeoFeature, NodeProperties, PointGeometry, SelectedFeature, WorkbenchState } from '../api/types';
 import { FlightPanel } from '../features/flights/FlightPanel';
 import { MapView } from '../features/map/MapView';
 import { GraphDialog } from '../features/graph-editor/GraphDialog';
-import type { EdgeDeletePreview, GraphDialogState, MergeCandidates, MergePreview, NodeDeletePreview, RestorePreview, SnapPreview, SplitPreview } from '../features/graph-editor/types';
+import { useGraphEditorMachine } from '../features/graph-editor/useGraphEditorMachine';
 import { api } from '../api/client';
 import '../styles/react-app.css';
 
@@ -22,17 +22,30 @@ const toolMessages: Record<EditorTool, string> = {
 };
 function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, NodeProperties> { return feature.geometry.type === 'Point'; }
 
-function Header() {
+interface LayerSettings { base: 'none' | 'osm' | 'satellite'; edges: boolean; parking: boolean; nodes: boolean }
+
+function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: { editing: boolean; leftOpen: boolean; rightOpen: boolean; onLeft(): void; onRight(): void }) {
   const wb = useWorkbench(), state = wb.state;
   const command = async (path: string) => { await wb.runGraphCommand(path); };
   return <header className="topbar panel">
+    <button className="rail-toggle" aria-label="切换左侧栏" aria-expanded={leftOpen} onClick={onLeft}>◫</button>
     <div className="brand-mark">AW</div><div className="brand-copy"><strong>Airport Workbench</strong><span>{state ? `${state.node_count} 节点 · ${state.edge_count} 边${state.flight_mode ? ` · ${state.flight_count} 航班` : ''}` : '载入中…'}</span></div>
     <div className="top-actions">
-      <button className="text-button" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: !wb.searchOpen })}>⌕ 搜索</button>
-      <button className="text-button" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: !wb.topologyOpen })}>◇ 拓扑检查</button>
-      {state?.capabilities.can_edit_graph && <><button className="text-button" disabled={!state.can_undo} onClick={() => void command('/api/undo')}>↶ 撤销</button><button className="save-button" onClick={() => void command('/api/save')}>✓ 保存</button>{state.can_finish && <button className="finish-button" onClick={() => void command('/api/finish')}>→ 完成</button>}</>}
+      {state?.capabilities.can_edit_graph && editing && <><button className="text-button" disabled={!state.can_undo} onClick={() => void command('/api/undo')}>撤销</button><button className="save-button" onClick={() => void command('/api/save')}>保存</button>{state.can_finish && <button className="finish-button" onClick={() => void command('/api/finish')}>完成</button>}</>}
     </div>
+    <button className="rail-toggle" aria-label="切换右侧栏" aria-expanded={rightOpen} onClick={onRight}>◧</button>
   </header>;
+}
+
+function MapToolbar({ editing, onEditing }: { editing: boolean; onEditing(): void }) {
+  const wb = useWorkbench();
+  return <div className="map-tools panel"><button aria-label="搜索" title="搜索图要素" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: !wb.searchOpen })}>⌕</button><button aria-label="拓扑检查" title="拓扑检查" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: !wb.topologyOpen })}>◇</button>{wb.state?.capabilities.can_edit_graph && <button className={editing ? 'active' : ''} aria-pressed={editing} onClick={onEditing}>{editing ? '退出编辑' : '编辑图'}</button>}</div>;
+}
+
+function Inspector({ state, layers, onLayers }: { state: WorkbenchState; layers: LayerSettings; onLayers(value: LayerSettings): void }) {
+  const parking = state.edges.features.filter(item => item.properties.aeroway === 'parking_position').length;
+  const derived = state.edges.features.length - parking;
+  return <aside className="studio-inspector"><div className="inspector-inner"><h1>机场地面网络</h1><div className="studio-metrics"><div><strong>{state.node_count}</strong><span>节点</span></div><div><strong>{state.edge_count}</strong><span>边</span></div>{state.flight_mode && <div><strong>{state.flight_count}</strong><span>航班</span></div>}</div><section><h3>图层与底图</h3><div className="layer-options"><label><input type="radio" name="base-layer" checked={layers.base === 'osm'} onChange={() => onLayers({ ...layers, base: 'osm' })} />OpenStreetMap</label><label><input type="radio" name="base-layer" checked={layers.base === 'satellite'} onChange={() => onLayers({ ...layers, base: 'satellite' })} />ESRI 卫星</label><label><input type="radio" name="base-layer" checked={layers.base === 'none'} onChange={() => onLayers({ ...layers, base: 'none' })} />无底图（精细编辑）</label><hr /><label><input type="checkbox" checked={layers.edges} onChange={event => onLayers({ ...layers, edges: event.target.checked })} />派生边（{derived}）</label><label><input type="checkbox" checked={layers.parking} onChange={event => onLayers({ ...layers, parking: event.target.checked })} />停机位（{parking}）</label><label><input type="checkbox" checked={layers.nodes} onChange={event => onLayers({ ...layers, nodes: event.target.checked })} />图节点（{state.node_count}）</label></div></section><section><h3>地图图例</h3><div className="inspector-legend"><span><i className="legend-dot" />普通节点</span><span><i className="legend-line parking" />停机位</span><span><i className="legend-badge">R</i>跑道接口</span><span><i className="legend-line derived" />派生边</span><span><i className="legend-line flight" />虚线＝原始轨迹</span><span><i className="legend-line path" />实线＝匹配路径</span></div></section><section className="inspector-empty"><div>⌖</div><h3>选择一个图要素</h3></section></div></aside>;
 }
 
 function ToolDock() {
@@ -41,14 +54,24 @@ function ToolDock() {
   return <nav className="tool-dock panel react-tool-dock" aria-label="编辑工具"><div className="dock-title">编辑工具</div>{tools.map(tool => <button key={tool.key} className={`tool ${wb.tool === tool.key ? 'active' : ''} ${tool.key === 'delete' ? 'danger' : ''}`} onClick={() => { wb.dispatch({ type: 'tool', value: tool.key }); wb.dispatch({ type: 'status', value: toolMessages[tool.key] }); }}><span>{tool.symbol}</span><em>{tool.label}</em></button>)}</nav>;
 }
 
-function TopologyPanel() {
+function TopologyPanel({ splitValidation, onSplitValidation }: { splitValidation: boolean; onSplitValidation(): void }) {
   const wb = useWorkbench(), topology = wb.state?.topology;
   const [reviewIndex, setReviewIndex] = useState(-1);
   const nodes = useMemo(() => [...(wb.state?.nodes.features ?? [])].sort((a, b) => JSON.stringify(a.properties.id).localeCompare(JSON.stringify(b.properties.id))), [wb.state?.topology_revision]);
   const showReview = (index: number) => { const feature = nodes[index]; if (!feature) return; setReviewIndex(index); wb.dispatch({ type: 'selected', value: feature }); wb.dispatch({ type: 'status', value: index === nodes.length - 1 ? '已到最后一个节点；这不表示全部复核通过' : `遍历位置 ${index + 1} / ${nodes.length} · 节点 ${feature.properties.node_id}` }); };
   if (!wb.topologyOpen || !topology) return null;
   const metrics = [['连通分量', topology.component_count], ['最大分量', topology.largest_component], ['孤立节点', topology.isolated_count], ['悬挂节点', topology.dangling_count], ['平行边组', topology.parallel_pair_count]];
-  return <aside className="topology-panel panel"><div className="panel-heading"><h2>拓扑概览</h2><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: false })}>×</button></div><div className="metric-grid">{metrics.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div><div className="topology-details"><h3>孤立节点</h3><p>{topology.isolated_nodes.slice(0, 20).join('、') || '无'}</p><h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p><h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.some(id => JSON.stringify(id) === JSON.stringify(item.properties.id))); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}</div><section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.node_id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section></aside>;
+  return <aside className="topology-panel panel">
+    <div className="panel-heading"><h2>拓扑概览</h2><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: false })}>×</button></div>
+    <div className="metric-grid">{metrics.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div>
+    <button className="secondary-button topology-validation" onClick={onSplitValidation}>{splitValidation ? '关闭' : '开启'}相邻边辨色</button>
+    <div className="topology-details">
+      <h3>孤立节点</h3><p>{topology.isolated_nodes.slice(0, 20).join('、') || '无'}</p>
+      <h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p>
+      <h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.some(id => JSON.stringify(id) === JSON.stringify(item.properties.id))); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}
+    </div>
+    <section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.node_id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section>
+  </aside>;
 }
 
 function SearchPanel() {
@@ -95,12 +118,11 @@ function ObservationView({ detail }: { detail: FlightDetail | null }) {
 function Workspace() {
   const wb = useWorkbench(); const state = wb.state;
   const [detail, setDetail] = useState<FlightDetail | null>(null);
-  const [operation, setOperation] = useState<SelectedFeature[]>([]);
-  const [drawPoints, setDrawPoints] = useState<Array<[number, number]>>([]);
   const [splitValidation, setSplitValidation] = useState(false);
-  const [dialog, setDialog] = useState<GraphDialogState | null>(null);
-  const [previewGeometry, setPreviewGeometry] = useState<LineGeometry | null>(null);
-  useEffect(() => { setOperation([]); setDrawPoints([]); setDialog(null); setPreviewGeometry(null); }, [wb.tool]);
+  const [graphEditing, setGraphEditing] = useState(false);
+  const [leftOpen, setLeftOpen] = useState(true), [rightOpen, setRightOpen] = useState(true);
+  const [layers, setLayers] = useState<LayerSettings>({ base: 'none', edges: true, parking: true, nodes: false });
+  const editor = useGraphEditorMachine();
   useEffect(() => {
     document.body.classList.add('unified-workbench', 'react-workbench');
     document.body.classList.toggle('flight-mode', Boolean(state?.flight_mode));
@@ -108,79 +130,25 @@ function Workspace() {
     return () => document.body.classList.remove('unified-workbench', 'react-workbench', 'flight-mode', 'read-only');
   }, [state?.flight_mode]);
 
-  const finishOperation = useCallback(() => { setOperation([]); setDrawPoints([]); setDialog(null); setPreviewGeometry(null); wb.dispatch({ type: 'selected', value: null }); }, [wb]);
-  const confirmDialog = useCallback(async (path: string, body: Record<string, unknown>) => { const result = await wb.runGraphCommand(path, body); if (result !== null) finishOperation(); }, [wb, finishOperation]);
-  const previewMerge = useCallback(async (nodeIds: import('../api/types').EncodedValue[], revision: number) => {
-    const preview = await wb.previewGraphCommand<MergePreview>('/api/merge-nodes-preview', { node_ids: nodeIds, expected_revision: revision });
-    if (preview) setDialog({ kind: 'merge', preview });
-  }, [wb]);
-  const openMergeCandidates = useCallback(async () => {
-    try { const preview = await api.mergeCandidates<MergeCandidates>(); setDialog({ kind: 'merge-candidates', preview }); }
-    catch (error) { wb.dispatch({ type: 'error', value: error instanceof Error ? error.message : '候选节点读取失败' }); }
-  }, [wb]);
-  const handleFeature = useCallback(async (feature: SelectedFeature) => {
-    if (!state?.capabilities.can_edit_graph || wb.tool === 'inspect') { wb.dispatch({ type: 'selected', value: feature }); return; }
-    if (wb.tool === 'delete') {
-      if (isNode(feature)) {
-        const preview = await wb.previewGraphCommand<NodeDeletePreview>('/api/delete-node-preview', { node: feature.properties.id });
-        if (preview) setDialog({ kind: 'delete-node', preview, node: feature.properties.id });
-      } else {
-        const preview = await wb.previewGraphCommand<EdgeDeletePreview>('/api/delete-edge-preview', { edge: feature.properties.id });
-        if (preview) setDialog({ kind: 'delete-edge', preview, edge: feature.properties.id });
-      }
-      return;
-    }
-    if (wb.tool === 'split') { if (!isNode(feature)) { setOperation([feature]); wb.dispatch({ type: 'status', value: '已选择目标边，请点击切分位置' }); } return; }
-    if (wb.tool === 'merge') {
-      if (isNode(feature) && !operation.some(item => isNode(item) && JSON.stringify(item.properties.id) === JSON.stringify(feature.properties.id))) setOperation(items => [...items, feature]);
-      wb.dispatch({ type: 'status', value: `已选择 ${operation.length + 1} 个待合并节点` });
-      return;
-    }
-    if (wb.tool === 'draw' || wb.tool === 'restore') {
-      if (!isNode(feature)) return;
-      if (!operation.length) { setOperation([feature]); wb.dispatch({ type: 'status', value: '已选择起点，请选择终点' }); return; }
-      const start = operation[0] as GeoFeature<PointGeometry, NodeProperties>;
-      if (wb.tool === 'draw') await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: drawPoints });
-      if (wb.tool === 'restore') {
-        const preview = await wb.previewGraphCommand<RestorePreview>('/api/restore-options', { start: start.properties.id, end: feature.properties.id });
-        if (preview?.candidates.length) setDialog({ kind: 'restore', preview, start: start.properties.id, end: feature.properties.id });
-        else wb.dispatch({ type: 'status', value: '原始来源网络中没有可靠路径候选' });
-      }
-      if (wb.tool === 'draw') finishOperation(); else setOperation([]);
-      return;
-    }
-    if (wb.tool === 'snap') {
-      if (!operation.length && isNode(feature)) { setOperation([feature]); wb.dispatch({ type: 'status', value: '请选择目标边' }); return; }
-      if (operation.length && !isNode(feature)) {
-        const node = operation[0] as GeoFeature<PointGeometry, NodeProperties>;
-        const preview = await wb.previewGraphCommand<SnapPreview>('/api/manual-snap-preview', { node: node.properties.id, edge: feature.properties.id });
-        if (preview) setDialog({ kind: 'snap', preview, node: node.properties.id, edge: feature.properties.id });
-      }
-    }
-  }, [state, wb, operation, drawPoints, finishOperation]);
-
-  const handleMapClick = useCallback(async (longitude: number, latitude: number) => {
-    if (wb.tool === 'draw' && operation.length) { setDrawPoints(points => [...points, [longitude, latitude]]); wb.dispatch({ type: 'status', value: `已添加 ${drawPoints.length + 1} 个形状点，请选择终点` }); }
-    if (wb.tool === 'split' && operation.length && !isNode(operation[0])) {
-      const edge = operation[0] as GeoFeature<LineGeometry, EdgeProperties>;
-      const preview = await wb.previewGraphCommand<SplitPreview>('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude });
-      if (preview) setDialog({ kind: 'split', preview, edge: edge.properties.id, longitude, latitude });
-      setOperation([]);
-    }
-  }, [wb, operation, drawPoints.length, finishOperation]);
-
   if (!state) return <main className="loading-screen">{wb.error || '正在载入工作台…'}</main>;
-  return <>
-    <Header /><ToolDock />
+  const editorLeft = !state.flight_mode && leftOpen && (graphEditing || wb.topologyOpen);
+  const shellLeft = leftOpen && (state.flight_mode || editorLeft);
+  const rightContent = editor.dialog
+    ? <GraphDialog dialog={editor.dialog} onClose={editor.reset} onPreview={editor.setPreviewGeometry} onConfirm={editor.confirmDialog} onMergeCandidate={editor.previewMerge} />
+    : wb.selected && wb.detailsOpen ? <FeatureDetails /> : <Inspector state={state} layers={layers} onLayers={setLayers} />;
+  const toggleEditing = () => { const next = !graphEditing; setGraphEditing(next); if (next) setLeftOpen(true); else { wb.dispatch({ type: 'tool', value: 'inspect' }); editor.reset(); } };
+  return <div className={`app-shell ${state.flight_mode ? 'flight-shell' : ''} ${shellLeft ? 'with-left-rail' : ''} ${rightOpen ? 'with-right-rail' : ''}`}>
+    <Header editing={graphEditing} leftOpen={leftOpen} rightOpen={rightOpen} onLeft={() => setLeftOpen(value => !value)} onRight={() => setRightOpen(value => !value)} />
+    {editorLeft && (wb.topologyOpen ? <TopologyPanel splitValidation={splitValidation} onSplitValidation={() => setSplitValidation(value => !value)} /> : <ToolDock />)}
     {state.flight_mode && <nav className="main-tabs" aria-label="航班主视图"><button className={wb.view === 'map' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'map' })}>地图</button><button className={wb.view === 'flights' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>航班</button>{detail && <button className={wb.view === 'observations' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'observations' })}>观测记录</button>}</nav>}
     <main className="workspace react-workspace">
-      <section className={`main-view map-view ${wb.view !== 'map' ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} selected={[...operation, ...(wb.selected ? [wb.selected] : [])]} drawPoints={drawPoints} previewGeometry={previewGeometry} focusFlightKey={wb.mapFocusKey} fitMapVersion={wb.fitMapVersion} observationLocation={wb.observationLocation} onFeature={handleFeature} onMapClick={handleMapClick} /><div className="map-overlay-stack"><div className="legend panel"><span>节点</span><span>派生边</span><span>虚线＝原始轨迹</span><span>实线＝匹配路径</span></div>{state.capabilities.can_edit_graph && <button className="secondary-button panel" onClick={() => setSplitValidation(value => !value)}>{splitValidation ? '关闭' : '开启'}相邻边辨色</button>}{wb.tool === 'merge' && <><button className="secondary-button panel" onClick={() => void openMergeCandidates()}>重复节点候选</button><button className="primary-button panel" disabled={operation.length < 2} onClick={() => void previewMerge(operation.filter(isNode).map(item => item.properties.id), state.revision)}>检查并合并（{operation.length}）</button><button className="secondary-button panel" onClick={() => setOperation([])}>清空选择</button></>}{wb.tool === 'draw' && operation.length > 0 && <button className="secondary-button panel" onClick={() => { setDrawPoints(points => points.slice(0, -1)); }}>撤销形状点</button>}</div></section>
-      {state.flight_mode && wb.view === 'flights' && <FlightPanel onDetail={setDetail} />}
+      <section className={`main-view map-view ${wb.view !== 'map' ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} baseLayer={layers.base} showEdges={layers.edges} showParking={layers.parking} showNodes={layers.nodes} selected={[...editor.selection, ...(wb.selected ? [wb.selected] : [])]} drawPoints={editor.drawPoints} previewGeometry={editor.previewGeometry} focusFlightKey={wb.mapFocusKey} fitMapVersion={wb.fitMapVersion} observationLocation={wb.observationLocation} onFeature={editor.handleFeature} onMapClick={editor.handleMapClick} /><MapToolbar editing={graphEditing} onEditing={toggleEditing} /><div className="map-overlay-stack">{wb.tool === 'merge' && <><button className="secondary-button panel" onClick={() => void editor.openMergeCandidates()}>重复节点候选</button><button className="primary-button panel" disabled={editor.mergeNodeIds.length < 2} onClick={() => void editor.previewMerge(editor.mergeNodeIds, state.revision)}>检查并合并（{editor.mergeNodeIds.length}）</button><button className="secondary-button panel" onClick={editor.reset}>清空选择</button></>}{wb.tool === 'draw' && editor.selection.length > 0 && <button className="secondary-button panel" onClick={editor.undoDrawPoint}>撤销形状点</button>}</div></section>
+      {state.flight_mode && <FlightPanel active={wb.view === 'flights'} onDetail={setDetail} />}
       {state.flight_mode && wb.view === 'observations' && <ObservationView detail={detail} />}
     </main>
-    <SearchPanel /><TopologyPanel />{!dialog && <FeatureDetails />}{dialog && <GraphDialog dialog={dialog} onClose={finishOperation} onPreview={setPreviewGeometry} onConfirm={confirmDialog} onMergeCandidate={previewMerge} />}
+    <SearchPanel />{rightOpen && <div className="right-rail">{rightContent}</div>}
     <div className="status panel">{wb.error || wb.status}</div>{wb.busy && <div className="busy"><span /></div>}
-  </>;
+  </div>;
 }
 
 export function App() { return <WorkbenchProvider><Workspace /></WorkbenchProvider>; }
