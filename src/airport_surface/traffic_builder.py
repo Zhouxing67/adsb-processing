@@ -8,9 +8,7 @@ from copy import deepcopy
 from typing import Any, Hashable, Mapping
 
 import networkx as nx
-import numpy as np
 from pyproj import CRS, Proj
-from shapely import STRtree
 from shapely.geometry import LineString, Point
 
 from .graph import (
@@ -128,36 +126,6 @@ def _topology_nodes(
             node_sources[node].add(source_id)
     shared = {node for node, sources in node_sources.items() if len(sources) > 1}
     return endpoints | shared | repeated
-
-
-def _geometric_crossing_issues(
-    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
-) -> list[str]:
-    identifiers = list(source_edges)
-    geometries = [source_edges[identifier].geometry for identifier in identifiers]
-    if not geometries:
-        return []
-    tree = STRtree(geometries)
-    issues: list[str] = []
-    for left_index, left_geometry in enumerate(geometries):
-        for raw_right_index in np.asarray(tree.query(left_geometry)).tolist():
-            right_index = int(raw_right_index)
-            if right_index <= left_index:
-                continue
-            left_id, right_id = identifiers[left_index], identifiers[right_index]
-            left_nodes = {aliases.get(node, node) for node in source_edges[left_id].osm_node_ids}
-            right_nodes = {aliases.get(node, node) for node in source_edges[right_id].osm_node_ids}
-            intersection = left_geometry.intersection(geometries[right_index])
-            if left_geometry.equals(geometries[right_index]):
-                issues.append(f"sources {left_id!r} and {right_id!r} have duplicate geometry")
-                continue
-            if intersection.is_empty or left_nodes & right_nodes:
-                continue
-            issues.append(
-                f"sources {left_id!r} and {right_id!r} intersect geometrically "
-                "without a shared OSM node"
-            )
-    return issues
 
 
 def _node_attributes_from_osm(osm: Any) -> dict[Hashable, dict[str, Any]]:

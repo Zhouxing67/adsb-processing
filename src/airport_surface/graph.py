@@ -170,40 +170,6 @@ def apply_source_segments(data: dict[str, Any], segments: tuple[SourceSegment, .
             data.pop(name, None)
 
 
-def source_boundaries(airport_graph: AirportGraph, source_id: str) -> list[tuple[float, Any]]:
-    boundaries: dict[float, Any] = {}
-    for _u, _v, data in airport_graph.graph.edges(data=True):
-        if data.get("source_id") == source_id:
-            boundaries[float(data["source_start_m"])] = data["first"]
-            boundaries[float(data["source_end_m"])] = data["last"]
-    return sorted(boundaries.items())
-
-
-def rebuild_source_edges(
-    airport_graph: AirportGraph,
-    source_id: str,
-    boundaries: list[tuple[float, Any]],
-) -> None:
-    source = airport_graph.get_source_edge(source_id)
-    for u, v, key, _data in airport_graph.derived_edges(source_id):
-        airport_graph.graph.remove_edge(u, v, key)
-    for (start_m, first), (end_m, last) in zip(boundaries, boundaries[1:]):
-        data = dict(source.attributes)
-        data.update(
-            geometry=geometry_from_source_interval(
-                airport_graph, source_id, start_m, end_m, first, last
-            ),
-            first=first,
-            last=last,
-            source_id=source_id,
-            source_type=source.source_type,
-            source_start_m=start_m,
-            source_end_m=end_m,
-            source_segments=(SourceSegment(source_id, start_m, end_m),),
-        )
-        airport_graph.graph.add_edge(first, last, **data)
-
-
 def validate_edge_endpoints(
     airport_graph: AirportGraph,
     tolerance_m: float = ENDPOINT_TOLERANCE_M,

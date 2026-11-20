@@ -13,10 +13,6 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
 
-def _immutable_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
-    return dict(value or {})
-
-
 @dataclass(frozen=True, slots=True)
 class SourceNode:
     """One canonical OSM node and any exactly colocated OSM aliases."""

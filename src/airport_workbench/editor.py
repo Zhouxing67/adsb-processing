@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, ParamSpec, Se
 
 import networkx as nx
 from shapely.geometry import LineString, Point, mapping
-from shapely.ops import nearest_points, substring, transform
+from shapely.ops import substring, transform
 
 from airport_surface import (
     AirportGraph,
@@ -32,10 +32,8 @@ from airport_surface.graph import (
     compact_source_segments,
     geometry_from_source_interval,
     geometry_from_source_segments,
-    rebuild_source_edges,
     reverse_source_segments,
     save_graph,
-    source_boundaries,
     source_registry,
     validate_edge_endpoints,
     validate_edge_sources,
@@ -236,12 +234,6 @@ class EditorSession:
         return node
 
     @versioned_edit
-    def delete_node(self, node: Any) -> None:
-        self.require_node(node)
-        with self._edit():
-            self.graph.remove_node(node)
-
-    @versioned_edit
     def draw_connection(
         self,
         u: Any,
@@ -346,12 +338,6 @@ class EditorSession:
             )
             self.graph.edges[u, v, key].update(data)
         return key
-
-    @versioned_edit
-    def delete_edge(self, u: Any, v: Any, key: Any) -> None:
-        u, v, key = self.require_edge(u, v, key)
-        with self._edit():
-            self.graph.remove_edge(u, v, key)
 
     @versioned_edit
     def remove_derived_edge(self, u: Any, v: Any, key: Any) -> dict[str, Any]:
@@ -1010,77 +996,6 @@ class EditorSession:
             data.clear()
             data.update(**protected, **attributes)
 
-    @versioned_edit
-    def insert_node_at(self, longitude: float, latitude: float) -> Any:
-        with self.lock:
-            return self._insert_node_at(longitude, latitude)
-
-    def _insert_node_at(self, longitude: float, latitude: float) -> Any:
-        click = self.airport_graph.project_shape(Point(longitude, latitude))
-        candidates = []
-        for u, v, key, data in self.graph.edges(keys=True, data=True):
-            geometry = data.get("geometry")
-            if geometry is None:
-                continue
-            projected = self.airport_graph.project_shape(geometry)
-            distance = projected.distance(click)
-            if distance <= self.tolerance_m:
-                candidates.append((distance, u, v, key, data, projected))
-        if not candidates:
-            raise ValueError(f"{self.tolerance_m:g} 米范围内没有可切分的边")
-
-        split_point = None
-        for left, right in combinations(candidates, 2):
-            for point in self._intersection_points(left[5].intersection(right[5])):
-                if point.distance(click) <= self.tolerance_m and (
-                    split_point is None or point.distance(click) < split_point.distance(click)
-                ):
-                    split_point = point
-        if split_point is None:
-            nearest = min(candidates, key=lambda item: item[0])
-            split_point = nearest_points(nearest[5], click)[0]
-
-        affected = [item for item in candidates if item[5].distance(split_point) < 0.05]
-        node = self._new_node_id()
-        wgs84_point = transform(self.airport_graph.to_wgs84.transform, split_point)
-        with self._edit():
-            self.graph.add_node(node, pos=wgs84_point.coords[0], source="manual")
-            for _, u, v, key, data, projected in affected:
-                self._split_edge(u, v, key, data, projected, split_point, node)
-        return node
-
-    @versioned_edit
-    def split_edges_at_node(self, node: Any) -> int:
-        self.require_node(node)
-        with self.lock:
-            return self._split_edges_at_node(node)
-
-    def _split_edges_at_node(self, node: Any) -> int:
-        longitude, latitude = self.graph.nodes[node]["pos"][:2]
-        point = self.airport_graph.project_shape(Point(longitude, latitude))
-        affected = []
-        for u, v, key, data in self.graph.edges(keys=True, data=True):
-            if node in {u, v}:
-                continue
-            geometry = data.get("geometry")
-            if geometry is None:
-                continue
-            projected = self.airport_graph.project_shape(geometry)
-            if projected.distance(point) > self.tolerance_m:
-                continue
-            distance = projected.project(point)
-            if 0.05 < distance < projected.length - 0.05:
-                affected.append((u, v, key, deepcopy(data), projected))
-
-        if not affected:
-            raise ValueError(f"{self.tolerance_m:g} 米范围内没有可在此节点切分的边")
-
-        with self._edit():
-            for u, v, key, data, projected in affected:
-                snapped = projected.interpolate(projected.project(point))
-                self._split_edge(u, v, key, data, projected, snapped, node)
-        return len(affected)
-
     @versioned_preview
     def source_split_preview(
         self, u: Any, v: Any, key: Any, longitude: float, latitude: float
@@ -1345,16 +1260,6 @@ class EditorSession:
             validate_edge_sources(self.airport_graph)
         return node
 
-    @staticmethod
-    def _intersection_points(geometry: Any) -> list[Point]:
-        if geometry.geom_type == "Point":
-            return [geometry]
-        if geometry.geom_type == "MultiPoint":
-            return list(geometry.geoms)
-        if geometry.geom_type in {"GeometryCollection", "MultiLineString"}:
-            return [part for part in geometry.geoms if part.geom_type == "Point"]
-        return []
-
     def _split_edge(
         self,
         u: Any,
@@ -1446,71 +1351,6 @@ class EditorSession:
             if start_m - 1e-3 <= station <= end_m + 1e-3:
                 result.append(node_id)
         return tuple(result)
-
-    @versioned_preview
-    def reconnect_preview(
-        self, u: Any, v: Any, key: Any, replace_node: Any, target_node: Any
-    ) -> dict[str, Any]:
-        u, v, key = self.require_edge(u, v, key)
-        self.require_node(replace_node)
-        self.require_node(target_node)
-        data = self.graph.edges[u, v, key]
-        source_id = data.get("source_id")
-        if source_id not in source_registry(self.airport_graph):
-            raise ValueError("该边没有可用于重连的原始 SourceEdge")
-        boundaries = source_boundaries(self.airport_graph, source_id)
-        boundary_nodes = {node for _, node in boundaries}
-        if replace_node not in {u, v} or replace_node not in boundary_nodes:
-            raise ValueError("所选端点不是源边端点或现有切分点")
-        source_line = self.airport_graph.project_shape(
-            source_registry(self.airport_graph)[source_id].geometry
-        )
-        target_position = self.graph.nodes[target_node]["pos"][:2]
-        target_point = Point(self.airport_graph.project.transform(*target_position))
-        if source_line.distance(target_point) > MANUAL_SOURCE_TOLERANCE_M:
-            raise ValueError("目标节点不在原始 LineString 的允许误差内")
-        return {
-            "source_id": source_id,
-            "source_geometry": mapping(source_registry(self.airport_graph)[source_id].geometry),
-            "source_endpoints": [
-                source_registry(self.airport_graph)[source_id].geometry.coords[0],
-                source_registry(self.airport_graph)[source_id].geometry.coords[-1],
-            ],
-            "current_endpoints": [repr(u), repr(v)],
-            "new_endpoints": [
-                repr(target_node if u == replace_node else u),
-                repr(target_node if v == replace_node else v),
-            ],
-            "replace_node": replace_node,
-            "target_node": target_node,
-        }
-
-    @versioned_edit
-    def reconnect_source_edge(
-        self, u: Any, v: Any, key: Any, replace_node: Any, target_node: Any
-    ) -> None:
-        u, v, key = self.require_edge(u, v, key)
-        self.require_node(replace_node)
-        self.require_node(target_node)
-        preview = self.reconnect_preview.__wrapped__(self, u, v, key, replace_node, target_node)
-        source_id = preview["source_id"]
-        source_line = self.airport_graph.project_shape(
-            source_registry(self.airport_graph)[source_id].geometry
-        )
-        target_position = self.graph.nodes[target_node]["pos"][:2]
-        target_point = Point(self.airport_graph.project.transform(*target_position))
-        target_station = source_line.project(target_point)
-        boundaries = [
-            item
-            for item in source_boundaries(self.airport_graph, source_id)
-            if item[1] != replace_node
-        ]
-        if target_node not in {node for _, node in boundaries}:
-            boundaries.append((target_station, target_node))
-        with self._edit():
-            rebuild_source_edges(self.airport_graph, source_id, sorted(boundaries))
-            validate_edge_endpoints(self.airport_graph, MANUAL_SOURCE_TOLERANCE_M)
-
 
 def _serve_workbench(
     airport_graph: AirportGraph,

@@ -5,21 +5,17 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from functools import lru_cache
-from itertools import pairwise
 from math import isfinite, isinf, log, pi
 from typing import Hashable, Protocol, Sequence
 
 import networkx as nx
 from shapely.geometry import Point
 
-from airport_surface import AirportGraph
-
 from .candidates import Candidate, CandidateIndex
 from .path import DirectedEdge, EdgeId
 from .transition_constraints import (
     ANGLE_COMPARISON_TOLERANCE_DEG,
     LocalTurnConstraint,
-    TransitionConstraint,
 )
 
 ZERO_DISTANCE_TOLERANCE_M = 1e-9
@@ -35,111 +31,6 @@ class Transition:
 
     # edges 表示从 前一个候选位置 到 后一个候选位置所需要经过的有序边序列
     edges: tuple[DirectedEdge, ...]
-
-
-class NetworkRouter:
-    """计算两个无向 Candidate 之间如何沿机场网络移动。
-
-    通过枚举源边与目标边的四种出入口组合，调用注入的 Transition 约束求解最短路。
-    主要作为参考基准实现与单元测试验证路由。实际生产匹配流水线使用 `DirectedNetworkRouter`。
-    """
-
-    def __init__(
-        self,
-        airport_graph: AirportGraph,
-        index: CandidateIndex,
-        *,
-        constraints: Sequence[TransitionConstraint] = (),
-    ) -> None:
-        self.graph = airport_graph.graph
-        self.constraints = tuple(constraints)
-        self.lengths = {edge: line.length for edge, line in zip(index.edge_ids, index.lines)}
-        self.routing_graph = nx.Graph()
-        self.routing_graph.add_nodes_from(self.graph.nodes)
-        for u, v, key in self.graph.edges(keys=True):
-            edge = (u, v, key)
-            reverse = (v, u, key)
-            length = self.lengths.get(edge, self.lengths.get(reverse))
-            if length is None:
-                length = airport_graph.length(self.graph.edges[u, v, key]["geometry"])
-            self.lengths[edge] = self.lengths[reverse] = length
-
-            selected = self.routing_graph.get_edge_data(u, v)
-            if selected is None or length < selected["length"]:
-                self.routing_graph.add_edge(u, v, length=length, key=key)
-
-        # Routing never changes the airport topology. Freezing the private
-        # view makes accidental mutations fail immediately during development.
-        nx.freeze(self.routing_graph)
-
-    def _best_parallel_edge(self, u: Hashable, v: Hashable) -> DirectedEdge:
-        data = self.routing_graph.edges[u, v]
-        return DirectedEdge(u, v, data["key"])
-
-    @lru_cache(maxsize=100_000)
-    def _middle(self, start: Hashable, end: Hashable) -> tuple[float, tuple[DirectedEdge, ...]]:
-        """Return a fixed-graph shortest path, cached by endpoint pair."""
-        nodes = nx.shortest_path(
-            self.routing_graph,
-            start,
-            end,
-            weight="length",
-        )
-        edges = tuple(self._best_parallel_edge(u, v) for u, v in pairwise(nodes))
-        distance = sum(self.lengths[edge.from_, edge.to_, edge.key_] for edge in edges)
-        return distance, edges
-
-    def transition(self, source: Candidate, target: Candidate) -> Transition | None:
-        su, sv, sk = source.edge_id
-        tu, tv, tk = target.edge_id
-        slen = self.lengths[su, sv, sk]
-        tlen = self.lengths[tu, tv, tk]
-        choices: list[Transition] = []
-        if (su, sv, sk) == (tu, tv, tk):
-            offset_delta = target.offset - source.offset
-            if abs(offset_delta) <= ZERO_DISTANCE_TOLERANCE_M:
-                choices.append(Transition(0.0, ()))
-            elif offset_delta > 0:
-                direct_edge = DirectedEdge(su, sv, sk)
-                choices.append(Transition(offset_delta, (direct_edge,)))
-            else:
-                direct_edge = DirectedEdge(sv, su, sk)
-                choices.append(Transition(-offset_delta, (direct_edge,)))
-
-        source_exits = (
-            (su, source.offset, DirectedEdge(sv, su, sk)),
-            (sv, slen - source.offset, DirectedEdge(su, sv, sk)),
-        )
-        target_entries = (
-            (tu, target.offset, DirectedEdge(tu, tv, tk)),
-            (tv, tlen - target.offset, DirectedEdge(tv, tu, tk)),
-        )
-        for exit_node, source_cost, source_edge in source_exits:
-            for entry_node, target_cost, target_edge in target_entries:
-                try:
-                    middle_cost, middle_edges = self._middle(exit_node, entry_node)
-                except nx.NetworkXNoPath:
-                    continue
-                edges: list[DirectedEdge] = []
-                if source_cost > ZERO_DISTANCE_TOLERANCE_M:
-                    edges.append(source_edge)
-                edges.extend(middle_edges)
-                if target_cost > ZERO_DISTANCE_TOLERANCE_M:
-                    edges.append(target_edge)
-                distance = source_cost + middle_cost + target_cost
-                if distance <= ZERO_DISTANCE_TOLERANCE_M:
-                    distance = 0.0
-                if not all(constraint.accepts(edges) for constraint in self.constraints):
-                    logger.debug(
-                        "Rejected transition choice: source_candidate=%r "
-                        "target_candidate=%r edges=%r",
-                        source,
-                        target,
-                        tuple(edges),
-                    )
-                    continue
-                choices.append(Transition(distance, tuple(edges)))
-        return min(choices, key=lambda item: item.distance) if choices else None
 
 
 class CandidateRouter(Protocol):
@@ -184,8 +75,11 @@ class DirectedNetworkRouter:
                 return tuple(nx.shortest_path(self.graph, source, target, weight="length"))
             # Returning to an earlier position on the same directed edge requires a cycle.
             return min(
-                ((source, *route) for edge in self.graph.successors(source)
-                 if (route := self._route(edge, target))),
+                (
+                    (source, *route)
+                    for edge in self.graph.successors(source)
+                    if (route := self._route(edge, target))
+                ),
                 key=lambda route: sum(self.lengths[edge] for edge in route[1:]),
                 default=(),
             )

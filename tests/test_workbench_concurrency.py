@@ -157,12 +157,11 @@ def test_preview_revision_becomes_invalid_after_other_edit() -> None:
 
 def test_current_revision_missing_object_and_reversed_undirected_edge() -> None:
     session = graph_session()
-    session.delete_node(1, expected_revision=0)
     with pytest.raises(GraphObjectNotFound):
         session.update_node_attributes(
-            1,
+            "missing",
             {"name": "reviewed"},
-            expected_revision=1,
+            expected_revision=0,
         )
 
     session = graph_session()
@@ -193,14 +192,14 @@ def test_merged_old_node_id_is_not_resolved_through_aliases() -> None:
 def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
     session = graph_session()
     with pytest.raises(TypeError, match="expected_revision"):
-        session.delete_node(1)
+        session.update_node_attributes(1, {"name": "reviewed"})
     session.update_node_attributes(
         1, {"name": "reviewed"}, expected_revision=0
     )
     result = session.undo(expected_revision=1)
     assert result.revision == 2
     with pytest.raises(RevisionConflict):
-        session.delete_node("1", expected_revision=1)
+        session.update_node_attributes("1", {"name": "stale"}, expected_revision=1)
 
     with TestClient(create_app(graph_session())) as client:
         missing = client.post(
