@@ -55,9 +55,9 @@ class FlightObservation:
     latitude: float
     metadata: Mapping[str, Any]
 
-    def __init__(self, record: Mapping[str, Any]) -> None:
+    def __init__(self, record: Mapping[str, Any], *, input_zone: tzinfo = timezone.utc) -> None:
         try:
-            timestamp = utc_timestamp(record["timestamp"])
+            timestamp = utc_timestamp(record["timestamp"], input_zone)
             longitude = float(record["longitude"])
             latitude = float(record["latitude"])
         except (TypeError, ValueError) as error:
@@ -98,19 +98,82 @@ class FlightObservation:
 class Flight:
     """One validated trajectory with UTC observations in stable time order."""
 
-    observations: tuple[FlightObservation, ...]
     flight_id: str
+    number: str | None
+    org_name: str | None
+    dst_name: str | None
+    r_type: str | None
+    a_num: str | None
 
-    def __init__(self, rows: Iterable[Mapping[str, Any]]) -> None:
+    org_runway: str | None
+    dst_runway: str | None
+    dep_stand_position: str | None
+    arr_stand_position: str | None
+
+    sche_dep: datetime | None
+    sche_arr: datetime | None
+    actual_dep: datetime | None
+    actual_arr: datetime | None
+
+    observations: tuple[FlightObservation, ...]
+
+    od_error: str | None
+    movement: str | None
+
+    def __init__(
+        self, rows: Iterable[Mapping[str, Any]], *,
+        movement: str | None = None, input_zone: tzinfo = timezone.utc,
+    ) -> None:
         records = _records(rows, "Flight")
         if not records:
             raise ValueError("Flight must contain at least one observation")
         identifiers = {record["flight_id"] for record in records}
         if len(identifiers) != 1:
             raise ValueError("Flight must contain exactly one flight_id")
-        observations = sorted(map(FlightObservation, records), key=lambda point: point.timestamp)
+        observations = sorted(
+            (FlightObservation(record, input_zone=input_zone) for record in records),
+            key=lambda point: point.timestamp,
+        )
         object.__setattr__(self, "observations", tuple(observations))
         object.__setattr__(self, "flight_id", identifiers.pop())
+        object.__setattr__(self, "movement", movement)
+        text_fields = (
+            "number", "org_name", "dst_name", "r_type", "a_num",
+            "org_runway", "dst_runway", "dep_stand_position", "arr_stand_position",
+        )
+        time_fields = ("sche_dep", "sche_arr", "actual_dep", "actual_arr")
+        values = {field: set() for field in (*text_fields, *time_fields)}
+        for record in records:
+            for name, raw in record.items():
+                field = name.casefold()
+                if field not in values or to_json_value(raw) is None:
+                    continue
+                if str(raw).strip():
+                    value = utc_timestamp(raw, input_zone) if field in time_fields else str(raw).strip()
+                    values[field].add(value)
+        for field, distinct in values.items():
+            object.__setattr__(self, field, next(iter(distinct)) if len(distinct) == 1 else None)
+        od_fields_by_movement: dict[str, tuple[str, ...]] = {
+            "departure": ("dep_stand_position", "org_runway"),
+            "arrival": ("arr_stand_position", "dst_runway"),
+        }
+        od_fields = od_fields_by_movement.get(movement, ()) if movement is not None else ()
+        conflicts = [field for field in od_fields if len(values[field]) > 1]
+        object.__setattr__(
+            self, "od_error", f"Conflicting OD fields: {', '.join(conflicts)}" if conflicts else None
+        )
+
+    @property
+    def stand_ref(self) -> str | None:
+        if self.movement == "departure":
+            return self.dep_stand_position
+        return self.arr_stand_position if self.movement == "arrival" else None
+
+    @property
+    def runway_ref(self) -> str | None:
+        if self.movement == "departure":
+            return self.org_runway
+        return self.dst_runway if self.movement == "arrival" else None
 
     @property
     def rows(self) -> tuple[dict[str, Any], ...]:

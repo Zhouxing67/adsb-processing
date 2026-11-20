@@ -138,16 +138,6 @@ class FlightDatabase:
                         stand_count=count,
                     )
 
-    @staticmethod
-    def _records(cursor) -> Iterator[dict[str, Any]]:
-        columns = list(cursor.keys())
-        while batch := cursor.fetchmany(2048):
-            for values in batch:
-                row = dict(zip(columns, values))
-                if row["timestamp"] is not None:
-                    row["timestamp"] = _utc(row["timestamp"])
-                yield row
-
     def flight(self, movement: str, identifier: str) -> Flight:
         table, _ = STAND_COLUMNS[movement]
         with self.connection() as connection:
@@ -157,7 +147,7 @@ class FlightDatabase:
                 "ORDER BY timestamp, rowid",
                 parameters,
             )
-            return Flight(self._records(cursor))
+            return Flight(cursor.mappings(), movement=movement, input_zone=ZoneInfo(BEIJING))
 
     def detail(
         self, movement: str, identifier: str, offset: int, limit: int,
@@ -200,7 +190,11 @@ class FlightDatabase:
                 f"LIMIT {page_limit} OFFSET {page_offset}",
                 parameters,
             )
-            return columns, fields, inconsistent, list(self._records(records)), total
+            observations = [
+                {**row, "timestamp": _utc(row["timestamp"]) if row["timestamp"] is not None else None}
+                for row in records.mappings()
+            ]
+            return columns, fields, inconsistent, observations, total
 
     def iterate(self, movement: str, limit: int | None) -> Iterator[Flight]:
         table, _ = STAND_COLUMNS[movement]
@@ -218,9 +212,10 @@ class FlightDatabase:
                 """,
                 parameters,
             )
-            records = groupby(self._records(cursor), key=lambda row: row["flight_id"])
+            records = groupby(cursor.mappings(), key=lambda row: row["flight_id"])
+            input_zone = ZoneInfo(BEIJING)
             for _, rows in records:
-                yield Flight(rows)
+                yield Flight(rows, movement=movement, input_zone=input_zone)
 
 
 def open_flight_database(settings: DatabaseSettings, *, read_only: bool = False) -> FlightDatabase:
