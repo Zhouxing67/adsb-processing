@@ -15,7 +15,6 @@
 在项目根目录启动 Quack 服务并保持终端运行。
 
 ```powershell
-$env:PYTHONPATH = 'src'
 uv run --extra stand-editing python -m flight.quack_server
 ```
 
