@@ -38,7 +38,9 @@ A work item carries a caller-supplied key and either a loaded flight or a callab
 that loads it. Expected matching errors are recorded in the outcome. Workbench
 supplies lazy loaders and captures per-item system errors to keep task progress
 accurate. The batch runner propagates unexpected exceptions. For a single flight,
-pass a one-item batch.
+call `matcher.map_flight(flight)`. The flight must provide its movement direction,
+stand reference, and runway designator. The matcher resolves these to endpoint
+candidates and chooses a connected route under the turn constraint.
 
 ## Responsibilities
 

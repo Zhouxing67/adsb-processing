@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Mapping
 from itertools import pairwise
 from math import acos, degrees, hypot, isfinite
 from typing import Protocol, Sequence
 
-from shapely.geometry import Point
+from shapely.geometry import LineString, Point
 
 from .candidates import CandidateIndex
 from .path import DirectedEdge, EdgeId
@@ -30,7 +31,7 @@ class LocalTurnConstraint:
 
     def __init__(
         self,
-        index: CandidateIndex,
+        index: CandidateIndex | Mapping[EdgeId, LineString],
         *,
         max_angle_deg: float,
         tangent_sample_m: float,
@@ -40,7 +41,8 @@ class LocalTurnConstraint:
         self.incoming_tangents: dict[EdgeId, Tangent | None] = {}
         self.outgoing_tangents: dict[EdgeId, Tangent | None] = {}
 
-        for edge_id, line in index.directed_lines.items():
+        directed_lines = index if isinstance(index, Mapping) else index.directed_lines
+        for edge_id, line in directed_lines.items():
             distance = min(self.tangent_sample_m, line.length)
             if distance <= ZERO_DISTANCE_TOLERANCE_M:
                 self.incoming_tangents[edge_id] = None

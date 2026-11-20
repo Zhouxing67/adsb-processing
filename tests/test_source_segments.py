@@ -477,21 +477,40 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
         pd.DataFrame(
             {
                 "flight_id": ["test"] * 6,
+                "dep_stand_position": "009",
+                "org_runway": "01",
                 "timestamp": pd.date_range("2026-01-01", periods=6, freq="1s"),
                 "longitude": [position(x, 0)[0] for x in (1, 5, 9, 11, 15, 19)],
                 "latitude": [position(x, 0)[1] for x in (1, 5, 9, 11, 15, 19)],
             }
-        )
+        ),
+        movement="departure",
     )
     config = MatchConfig(candidate_radius=5, max_candidates=4, gps_sigma=2, transition_beta=5)
-    before = Matcher(graph, config).map_flight(flight)
+
+    def match_with_od(airport_graph):
+        airport_graph = airport_graph.copy()
+        network = airport_graph.graph
+        for u, v, x, kind, ref in (
+            (6, 1, -10, "parking_position", "009"),
+            (7, 3, 30, "runway", "01/19"),
+        ):
+            network.add_node(u, pos=position(x, 0))
+            network.add_edge(u, v, aeroway=kind, ref=ref, geometry=LineString([
+                network.nodes[u]["pos"], network.nodes[v]["pos"],
+            ]))
+        airport_graph.rebuild_stand_index()
+        airport_graph.rebuild_runway_interfaces()
+        return Matcher(airport_graph, config).map_flight(flight)
+
+    before = match_with_od(graph)
 
     session = EditorSession(graph)
     plan = session.node_deletion_plan(2, expected_revision=session.revision).value
     session.remove_node_with_pairs(
         2, [pair_id(plan, {"1", "3"})], expected_revision=session.revision
     )
-    after = Matcher(session.airport_graph, config).map_flight(flight)
+    after = match_with_od(session.airport_graph)
 
     assert after.total_length == pytest.approx(before.total_length, abs=1e-6)
     assert (

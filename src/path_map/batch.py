@@ -30,6 +30,10 @@ class MatchOutcome:
 
 def _failure_type(reason: str) -> str:
     for message, kind in (
+        ("Missing flight OD", "missing_od"),
+        ("Invalid flight OD", "invalid_od"),
+        ("in flight OD:", "unknown_od"),
+        ("No turn-constrained path", "no_legal_path"),
         ("At least two valid observations", "insufficient_observations"),
         ("time gap", "time_gap"),
         ("No edge candidates", "no_candidates"),

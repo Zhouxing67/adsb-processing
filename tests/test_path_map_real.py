@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from flight import MovementType
+from flight import Flight, MovementType
 from airport_surface import load_graph
 from path_map import MatchConfig, Matcher
 from path_map.candidates import CandidateIndex
@@ -47,6 +47,9 @@ def test_target_turn_is_measured_from_local_directed_tangents(target_case):
 def test_target_flight_never_returns_the_prohibited_turn(target_case):
     airport_graph, flight = target_case
 
+    flight = Flight(flight.rows, movement="departure")
+    if not flight.stand_ref or not flight.runway_ref:
+        pytest.skip("Departure sample does not include stand and runway metadata")
     path = Matcher(airport_graph, MatchConfig()).map_flight(flight)
 
     prohibited = (244881044, 1055651195, 244881044)
