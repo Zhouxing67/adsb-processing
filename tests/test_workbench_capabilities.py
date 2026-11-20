@@ -53,4 +53,30 @@ def test_capabilities_keep_server_permissions(with_flights, editable):
             assert client.get("/api/flights").status_code == 404
             assert client.post("/api/matches", json={"flight_keys": []}).status_code in {404, 405}
         else:
-            assert client.post("/api/undo", json={"expected_revision": 0}).status_code == 405
+            blocked = client.post("/api/undo", json={"expected_revision": 0})
+            assert blocked.status_code == 405
+            assert blocked.json() == {
+                "detail": {
+                    "code": "method_not_allowed",
+                    "message": "航班工作台不允许修改机场图",
+                    "context": {},
+                }
+            }
+
+
+def test_http_and_validation_errors_share_one_response_shape():
+    graph = nx.MultiGraph()
+    graph.add_node("a", pos=(116.0, 40.0))
+    session = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
+
+    with TestClient(create_app(session)) as client:
+        missing = client.get("/api/not-found")
+        invalid = client.post("/api/undo", json={"expected_revision": "invalid"})
+
+    assert missing.json() == {
+        "detail": {"code": "not_found", "message": "Not Found", "context": {}}
+    }
+    invalid_detail = invalid.json()["detail"]
+    assert invalid_detail["code"] == "validation_error"
+    assert invalid_detail["message"] == "请求参数验证失败"
+    assert invalid_detail["context"]["errors"][0]["loc"] == ["body", "expected_revision"]

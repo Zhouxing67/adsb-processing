@@ -28,22 +28,6 @@ class MatchOutcome:
         return "success" if self.failure_type is None else "failed"
 
 
-def _failure_type(reason: str) -> str:
-    for message, kind in (
-        ("Missing flight OD", "missing_od"),
-        ("Invalid flight OD", "invalid_od"),
-        ("in flight OD:", "unknown_od"),
-        ("No turn-constrained path", "no_legal_path"),
-        ("At least two valid observations", "insufficient_observations"),
-        ("time gap", "time_gap"),
-        ("No edge candidates", "no_candidates"),
-        ("No connected network path", "disconnected"),
-    ):
-        if message in reason:
-            return kind
-    return "matching_error"
-
-
 def match_batch(
     matcher: Matcher,
     flights: Iterable[tuple[str, Flight | Callable[[], Flight]]],
@@ -63,7 +47,7 @@ def match_batch(
             reason = str(error)
             yield MatchOutcome(
                 key, count, perf_counter() - started,
-                reason=reason, failure_type=_failure_type(reason), error_kind="matching",
+                reason=reason, failure_type=error.code.value, error_kind="matching",
             )
         except Exception as error:
             if not capture_system_errors:

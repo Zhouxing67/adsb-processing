@@ -98,7 +98,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
     assert stale.json()["detail"] == {
         "code": "revision_conflict",
         "message": "图已变更，请重新检查操作",
-        "current_revision": 1,
+        "context": {"current_revision": 1},
     }
     assert session.revision == 1
     assert len(session._history) == 1

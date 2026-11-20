@@ -48,7 +48,7 @@ export function FlightPanel({ onDetail, active = true }: { onDetail(detail: Flig
       return value;
     } catch (failure) {
       if ((failure as Error).name !== 'AbortError') {
-        if (failure instanceof ApiError && failure.detail && typeof failure.detail === 'object' && 'total_pages' in failure.detail) setPage(Math.max(1, Number((failure.detail as { total_pages: unknown }).total_pages)));
+        if (failure instanceof ApiError && failure.detail?.context?.total_pages !== undefined) setPage(Math.max(1, Number(failure.detail.context.total_pages)));
         else setError(failure instanceof Error ? failure.message : '航班目录加载失败');
       }
       return null;

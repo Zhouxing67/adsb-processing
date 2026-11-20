@@ -50,12 +50,21 @@ def test_nested_values_are_json_encodable_and_input_is_unchanged():
 
 def test_arrays_do_not_trigger_ambiguous_missing_value_checks():
     value = np.array([1, 2])
-    assert to_json_value(value) == str(value)
+    with pytest.raises(TypeError, match="ndarray"):
+        to_json_value(value)
 
 
-def test_json_value_distinguishes_dataclass_instances_from_classes():
+def test_json_value_rejects_dataclass_classes_and_unknown_objects():
     from airport_surface import GraphMetadata
     from utils.json_value import to_json_value
 
     assert to_json_value(GraphMetadata("TEST")) == {"airport": "TEST", "build_issues": []}
-    assert to_json_value(GraphMetadata) == str(GraphMetadata)
+    with pytest.raises(TypeError, match="type"):
+        to_json_value(GraphMetadata)
+    with pytest.raises(TypeError, match="object"):
+        to_json_value(object())
+
+
+def test_json_value_rejects_unknown_mapping_keys():
+    with pytest.raises(TypeError, match="object key"):
+        to_json_value({object(): "value"})

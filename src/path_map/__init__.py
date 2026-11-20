@@ -3,6 +3,7 @@
 from .batch import BatchStats, MatchOutcome, match_batch
 from .matcher import (
     MapMatchingError,
+    MapMatchingFailure,
     MatchConfig,
     Matcher,
 )
@@ -15,6 +16,7 @@ __all__ = [
     "match_batch",
     "DirectedEdge",
     "MapMatchingError",
+    "MapMatchingFailure",
     "LocalTurnConstraint",
     "Matcher",
     "MatchConfig",

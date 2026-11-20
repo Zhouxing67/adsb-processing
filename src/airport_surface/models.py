@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Hashable, Mapping, Self, overload
 
 import networkx as nx
@@ -13,6 +14,29 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
 
+def _freeze_source_value(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType(
+            {deepcopy(key): _freeze_source_value(item) for key, item in value.items()}
+        )
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_source_value(item) for item in value)
+    return deepcopy(value)
+
+
+def mutable_source_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a detached mutable copy of recursively frozen source attributes."""
+
+    def thaw(value: Any) -> Any:
+        if isinstance(value, Mapping):
+            return {deepcopy(key): thaw(item) for key, item in value.items()}
+        if isinstance(value, tuple):
+            return [thaw(item) for item in value]
+        return deepcopy(value)
+
+    return {key: thaw(value) for key, value in attributes.items()}
+
+
 @dataclass(frozen=True, slots=True)
 class SourceNode:
     """One canonical OSM node and any exactly colocated OSM aliases."""
@@ -20,12 +44,12 @@ class SourceNode:
     node_id: Hashable
     position: tuple[float, float]
     osm_node_ids: tuple[Hashable, ...]
-    attributes: dict[str, Any] = field(default_factory=dict)
+    attributes: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", tuple(self.position[:2]))
         object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
-        object.__setattr__(self, "attributes", dict(self.attributes))
+        object.__setattr__(self, "attributes", _freeze_source_value(self.attributes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,11 +61,11 @@ class SourceEdge:
     source_type: str
     osm_way_id: Any = None
     osm_node_ids: tuple[Hashable, ...] = ()
-    attributes: dict[str, Any] = field(default_factory=dict)
+    attributes: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
-        object.__setattr__(self, "attributes", dict(self.attributes))
+        object.__setattr__(self, "attributes", _freeze_source_value(self.attributes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,8 +241,26 @@ class AirportGraph:
         return AirportGraph(
             deepcopy(self.graph),
             self.projection,
-            source_nodes=self.source_nodes,
-            source_edges=self.source_edges,
+            source_nodes={
+                node_id: SourceNode(
+                    source.node_id,
+                    source.position,
+                    source.osm_node_ids,
+                    source.attributes,
+                )
+                for node_id, source in self.source_nodes.items()
+            },
+            source_edges={
+                source_id: SourceEdge(
+                    source.source_id,
+                    source.geometry,
+                    source.source_type,
+                    source.osm_way_id,
+                    source.osm_node_ids,
+                    source.attributes,
+                )
+                for source_id, source in self.source_edges.items()
+            },
             node_aliases=self.node_aliases,
             metadata=self.metadata,
         )

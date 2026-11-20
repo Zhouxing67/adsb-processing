@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from flight import Flight
-from path_map import BatchStats, MapMatchingError, match_batch
+from path_map import BatchStats, MapMatchingError, MapMatchingFailure, match_batch
 
 
 def flights_with_two_flights() -> tuple[Flight, ...]:
@@ -25,14 +25,18 @@ def test_batch_continues_after_expected_match_failure():
     class FakeMatcher:
         def map_flight(self, flight):
             if flight.flight_id == "bad":
-                raise MapMatchingError("No edge candidates")
+                raise MapMatchingError(
+                    MapMatchingFailure.NO_CANDIDATES,
+                    "This text is deliberately unrelated to the failure code",
+                )
             return expected_path
 
     inputs = ((flight.flight_id, flight) for flight in flights_with_two_flights())
     outcomes = list(match_batch(FakeMatcher(), inputs))
 
     bad, good = outcomes
-    assert (bad.key, bad.reason, bad.failure_type) == ("bad", "No edge candidates", "no_candidates")
+    assert (bad.key, bad.failure_type) == ("bad", "no_candidates")
+    assert bad.reason == "This text is deliberately unrelated to the failure code"
     assert (good.key, good.path) == ("good", expected_path)
     stats = BatchStats()
     for outcome in outcomes:

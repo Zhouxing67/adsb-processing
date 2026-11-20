@@ -18,6 +18,7 @@ from .models import (
     SourceNode,
     SourceSegment,
     edge_source_segments,
+    mutable_source_attributes,
 )
 
 __all__ = [
@@ -28,6 +29,7 @@ __all__ = [
     "SourceNode",
     "SourceSegment",
     "edge_source_segments",
+    "mutable_source_attributes",
     "geometry_from_source_segments",
     "graph_id",
     "load_graph",

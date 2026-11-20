@@ -17,7 +17,14 @@ from .graph import (
     validate_edge_sources,
     validate_source_intervals,
 )
-from .models import AirportGraph, GraphMetadata, SourceEdge, SourceNode, SourceSegment
+from .models import (
+    AirportGraph,
+    GraphMetadata,
+    SourceEdge,
+    SourceNode,
+    SourceSegment,
+    mutable_source_attributes,
+)
 
 
 def _source_identifier(
@@ -204,7 +211,7 @@ def _build_derived_graph(
         for start_index, end_index in zip(split_indices, split_indices[1:]):
             first, last = canonical_nodes[start_index], canonical_nodes[end_index]
             geometry = LineString(coordinates[start_index : end_index + 1])
-            data = dict(source.attributes)
+            data = mutable_source_attributes(source.attributes)
             data.update(
                 geometry=geometry,
                 first=first,

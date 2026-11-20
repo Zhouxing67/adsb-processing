@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import math
 from dataclasses import dataclass, replace
+from enum import StrEnum
 from functools import cached_property
-from typing import Hashable
+from typing import Any, Hashable, Mapping
 
 import networkx as nx
 from shapely.geometry import Point
@@ -27,8 +28,31 @@ from .transition_constraints import LocalTurnConstraint
 logger = logging.getLogger(__name__)
 
 
+class MapMatchingFailure(StrEnum):
+    """Stable machine-readable reasons for expected matching failures."""
+
+    INVALID_OD = "invalid_od"
+    MISSING_OD = "missing_od"
+    UNKNOWN_OD = "unknown_od"
+    NO_CANDIDATES = "no_candidates"
+    NO_LEGAL_PATH = "no_legal_path"
+    NO_MOVEMENT = "no_movement"
+    UNSUPPORTED_TOPOLOGY = "unsupported_topology"
+
+
 class MapMatchingError(ValueError):
-    """Raised when observations cannot be matched without guessing."""
+    """An expected matching failure with a stable code and diagnostic context."""
+
+    def __init__(
+        self,
+        code: MapMatchingFailure,
+        message: str,
+        *,
+        context: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.context = dict(context or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,8 +141,16 @@ class Matcher:
                 directed_observations.append(point)
 
         if not directed_layers:
-            raise MapMatchingError("At least one observation with edge candidates is required; got 0")
-        logger.debug("Map matching retained %d of %d observations", len(directed_layers), len(observations))
+            raise MapMatchingError(
+                MapMatchingFailure.NO_CANDIDATES,
+                "At least one observation with edge candidates is required; got 0",
+                context={"observation_count": len(observations)},
+            )
+        logger.debug(
+            "Map matching retained %d of %d observations",
+            len(directed_layers),
+            len(observations),
+        )
         # Boundary segments have no observed displacement. Their score penalizes
         # added network distance.
         boundary_observations = [
@@ -134,11 +166,13 @@ class Matcher:
             )
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError(
+                MapMatchingFailure.NO_LEGAL_PATH,
                 "No turn-constrained path matches the observations and flight OD"
             ) from exc
         edges = _recover(transitions, states[0])
         if not edges:
             raise MapMatchingError(
+                MapMatchingFailure.NO_MOVEMENT,
                 "Retained candidates have no along-network movement; "
                 "a directed path cannot be determined"
             )
@@ -159,11 +193,28 @@ class Matcher:
         self, flight: Flight,
     ) -> tuple[tuple[list[Candidate], list[Candidate]], set[EdgeId]]:
         if flight.od_error:
-            raise MapMatchingError(f"Invalid flight OD: {flight.od_error}")
+            raise MapMatchingError(
+                MapMatchingFailure.INVALID_OD,
+                f"Invalid flight OD: {flight.od_error}",
+                context={"od_error": flight.od_error},
+            )
         if flight.movement not in ("departure", "arrival"):
-            raise MapMatchingError("Missing flight OD: departure or arrival direction is required")
+            raise MapMatchingError(
+                MapMatchingFailure.MISSING_OD,
+                "Missing flight OD: departure or arrival direction is required",
+                context={"field": "movement"},
+            )
         if not flight.stand_ref or not flight.runway_ref:
-            raise MapMatchingError("Missing flight OD: both stand and runway are required")
+            missing = [
+                name
+                for name, value in (("stand", flight.stand_ref), ("runway", flight.runway_ref))
+                if not value
+            ]
+            raise MapMatchingError(
+                MapMatchingFailure.MISSING_OD,
+                "Missing flight OD: both stand and runway are required",
+                context={"fields": missing},
+            )
 
         departure = flight.movement == "departure"
         graph = self.airport_graph
@@ -173,7 +224,11 @@ class Matcher:
                 if edge in self._directed_router.lengths:
                     stand_layer.append(self._boundary_candidate(edge, at_end=not departure))
         if not stand_layer:
-            raise MapMatchingError(f"Unknown or unusable stand in flight OD: {flight.stand_ref!r}")
+            raise MapMatchingError(
+                MapMatchingFailure.UNKNOWN_OD,
+                f"Unknown or unusable stand in flight OD: {flight.stand_ref!r}",
+                context={"field": "stand", "value": flight.stand_ref},
+            )
 
         runway_layer = []
         runway_edges: set[EdgeId] = set()
@@ -189,7 +244,11 @@ class Matcher:
             if runway_edges.intersection(interface["runway"]):
                 runway_layer.extend(self._runway_boundary(node, interface["taxiway"], departure))
         if not runway_layer:
-            raise MapMatchingError(f"Unknown or unusable runway in flight OD: {flight.runway_ref!r}")
+            raise MapMatchingError(
+                MapMatchingFailure.UNKNOWN_OD,
+                f"Unknown or unusable runway in flight OD: {flight.runway_ref!r}",
+                context={"field": "runway", "value": flight.runway_ref},
+            )
         layers = (stand_layer, runway_layer) if departure else (runway_layer, stand_layer)
         return layers, runway_edges
 
@@ -236,7 +295,11 @@ class Matcher:
             self.config.max_candidates,
         )
         if any(candidate.edge_id[0] == candidate.edge_id[1] for candidate in candidates):
-            raise MapMatchingError("Map matching candidates on self-loop edges are not supported")
+            raise MapMatchingError(
+                MapMatchingFailure.UNSUPPORTED_TOPOLOGY,
+                "Map matching candidates on self-loop edges are not supported",
+                context={"topology": "self_loop"},
+            )
         return candidates
 
 

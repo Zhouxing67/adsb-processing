@@ -16,9 +16,11 @@ import networkx as nx
 import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
+from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airport_surface import edge_source_segments
 from airport_surface.graph import (
@@ -29,6 +31,13 @@ from flight import Flight
 from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
 
+from .api_models import (
+    ERROR_RESPONSES,
+    ApiErrorCode,
+    ErrorResponse,
+    error_detail,
+    normalize_error_detail,
+)
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightWorkbench
 from .identifiers import (
@@ -354,7 +363,11 @@ def create_app(
             if flight_workbench is not None:
                 await run_in_threadpool(flight_workbench.close)
 
-    app = FastAPI(title="Airport Workbench", lifespan=lifespan)
+    app = FastAPI(
+        title="Airport Workbench",
+        lifespan=lifespan,
+        responses=ERROR_RESPONSES,
+    )
     flight_routes = APIRouter()
     graph_routes = APIRouter()
 
@@ -362,13 +375,13 @@ def create_app(
     async def revision_conflict_handler(_request: Request, error: RevisionConflict) -> JSONResponse:
         return JSONResponse(
             status_code=409,
-            content={
-                "detail": {
-                    "code": "revision_conflict",
-                    "message": str(error),
-                    "current_revision": error.current_revision,
-                }
-            },
+            content=ErrorResponse(
+                detail=error_detail(
+                    ApiErrorCode.REVISION_CONFLICT,
+                    str(error),
+                    {"current_revision": error.current_revision},
+                )
+            ).model_dump(mode="json"),
         )
 
     @app.exception_handler(GraphObjectNotFound)
@@ -377,7 +390,45 @@ def create_app(
     ) -> JSONResponse:
         return JSONResponse(
             status_code=404,
-            content={"detail": {"code": "object_not_found", "message": str(error)}},
+            content=ErrorResponse(
+                detail=error_detail(ApiErrorCode.OBJECT_NOT_FOUND, str(error))
+            ).model_dump(mode="json"),
+        )
+
+    @app.exception_handler(StarletteHTTPException)
+    async def http_error_handler(
+        _request: Request, error: StarletteHTTPException
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=error.status_code,
+            content=ErrorResponse(
+                detail=normalize_error_detail(error.status_code, error.detail)
+            ).model_dump(mode="json"),
+            headers=error.headers,
+        )
+
+    @app.exception_handler(RequestValidationError)
+    async def validation_error_handler(
+        _request: Request, error: RequestValidationError
+    ) -> JSONResponse:
+        return JSONResponse(
+            status_code=422,
+            content=ErrorResponse(
+                detail=error_detail(
+                    ApiErrorCode.VALIDATION_ERROR,
+                    "请求参数验证失败",
+                    {
+                        "errors": [
+                            {
+                                str(key): list(value) if key == "loc" else value
+                                for key, value in item.items()
+                                if key not in {"ctx", "input", "url"}
+                            }
+                            for item in error.errors()
+                        ]
+                    },
+                )
+            ).model_dump(mode="json"),
         )
 
     @app.middleware("http")
@@ -393,7 +444,12 @@ def create_app(
         if graph_write_blocked and not safe_method:
             return JSONResponse(
                 status_code=405,
-                content={"detail": "航班工作台不允许修改机场图"},
+                content=ErrorResponse(
+                    detail=error_detail(
+                        ApiErrorCode.METHOD_NOT_ALLOWED,
+                        "航班工作台不允许修改机场图",
+                    )
+                ).model_dump(mode="json"),
             )
         return await call_next(request)
 

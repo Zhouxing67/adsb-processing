@@ -20,7 +20,7 @@ from airport_workbench.flights import (
     flight_key,
 )
 from flight import Flight
-from path_map import MapMatchingError, Path
+from path_map import MapMatchingError, MapMatchingFailure, Path
 
 
 class SmallGraph:
@@ -186,7 +186,7 @@ def test_partial_match_failure_keeps_other_success(monkeypatch: pytest.MonkeyPat
 
         def map_flight(self, item: Flight) -> object:
             if item.flight_id == "bad":
-                raise MapMatchingError("no candidate")
+                raise MapMatchingError(MapMatchingFailure.NO_CANDIDATES, "no candidate")
             return object()
 
     monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", FakeMatcher)
@@ -204,7 +204,7 @@ def test_partial_match_failure_keeps_other_success(monkeypatch: pytest.MonkeyPat
     assert progress["complete"] is True
     assert status["progress"]["summary"] == progress["summary"]
     assert progress["summary"]["success_rate"] == 0.5
-    assert progress["summary"]["failure_counts"] == {"matching_error": 1}
+    assert progress["summary"]["failure_counts"] == {"no_candidates": 1}
 
 
 def test_retry_does_not_rewrite_completed_task_progress(
@@ -220,7 +220,9 @@ def test_retry_does_not_rewrite_completed_task_progress(
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise MapMatchingError("first attempt failed")
+                raise MapMatchingError(
+                    MapMatchingFailure.NO_LEGAL_PATH, "first attempt failed"
+                )
             return object()
 
     class InlineExecutor:

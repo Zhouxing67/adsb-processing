@@ -25,6 +25,7 @@ from airport_surface import (
     SourceNode,
     SourceSegment,
     edge_source_segments,
+    mutable_source_attributes,
 )
 from airport_surface.graph import (
     DEFAULT_GRAPH_PATH,
@@ -102,14 +103,7 @@ class EditorSession:
 
     def __init__(self, airport_graph: AirportGraph, tolerance_m: float = 8) -> None:
         self.tolerance_m = tolerance_m
-        self.airport_graph = AirportGraph(
-            airport_graph.graph.copy(),
-            airport_graph.projection,
-            source_nodes=airport_graph.source_nodes,
-            source_edges=airport_graph.source_edges,
-            node_aliases=airport_graph.node_aliases,
-            metadata=airport_graph.metadata,
-        )
+        self.airport_graph = airport_graph.copy()
         self._history: list[tuple[AirportGraph, bool]] = []
         self.revision = 0
         self.topology_revision = 0
@@ -494,7 +488,7 @@ class EditorSession:
         ):
             raise ValueError("该来源路径已经存在于图中")
         first_source = self.airport_graph.get_source_edge(candidate["source_ids"][0])
-        data = dict(first_source.attributes)
+        data = mutable_source_attributes(first_source.attributes)
         data.update(
             geometry=candidate["geometry"],
             first=candidate["first"],
@@ -718,8 +712,10 @@ class EditorSession:
                     data["length_m"] = length_m
                 key = self.graph.add_edge(first, last, **data)
                 added_edges.append((first, last, key))
-            attributes = deepcopy(
-                dict(self.airport_graph.source_nodes[canonical].attributes)
+            attributes = (
+                mutable_source_attributes(
+                    self.airport_graph.source_nodes[canonical].attributes
+                )
                 if canonical in self.airport_graph.source_nodes
                 else {}
             )

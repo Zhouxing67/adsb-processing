@@ -1,18 +1,25 @@
 import type { FlightCatalogue, FlightDetail, FlightGeometry, MatchStatus, WorkbenchState } from './types';
+import type { components as GraphApi } from './generated/graph';
+
+export type ApiErrorDetail = GraphApi['schemas']['ErrorDetail'];
 
 export class ApiError extends Error {
-  constructor(message: string, readonly status: number, readonly detail?: unknown) { super(message); }
+  constructor(message: string, readonly status: number, readonly detail?: ApiErrorDetail) { super(message); }
 }
-function detailMessage(detail: unknown): string {
-  if (typeof detail === 'string') return detail;
-  if (detail && typeof detail === 'object' && 'message' in detail) return String((detail as { message: unknown }).message);
-  return '请求失败';
+function errorDetail(value: unknown): ApiErrorDetail | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const detail = value as Record<string, unknown>;
+  if (typeof detail.code !== 'string' || typeof detail.message !== 'string' || !detail.context || typeof detail.context !== 'object') return undefined;
+  return detail as ApiErrorDetail;
 }
 export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init);
   if (response.status === 204) return undefined as T;
   const payload = await response.json().catch(() => null) as { detail?: unknown } | null;
-  if (!response.ok) throw new ApiError(detailMessage(payload?.detail), response.status, payload?.detail);
+  if (!response.ok) {
+    const detail = errorDetail(payload?.detail);
+    throw new ApiError(detail?.message ?? '请求失败', response.status, detail);
+  }
   return payload as T;
 }
 function json(method: string, body: unknown): RequestInit {
