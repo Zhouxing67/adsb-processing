@@ -138,6 +138,35 @@ class FlightDatabase:
                         stand_count=count,
                     )
 
+    def validation_flights(self, lower_threshold: int = 30) -> list[dict[str, Any]]:
+        """Return the stand/runway validation cohort and counts of qualifying points."""
+        if lower_threshold < 1:
+            raise ValueError("lower_threshold must be positive")
+        with self.connection() as connection:
+            (threshold,), parameters = self._database.bind(connection, lower_threshold)
+            queries = []
+            for movement, suffix, runway in (
+                ("departure", "dep", "org_runway"), ("arrival", "arr", "dst_runway")
+            ):
+                table, stand = STAND_COLUMNS[movement]
+                queries.append(f"""
+                    SELECT flight_id, '{suffix}' AS movement, {stand} AS stand,
+                           COUNT(*) AS flight_points
+                    FROM main.{table}
+                    WHERE {stand} IS NOT NULL
+                      AND {stand} NOT IN ('952L', '14', '504', '506', '951L', '952R')
+                      AND {runway} IS NOT NULL
+                    GROUP BY flight_id, {stand}
+                    HAVING COUNT(*) >= {threshold}
+                """)
+            cohort = " UNION ALL ".join(queries)
+            rows = connection.execute(
+                f"SELECT *, COUNT(*) OVER () AS total_flights FROM ({cohort}) "
+                "ORDER BY movement, flight_id, stand",
+                parameters * len(queries),
+            )
+            return [dict(row) for row in rows.mappings()]
+
     def flight(self, movement: str, identifier: str) -> Flight:
         table, _ = STAND_COLUMNS[movement]
         with self.connection() as connection:

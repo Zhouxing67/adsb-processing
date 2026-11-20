@@ -230,6 +230,7 @@ class FlightWorkbench:
         stands: Sequence[str] = (),
         start_date: date | None = None,
         end_date: date | None = None,
+        validation_only: bool = False,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -253,7 +254,7 @@ class FlightWorkbench:
         with self.lock:
             keys = self._filtered_keys(
                 query, movement_type, status, min_points, effective_max,
-                stands, start_date, end_date,
+                stands, start_date, end_date, validation_only,
             )
             start = (page - 1) * page_size
             for key in keys[start : start + page_size]:
@@ -277,6 +278,7 @@ class FlightWorkbench:
         return {
             "items": rows,
             "stand_options": stand_options,
+            "supports_validation_filter": self.flight_database is not None,
             "total": total,
             "total_pages": total_pages,
             "page": actual_page,
@@ -303,6 +305,7 @@ class FlightWorkbench:
         stands: Sequence[str] = (),
         start_date: date | None = None,
         end_date: date | None = None,
+        validation_only: bool = False,
     ) -> dict[str, Any]:
         """Return the fixed key set matching the currently committed filters."""
         self.sync_graph()
@@ -311,7 +314,7 @@ class FlightWorkbench:
         with self.lock:
             keys = self._filtered_keys(
                 query, movement_type, status, min_points, effective_max,
-                stands, start_date, end_date,
+                stands, start_date, end_date, validation_only,
             )
         return {"flight_keys": keys, "count": len(keys)}
 
@@ -424,10 +427,21 @@ class FlightWorkbench:
         stands: Sequence[str] = (),
         start_date: date | None = None,
         end_date: date | None = None,
+        validation_only: bool = False,
     ) -> list[str]:
         if start_date and end_date and start_date > end_date:
             raise ValueError("起始日期不得晚于终止日期")
+        if validation_only and self.flight_database is None:
+            raise ValueError("验证航班筛选需要数据库")
         if self.flight_database:
+            eligible = None
+            if validation_only:
+                directions = {"dep": "departure", "arr": "arrival"}
+                eligible = {
+                    database_flight_key(directions[row["movement"]], row["flight_id"])
+                    for row in self.flight_database.validation_flights()
+                    if row["flight_id"] is not None
+                }
             return [
                 key
                 for summary in self.flight_database.summaries(
@@ -437,6 +451,7 @@ class FlightWorkbench:
                     display_timezone=self.display_timezone,
                 )
                 if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
+                and (eligible is None or key in eligible)
                 and (not status or self.results[key].status == status)
             ]
         selected_stands = set(stands)

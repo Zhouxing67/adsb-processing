@@ -424,6 +424,7 @@ def create_app(
         stands: Annotated[list[str] | None, Query()] = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        validation_only: bool = False,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
@@ -437,6 +438,7 @@ def create_app(
                 stands=stands or (),
                 start_date=start_date,
                 end_date=end_date,
+                validation_only=validation_only,
                 page=page,
                 page_size=page_size,
             )
@@ -494,6 +496,7 @@ def create_app(
         stands: Annotated[list[str] | None, Query()] = None,
         start_date: date | None = None,
         end_date: date | None = None,
+        validation_only: bool = False,
     ) -> dict[str, Any]:
         try:
             return flight_workbench.filtered_keys(
@@ -505,6 +508,7 @@ def create_app(
                 stands=stands or (),
                 start_date=start_date,
                 end_date=end_date,
+                validation_only=validation_only,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

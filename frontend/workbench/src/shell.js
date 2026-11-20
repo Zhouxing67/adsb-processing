@@ -115,6 +115,7 @@ if (flightMode) {
 
  const filterButton=document.createElement('button');filterButton.className='secondary-button flight-filter-submit';filterButton.textContent='过滤';filterButton.onclick=()=>window.dispatchEvent(new Event('submit-flight-filters'));
  const filterActions=document.querySelector('#match-selected').parentElement;filterActions.prepend(filterButton);if(resetButton)filterActions.append(resetButton);
+
 }
 
 // A single rail owns layout, resizing and visibility; only its content changes.

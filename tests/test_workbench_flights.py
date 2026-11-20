@@ -426,6 +426,44 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
         assert client.get(f"/api/flights/{arrival}").json()["fields"]["arr_stand_position"] is None
 
 
+def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
+    from flight.flight_repository import FlightDatabase, database_flight_key
+
+    duckdb = pytest.importorskip("duckdb")
+    database = tmp_path / "validation.duckdb"
+    with duckdb.connect(str(database)) as connection:
+        for suffix, stand, runway in (
+            ("dep", "dep_stand_position", "org_runway"),
+            ("arr", "arr_stand_position", "dst_runway"),
+        ):
+            table = f"adsb_202406_{suffix}"
+            connection.execute(f"""
+                CREATE TABLE {table} AS
+                SELECT flight_id, flight_id AS "NUMBER",
+                       TIMESTAMP '2024-06-15 00:05:00' AS timestamp,
+                       116.0 AS longitude, 40.0 AS latitude,
+                       stand AS {stand}, runway AS {runway}
+                FROM (VALUES ('eligible', '009', '01', 30),
+                             ('eligible', '009', NULL, 4),
+                             ('too-few', '009', '01', 29),
+                             ('too-few', '009', NULL, 10),
+                             ('excluded', '952L', '01', 40))
+                     AS cases(flight_id, stand, runway, points),
+                     range(points)
+            """)
+    store = FlightDatabase(database)
+    assert store.validation_flights() == [
+        dict(flight_id="eligible", movement=movement, stand="009", flight_points=30, total_flights=2)
+        for movement in ("arr", "dep")
+    ]
+    assert store.validation_flights(31) == []
+    workbench = FlightWorkbench(SmallGraph(), flight_database=store)
+    assert workbench.catalogue(validation_only=True)["total"] == 2
+    assert workbench.filtered_keys(validation_only=True, movement_type="departure")["flight_keys"] == [
+        database_flight_key("departure", "eligible")
+    ]
+
+
 def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
     from concurrent.futures import ThreadPoolExecutor
     from threading import Event
