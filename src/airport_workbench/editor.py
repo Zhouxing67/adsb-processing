@@ -19,8 +19,6 @@ import networkx as nx
 from shapely.geometry import LineString, Point, mapping
 from shapely.ops import nearest_points, substring, transform
 
-from flight import Flight
-from flight.flight_repository import FlightDatabase
 from airport_surface import (
     AirportGraph,
     SourceEdge,
@@ -43,6 +41,8 @@ from airport_surface.graph import (
     validate_edge_sources,
 )
 from airport_surface.source_chain import split_source_chain
+from flight import Flight
+from flight.flight_repository import FlightDatabase
 
 if TYPE_CHECKING:
     from path_map import Path
@@ -95,24 +95,8 @@ def versioned_edit(
     return wrapped  # type: ignore[return-value]
 
 
-def versioned_preview(
-    operation: Callable[P, T],
-) -> Callable[P, CommandResult[T]]:
-    """Compute a preview under the lock for one explicitly checked revision."""
-
-    @wraps(operation)
-    def wrapped(
-        self: EditorSession,
-        *args: Any,
-        expected_revision: int,
-        **kwargs: Any,
-    ) -> CommandResult[T]:
-        with self.lock:
-            self._check_revision(expected_revision)
-            value = operation(self, *args, **kwargs)
-            return CommandResult(value, self.revision)
-
-    return wrapped  # type: ignore[return-value]
+# Alias for read-only preview operations executed under checked revision
+versioned_preview = versioned_edit
 
 
 class EditorSession:

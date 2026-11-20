@@ -38,7 +38,11 @@ class Transition:
 
 
 class NetworkRouter:
-    """负责计算两个 Candidate 之间如何沿机场网络移动。"""
+    """计算两个无向 Candidate 之间如何沿机场网络移动。
+
+    通过枚举源边与目标边的四种出入口组合，调用注入的 Transition 约束求解最短路。
+    主要作为参考基准实现与单元测试验证路由。实际生产匹配流水线使用 `DirectedNetworkRouter`。
+    """
 
     def __init__(
         self,
@@ -143,7 +147,11 @@ class CandidateRouter(Protocol):
 
 
 class DirectedNetworkRouter:
-    """Route between directed positions using only allowed edge-to-edge turns."""
+    """生产级有向对偶线图路由：在有向边节点构成的图上沿允许转角寻找最短路。
+
+    被 `Matcher` 生产流水线直接使用。将无向多重图转换为以有向边为顶点的有向图，
+    并在构图时直接应用 `LocalTurnConstraint` 过滤非法转角（>150°），杜绝掉头走法。
+    """
 
     def __init__(self, index: CandidateIndex, turns: LocalTurnConstraint) -> None:
         self.lengths = {

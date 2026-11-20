@@ -4,9 +4,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
-from types import MappingProxyType
 from typing import Any
 
 from utils.json_value import to_json_value
@@ -45,7 +44,7 @@ def utc_timestamp(value: Any, input_zone: tzinfo = timezone.utc) -> datetime:
     return stamp.astimezone(timezone.utc)
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(slots=True)
 class FlightObservation:
     """A trajectory point with its original observation attributes."""
 
@@ -53,7 +52,7 @@ class FlightObservation:
     timestamp: datetime
     longitude: float
     latitude: float
-    metadata: Mapping[str, Any]
+    metadata: dict[str, Any] = field(default_factory=dict)
 
     def __init__(self, record: Mapping[str, Any], *, input_zone: tzinfo = timezone.utc) -> None:
         try:
@@ -66,13 +65,13 @@ class FlightObservation:
             raise ValueError("Flight coordinates must be finite")
         if not -180 <= longitude <= 180 or not -90 <= latitude <= 90:
             raise ValueError("Flight coordinates outside longitude or latitude bounds")
-        object.__setattr__(self, "flight_id", record["flight_id"])
-        object.__setattr__(self, "timestamp", timestamp)
-        object.__setattr__(self, "longitude", longitude)
-        object.__setattr__(self, "latitude", latitude)
-        object.__setattr__(self, "metadata", MappingProxyType({
+        self.flight_id = record["flight_id"]
+        self.timestamp = timestamp
+        self.longitude = longitude
+        self.latitude = latitude
+        self.metadata = {
             name: value for name, value in record.items() if name not in REQUIRED_FLIGHT_COLUMNS
-        }))
+        }
 
     @property
     def altitude(self) -> float | None:
@@ -94,31 +93,31 @@ class FlightObservation:
         }
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(slots=True)
 class Flight:
     """One validated trajectory with UTC observations in stable time order."""
 
-    flight_id: str
-    number: str | None
-    org_name: str | None
-    dst_name: str | None
-    r_type: str | None
-    a_num: str | None
+    flight_id: str = field(init=False)
+    number: str | None = field(init=False, default=None)
+    org_name: str | None = field(init=False, default=None)
+    dst_name: str | None = field(init=False, default=None)
+    r_type: str | None = field(init=False, default=None)
+    a_num: str | None = field(init=False, default=None)
 
-    org_runway: str | None
-    dst_runway: str | None
-    dep_stand_position: str | None
-    arr_stand_position: str | None
+    org_runway: str | None = field(init=False, default=None)
+    dst_runway: str | None = field(init=False, default=None)
+    dep_stand_position: str | None = field(init=False, default=None)
+    arr_stand_position: str | None = field(init=False, default=None)
 
-    sche_dep: datetime | None
-    sche_arr: datetime | None
-    actual_dep: datetime | None
-    actual_arr: datetime | None
+    sche_dep: datetime | None = field(init=False, default=None)
+    sche_arr: datetime | None = field(init=False, default=None)
+    actual_dep: datetime | None = field(init=False, default=None)
+    actual_arr: datetime | None = field(init=False, default=None)
 
-    observations: tuple[FlightObservation, ...]
+    observations: tuple[FlightObservation, ...] = field(init=False)
 
-    od_error: str | None
-    movement: str | None
+    od_error: str | None = field(init=False, default=None)
+    movement: str | None = field(init=False, default=None)
 
     def __init__(
         self, rows: Iterable[Mapping[str, Any]], *,
@@ -134,9 +133,9 @@ class Flight:
             (FlightObservation(record, input_zone=input_zone) for record in records),
             key=lambda point: point.timestamp,
         )
-        object.__setattr__(self, "observations", tuple(observations))
-        object.__setattr__(self, "flight_id", identifiers.pop())
-        object.__setattr__(self, "movement", movement)
+        self.observations = tuple(observations)
+        self.flight_id = identifiers.pop()
+        self.movement = movement
         text_fields = (
             "number", "org_name", "dst_name", "r_type", "a_num",
             "org_runway", "dst_runway", "dep_stand_position", "arr_stand_position",
@@ -149,19 +148,21 @@ class Flight:
                 if field not in values or to_json_value(raw) is None:
                     continue
                 if str(raw).strip():
-                    value = utc_timestamp(raw, input_zone) if field in time_fields else str(raw).strip()
+                    value = (
+                        utc_timestamp(raw, input_zone)
+                        if field in time_fields
+                        else str(raw).strip()
+                    )
                     values[field].add(value)
         for field, distinct in values.items():
-            object.__setattr__(self, field, next(iter(distinct)) if len(distinct) == 1 else None)
+            setattr(self, field, next(iter(distinct)) if len(distinct) == 1 else None)
         od_fields_by_movement: dict[str, tuple[str, ...]] = {
             "departure": ("dep_stand_position", "org_runway"),
             "arrival": ("arr_stand_position", "dst_runway"),
         }
         od_fields = od_fields_by_movement.get(movement, ()) if movement is not None else ()
         conflicts = [field for field in od_fields if len(values[field]) > 1]
-        object.__setattr__(
-            self, "od_error", f"Conflicting OD fields: {', '.join(conflicts)}" if conflicts else None
-        )
+        self.od_error = f"Conflicting OD fields: {', '.join(conflicts)}" if conflicts else None
 
     @property
     def stand_ref(self) -> str | None:

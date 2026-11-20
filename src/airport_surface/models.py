@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import dataclass, field
-from types import MappingProxyType
 from typing import Any, Hashable, Mapping, Self, overload
 
 import networkx as nx
@@ -14,8 +13,8 @@ from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
 
-def _immutable_mapping(value: Mapping[str, Any] | None) -> Mapping[str, Any]:
-    return MappingProxyType(deepcopy(dict(value or {})))
+def _immutable_mapping(value: Mapping[str, Any] | None) -> dict[str, Any]:
+    return dict(value or {})
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,12 +24,12 @@ class SourceNode:
     node_id: Hashable
     position: tuple[float, float]
     osm_node_ids: tuple[Hashable, ...]
-    attributes: Mapping[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "position", tuple(self.position[:2]))
         object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
-        object.__setattr__(self, "attributes", _immutable_mapping(self.attributes))
+        object.__setattr__(self, "attributes", dict(self.attributes))
 
 
 @dataclass(frozen=True, slots=True)
@@ -42,11 +41,11 @@ class SourceEdge:
     source_type: str
     osm_way_id: Any = None
     osm_node_ids: tuple[Hashable, ...] = ()
-    attributes: Mapping[str, Any] = field(default_factory=dict)
+    attributes: dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
-        object.__setattr__(self, "attributes", _immutable_mapping(self.attributes))
+        object.__setattr__(self, "attributes", dict(self.attributes))
 
 
 @dataclass(frozen=True, slots=True)

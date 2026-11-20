@@ -361,7 +361,7 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
 def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     from datetime import date
 
-    from flight.database import BEIJING, FlightDatabase, database_flight_key
+    from flight.flight_repository import BEIJING, FlightDatabase, database_flight_key
 
     duckdb = pytest.importorskip("duckdb")
     database = tmp_path / "catalogue.duckdb"

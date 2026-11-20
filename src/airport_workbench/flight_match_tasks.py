@@ -41,8 +41,7 @@ class MatchResultItem:
     updated_at: str | None = None
 
     def public(self) -> dict[str, Any]:
-        # Never dataclasses.asdict() this object: Path owns an AirportGraph containing
-        # immutable mapping proxies that are intentionally not deepcopy-able.
+        # Return a lightweight dictionary representation of match results for API responses.
         return {
             "flight_key": self.flight_key,
             "graph_id": self.graph_id,
