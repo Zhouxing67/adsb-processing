@@ -23,9 +23,10 @@ export const api = {
   catalogue: (params: URLSearchParams, signal?: AbortSignal) => request<FlightCatalogue>(`/api/flights?${params}`, { signal }),
   filteredFlights: (params: URLSearchParams) => request<{ flight_keys: string[]; count: number }>(`/api/flight-selection?${params}`),
   geometry: (key: string) => request<FlightGeometry>(`/api/flights/${encodeURIComponent(key)}/geometry`),
-  detail: (key: string, page = 1) => request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}`),
+  detail: (key: string, page = 1, allFields = false) => request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}&observation_page_size=100&all_fields=${allFields}`),
   updateStand: (key: string, stand_position: string | null) => request<void>(`/api/flights/${encodeURIComponent(key)}/stand`, json('PATCH', { stand_position })),
   submitMatches: (flight_keys: string[], force = false) => request<{ task_id: string; queued_count: number }>('/api/matches', json('POST', { flight_keys, force })),
   matchStatus: () => request<MatchStatus>('/api/matches'),
+  mergeCandidates: <T>() => request<T>('/api/merge-candidates'),
   graphCommand: <T>(path: string, body: unknown) => request<T>(path, json('POST', body)),
 };

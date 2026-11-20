@@ -50,14 +50,18 @@ export interface FlightCatalogue {
 export interface FlightGeometry {
   flight_key: string; flight: GeoCollection; path: GeoCollection | null; match: MatchState;
 }
+export interface MapFlightEntry {
+  geometry: FlightGeometry; label: string; slot: number;
+  trajectoryVisible: boolean; pathVisible: boolean;
+}
 export interface FlightDetail {
   summary: FlightItem; fields: Record<string, unknown>; inconsistent_fields: Record<string, unknown>;
   observations: Array<Record<string, unknown>>; observation_columns: string[];
-  observation_page: number; observation_pages: number; observation_total: number; match: MatchState;
+  observation_page: number; observation_pages: number; observation_total: number; all_fields: boolean; match: MatchState;
 }
 export interface MatchTask { task_id: string; flight_keys: string[]; complete: boolean; items: MatchState[] }
 export interface MatchStatus {
   graph_id: string; tasks: MatchTask[];
-  progress: { total: number; completed: number; success: number; failed: number };
+  progress: { total: number; waiting: number; running: number; success: number; failed: number; complete: boolean; summary: Record<string, unknown> };
 }
 export type SelectedFeature = GeoFeature<PointGeometry, NodeProperties> | GeoFeature<LineGeometry, EdgeProperties>;

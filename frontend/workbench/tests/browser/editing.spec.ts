@@ -8,7 +8,7 @@ test('graph editor is a single React application and edits properties', async ({
   await expect(page.getByRole('navigation', { name: '编辑工具' })).toBeVisible();
   expect(requests).not.toContain('/api/flights');
   await page.getByRole('button', { name: /搜索/ }).click();
-  await page.getByPlaceholder('节点 ID 或边 ID').fill('(1, 2, 0)');
+  await page.getByPlaceholder('节点 ID 或完整边 ID').fill('(1, 2, 0)');
   await page.getByRole('button', { name: '选中', exact: true }).click();
   await expect(page.locator('.details')).toBeVisible();
   await page.locator('.property-form label').filter({ hasText: 'name' }).locator('input').fill('Updated Stand');
@@ -26,4 +26,14 @@ test('topology panel and map layer control remain available', async ({ page }) =
   await expect(page.locator('.leaflet-control-layers')).toBeVisible();
   await page.getByRole('button', { name: /开启相邻边辨色/ }).click();
   await expect(page.getByRole('button', { name: /关闭相邻边辨色/ })).toBeVisible();
+});
+
+test('merge workflow exposes backend candidates in a React dialog', async ({ page }) => {
+  const requests: string[] = [];
+  page.on('request', request => requests.push(new URL(request.url()).pathname));
+  await page.goto('/');
+  await page.getByRole('button', { name: /合并重合节点/ }).click();
+  await page.getByRole('button', { name: '重复节点候选', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '疑似重复图节点' })).toBeVisible();
+  expect(requests).toContain('/api/merge-candidates');
 });

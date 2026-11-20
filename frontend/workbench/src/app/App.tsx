@@ -4,6 +4,9 @@ import type { EditorTool } from './WorkbenchContext';
 import type { EdgeProperties, FlightDetail, GeoFeature, LineGeometry, NodeProperties, PointGeometry, SelectedFeature } from '../api/types';
 import { FlightPanel } from '../features/flights/FlightPanel';
 import { MapView } from '../features/map/MapView';
+import { GraphDialog } from '../features/graph-editor/GraphDialog';
+import type { EdgeDeletePreview, GraphDialogState, MergeCandidates, MergePreview, NodeDeletePreview, RestorePreview, SnapPreview, SplitPreview } from '../features/graph-editor/types';
+import { api } from '../api/client';
 import '../styles/react-app.css';
 
 const tools: Array<{ key: EditorTool; label: string; symbol: string }> = [
@@ -40,20 +43,22 @@ function ToolDock() {
 
 function TopologyPanel() {
   const wb = useWorkbench(), topology = wb.state?.topology;
+  const [reviewIndex, setReviewIndex] = useState(-1);
+  const nodes = useMemo(() => [...(wb.state?.nodes.features ?? [])].sort((a, b) => JSON.stringify(a.properties.id).localeCompare(JSON.stringify(b.properties.id))), [wb.state?.topology_revision]);
+  const showReview = (index: number) => { const feature = nodes[index]; if (!feature) return; setReviewIndex(index); wb.dispatch({ type: 'selected', value: feature }); wb.dispatch({ type: 'status', value: index === nodes.length - 1 ? '已到最后一个节点；这不表示全部复核通过' : `遍历位置 ${index + 1} / ${nodes.length} · 节点 ${feature.properties.node_id}` }); };
   if (!wb.topologyOpen || !topology) return null;
   const metrics = [['连通分量', topology.component_count], ['最大分量', topology.largest_component], ['孤立节点', topology.isolated_count], ['悬挂节点', topology.dangling_count], ['平行边组', topology.parallel_pair_count]];
-  return <aside className="topology-panel panel"><div className="panel-heading"><h2>拓扑概览</h2><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: false })}>×</button></div><div className="metric-grid">{metrics.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div><div className="topology-details"><h3>孤立节点</h3><p>{topology.isolated_nodes.slice(0, 20).join('、') || '无'}</p><h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p></div></aside>;
+  return <aside className="topology-panel panel"><div className="panel-heading"><h2>拓扑概览</h2><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: false })}>×</button></div><div className="metric-grid">{metrics.map(([label, value]) => <div key={label}><strong>{value}</strong><span>{label}</span></div>)}</div><div className="topology-details"><h3>孤立节点</h3><p>{topology.isolated_nodes.slice(0, 20).join('、') || '无'}</p><h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p><h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.some(id => JSON.stringify(id) === JSON.stringify(item.properties.id))); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}</div><section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.node_id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section></aside>;
 }
 
 function SearchPanel() {
-  const wb = useWorkbench(); const [query, setQuery] = useState('');
+  const wb = useWorkbench(); const [query, setQuery] = useState(''), [stand, setStand] = useState(''), [edgeU, setEdgeU] = useState(''), [edgeV, setEdgeV] = useState('');
   if (!wb.searchOpen || !wb.state) return null;
-  const search = () => {
-    const needle = query.trim().toLocaleLowerCase();
-    const feature = wb.state!.nodes.features.find(item => item.properties.node_id.toLocaleLowerCase().includes(needle)) ?? wb.state!.edges.features.find(item => item.properties.edge_id.toLocaleLowerCase().includes(needle));
-    if (feature) wb.dispatch({ type: 'selected', value: feature }); else wb.dispatch({ type: 'status', value: `未找到 ${query}` });
-  };
-  return <section className="search-panel panel"><div className="panel-heading"><div><small>快速定位</small><h2>搜索图要素</h2></div><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: false })}>×</button></div><div className="input-action"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder="节点 ID 或边 ID" /><button onClick={search}>选中</button></div></section>;
+  const select = (feature: SelectedFeature | undefined, label: string) => { if (feature) wb.dispatch({ type: 'selected', value: feature }); else wb.dispatch({ type: 'status', value: `未找到 ${label}` }); };
+  const search = () => { const needle = query.trim().toLocaleLowerCase(); select(wb.state!.nodes.features.find(item => item.properties.node_id.toLocaleLowerCase().includes(needle)) ?? wb.state!.edges.features.find(item => item.properties.edge_id.toLocaleLowerCase().includes(needle)), query); };
+  const searchStand = () => select(wb.state!.edges.features.find(item => String(item.properties.ref ?? '').toLocaleLowerCase() === stand.trim().toLocaleLowerCase()), `机位 ${stand}`);
+  const searchEdge = () => { const pair = [edgeU.trim(), edgeV.trim()].sort().join('|'); select(wb.state!.edges.features.find(item => [item.properties.u, item.properties.v].map(String).sort().join('|') === pair), `边 ${edgeU}—${edgeV}`); };
+  return <section className="search-panel panel"><div className="panel-heading"><div><small>快速定位</small><h2>搜索图要素</h2></div><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: false })}>×</button></div><label>节点或边 ID<div className="input-action"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder="节点 ID 或完整边 ID" /><button onClick={search}>选中</button></div></label><label>机位编号<div className="input-action"><input value={stand} onChange={event => setStand(event.target.value)} placeholder="例如 A01" /><button onClick={searchStand}>定位机位</button></div></label><label>边的两个端点<div className="edge-inputs"><input value={edgeU} onChange={event => setEdgeU(event.target.value)} placeholder="端点 A" /><span>—</span><input value={edgeV} onChange={event => setEdgeV(event.target.value)} placeholder="端点 B" /><button onClick={searchEdge}>选中边</button></div></label></section>;
 }
 
 function FeatureDetails() {
@@ -73,8 +78,18 @@ function FeatureDetails() {
 
 function ObservationView({ detail }: { detail: FlightDetail | null }) {
   const wb = useWorkbench();
+  const [current, setCurrent] = useState(detail);
+  const [allFields, setAllFields] = useState(false);
+  useEffect(() => { setCurrent(detail); setAllFields(Boolean(detail?.all_fields)); }, [detail]);
   if (!detail) return <section className="main-view observations-view"><p className="field-note">请从航班目录打开详情。</p></section>;
-  return <section className="main-view observations-view"><header className="observations-header"><button className="secondary-button" onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>← 航班列表</button><div><small>当前查看航班</small><h2>{detail.summary.flight_number || detail.summary.flight_id}</h2><p>{detail.observation_total} 个观测点</p></div></header><div className="observations-content"><table className="sheet-table"><thead><tr>{detail.observation_columns.map(column => <th key={column}>{column}</th>)}</tr></thead><tbody>{detail.observations.map((row, index) => <tr key={index}>{detail.observation_columns.map(column => <td key={column}>{String(row[column] ?? '—')}</td>)}</tr>)}</tbody></table></div></section>;
+  if (!current) return null;
+  const load = async (page: number, expanded = allFields) => { const value = await api.detail(detail.summary.flight_key, page, expanded); setCurrent(value); setAllFields(expanded); };
+  const locate = (row: Record<string, unknown>) => {
+    const find = (...names: string[]) => { const key = Object.keys(row).find(item => names.includes(item.toLowerCase())); return key ? row[key] : undefined; };
+    const longitude = Number(find('longitude', 'lon')), latitude = Number(find('latitude', 'lat'));
+    if (Number.isFinite(longitude) && Number.isFinite(latitude)) wb.dispatch({ type: 'observation-location', value: [latitude, longitude] });
+  };
+  return <section className="main-view observations-view"><header className="observations-header"><button className="secondary-button" onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>← 航班列表</button><div><small>当前查看航班</small><h2>{current.summary.flight_number || current.summary.flight_id}</h2><p>{current.observation_total} 个观测点</p></div><button className="secondary-button" disabled={!wb.observationLocation} onClick={() => wb.dispatch({ type: 'observation-location', value: null })}>清除地图定位点</button></header><div className="observations-content"><div className="observation-toolbar"><button className="secondary-button" onClick={() => void load(1, !allFields)}>{allFields ? '显示默认字段' : '显示全部字段'}</button><span>第 {current.observation_page || 0} / {current.observation_pages} 页，共 {current.observation_total} 条</span></div><table className="sheet-table observation-table"><thead><tr>{current.observation_columns.map(column => <th key={column}>{column}</th>)}<th>操作</th></tr></thead><tbody>{current.observations.map((row, index) => <tr key={index}>{current.observation_columns.map(column => <td key={column}>{String(row[column] ?? '—')}</td>)}<td><button className="secondary-button" onClick={() => locate(row)}>在地图中定位</button></td></tr>)}</tbody></table><div className="observation-pager"><button disabled={current.observation_page <= 1} onClick={() => void load(current.observation_page - 1)}>上一页</button><button disabled={current.observation_page >= current.observation_pages} onClick={() => void load(current.observation_page + 1)}>下一页</button></div></div></section>;
 }
 
 function Workspace() {
@@ -83,7 +98,9 @@ function Workspace() {
   const [operation, setOperation] = useState<SelectedFeature[]>([]);
   const [drawPoints, setDrawPoints] = useState<Array<[number, number]>>([]);
   const [splitValidation, setSplitValidation] = useState(false);
-  useEffect(() => { setOperation([]); setDrawPoints([]); }, [wb.tool]);
+  const [dialog, setDialog] = useState<GraphDialogState | null>(null);
+  const [previewGeometry, setPreviewGeometry] = useState<LineGeometry | null>(null);
+  useEffect(() => { setOperation([]); setDrawPoints([]); setDialog(null); setPreviewGeometry(null); }, [wb.tool]);
   useEffect(() => {
     document.body.classList.add('unified-workbench', 'react-workbench');
     document.body.classList.toggle('flight-mode', Boolean(state?.flight_mode));
@@ -91,39 +108,53 @@ function Workspace() {
     return () => document.body.classList.remove('unified-workbench', 'react-workbench', 'flight-mode', 'read-only');
   }, [state?.flight_mode]);
 
-  const finishOperation = useCallback(() => { setOperation([]); setDrawPoints([]); wb.dispatch({ type: 'selected', value: null }); }, [wb]);
+  const finishOperation = useCallback(() => { setOperation([]); setDrawPoints([]); setDialog(null); setPreviewGeometry(null); wb.dispatch({ type: 'selected', value: null }); }, [wb]);
+  const confirmDialog = useCallback(async (path: string, body: Record<string, unknown>) => { const result = await wb.runGraphCommand(path, body); if (result !== null) finishOperation(); }, [wb, finishOperation]);
+  const previewMerge = useCallback(async (nodeIds: import('../api/types').EncodedValue[], revision: number) => {
+    const preview = await wb.previewGraphCommand<MergePreview>('/api/merge-nodes-preview', { node_ids: nodeIds, expected_revision: revision });
+    if (preview) setDialog({ kind: 'merge', preview });
+  }, [wb]);
+  const openMergeCandidates = useCallback(async () => {
+    try { const preview = await api.mergeCandidates<MergeCandidates>(); setDialog({ kind: 'merge-candidates', preview }); }
+    catch (error) { wb.dispatch({ type: 'error', value: error instanceof Error ? error.message : '候选节点读取失败' }); }
+  }, [wb]);
   const handleFeature = useCallback(async (feature: SelectedFeature) => {
     if (!state?.capabilities.can_edit_graph || wb.tool === 'inspect') { wb.dispatch({ type: 'selected', value: feature }); return; }
     if (wb.tool === 'delete') {
       if (isNode(feature)) {
-        const plan = await wb.runGraphCommand<{ pair_candidates: Array<{ pair_id: string; recommended: boolean }>; recommended_unpaired: string[] }>('/api/delete-node-preview', { node: feature.properties.id });
-        if (!plan) return;
-        const pairIds = plan.pair_candidates.filter(item => item.recommended).map(item => item.pair_id);
-        const discard = plan.recommended_unpaired.length > 0;
-        const warning = discard ? `推荐配对后仍有 ${plan.recommended_unpaired.length} 条半边会被丢弃。` : `将按推荐方案重组 ${pairIds.length} 组半边。`;
-        if (window.confirm(`${warning}确认删除节点？`)) await wb.runGraphCommand('/api/delete-node-confirm', { node: feature.properties.id, pair_ids: pairIds, discard_unpaired: discard });
-      } else if (window.confirm('确认删除这条边？')) await wb.runGraphCommand('/api/delete-edge-confirm', { edge: feature.properties.id });
-      finishOperation(); return;
+        const preview = await wb.previewGraphCommand<NodeDeletePreview>('/api/delete-node-preview', { node: feature.properties.id });
+        if (preview) setDialog({ kind: 'delete-node', preview, node: feature.properties.id });
+      } else {
+        const preview = await wb.previewGraphCommand<EdgeDeletePreview>('/api/delete-edge-preview', { edge: feature.properties.id });
+        if (preview) setDialog({ kind: 'delete-edge', preview, edge: feature.properties.id });
+      }
+      return;
     }
     if (wb.tool === 'split') { if (!isNode(feature)) { setOperation([feature]); wb.dispatch({ type: 'status', value: '已选择目标边，请点击切分位置' }); } return; }
-    if (wb.tool === 'draw' || wb.tool === 'restore' || wb.tool === 'merge') {
+    if (wb.tool === 'merge') {
+      if (isNode(feature) && !operation.some(item => isNode(item) && JSON.stringify(item.properties.id) === JSON.stringify(feature.properties.id))) setOperation(items => [...items, feature]);
+      wb.dispatch({ type: 'status', value: `已选择 ${operation.length + 1} 个待合并节点` });
+      return;
+    }
+    if (wb.tool === 'draw' || wb.tool === 'restore') {
       if (!isNode(feature)) return;
       if (!operation.length) { setOperation([feature]); wb.dispatch({ type: 'status', value: '已选择起点，请选择终点' }); return; }
       const start = operation[0] as GeoFeature<PointGeometry, NodeProperties>;
       if (wb.tool === 'draw') await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: drawPoints });
-      if (wb.tool === 'merge' && window.confirm('确认合并这两个节点？')) await wb.runGraphCommand('/api/merge-nodes-confirm', { node_ids: [start.properties.id, feature.properties.id], canonical_node_id: start.properties.id });
       if (wb.tool === 'restore') {
-        const options = await wb.runGraphCommand<{ candidates: Array<{ candidate_id: string }> }>('/api/restore-options', { start: start.properties.id, end: feature.properties.id });
-        const candidate = options?.candidates[0];
-        if (candidate && window.confirm('使用推荐来源路径恢复连接？')) await wb.runGraphCommand('/api/restore-confirm', { start: start.properties.id, end: feature.properties.id, candidate_id: candidate.candidate_id });
+        const preview = await wb.previewGraphCommand<RestorePreview>('/api/restore-options', { start: start.properties.id, end: feature.properties.id });
+        if (preview?.candidates.length) setDialog({ kind: 'restore', preview, start: start.properties.id, end: feature.properties.id });
+        else wb.dispatch({ type: 'status', value: '原始来源网络中没有可靠路径候选' });
       }
-      finishOperation(); return;
+      if (wb.tool === 'draw') finishOperation(); else setOperation([]);
+      return;
     }
     if (wb.tool === 'snap') {
       if (!operation.length && isNode(feature)) { setOperation([feature]); wb.dispatch({ type: 'status', value: '请选择目标边' }); return; }
-      if (operation.length && !isNode(feature) && window.confirm('确认将节点吸附到目标边？')) {
+      if (operation.length && !isNode(feature)) {
         const node = operation[0] as GeoFeature<PointGeometry, NodeProperties>;
-        await wb.runGraphCommand('/api/manual-snap-confirm', { node: node.properties.id, edge: feature.properties.id }); finishOperation();
+        const preview = await wb.previewGraphCommand<SnapPreview>('/api/manual-snap-preview', { node: node.properties.id, edge: feature.properties.id });
+        if (preview) setDialog({ kind: 'snap', preview, node: node.properties.id, edge: feature.properties.id });
       }
     }
   }, [state, wb, operation, drawPoints, finishOperation]);
@@ -132,9 +163,9 @@ function Workspace() {
     if (wb.tool === 'draw' && operation.length) { setDrawPoints(points => [...points, [longitude, latitude]]); wb.dispatch({ type: 'status', value: `已添加 ${drawPoints.length + 1} 个形状点，请选择终点` }); }
     if (wb.tool === 'split' && operation.length && !isNode(operation[0])) {
       const edge = operation[0] as GeoFeature<LineGeometry, EdgeProperties>;
-      const preview = await wb.runGraphCommand<{ recommended_node?: unknown }>('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude });
-      if (preview && window.confirm('确认在此位置切分来源边？')) await wb.runGraphCommand('/api/split-source-confirm', { edge: edge.properties.id, longitude, latitude, osm_node_id: preview.recommended_node ?? null });
-      finishOperation();
+      const preview = await wb.previewGraphCommand<SplitPreview>('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude });
+      if (preview) setDialog({ kind: 'split', preview, edge: edge.properties.id, longitude, latitude });
+      setOperation([]);
     }
   }, [wb, operation, drawPoints.length, finishOperation]);
 
@@ -143,11 +174,11 @@ function Workspace() {
     <Header /><ToolDock />
     {state.flight_mode && <nav className="main-tabs" aria-label="航班主视图"><button className={wb.view === 'map' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'map' })}>地图</button><button className={wb.view === 'flights' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>航班</button>{detail && <button className={wb.view === 'observations' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'observations' })}>观测记录</button>}</nav>}
     <main className="workspace react-workspace">
-      <section className={`main-view map-view ${wb.view !== 'map' ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} onFeature={handleFeature} onMapClick={handleMapClick} /><div className="map-overlay-stack"><div className="legend panel"><span>节点</span><span>派生边</span><span>虚线＝原始轨迹</span><span>实线＝匹配路径</span></div>{state.capabilities.can_edit_graph && <button className="secondary-button panel" onClick={() => setSplitValidation(value => !value)}>{splitValidation ? '关闭' : '开启'}相邻边辨色</button>}</div></section>
+      <section className={`main-view map-view ${wb.view !== 'map' ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} selected={[...operation, ...(wb.selected ? [wb.selected] : [])]} drawPoints={drawPoints} previewGeometry={previewGeometry} focusFlightKey={wb.mapFocusKey} fitMapVersion={wb.fitMapVersion} observationLocation={wb.observationLocation} onFeature={handleFeature} onMapClick={handleMapClick} /><div className="map-overlay-stack"><div className="legend panel"><span>节点</span><span>派生边</span><span>虚线＝原始轨迹</span><span>实线＝匹配路径</span></div>{state.capabilities.can_edit_graph && <button className="secondary-button panel" onClick={() => setSplitValidation(value => !value)}>{splitValidation ? '关闭' : '开启'}相邻边辨色</button>}{wb.tool === 'merge' && <><button className="secondary-button panel" onClick={() => void openMergeCandidates()}>重复节点候选</button><button className="primary-button panel" disabled={operation.length < 2} onClick={() => void previewMerge(operation.filter(isNode).map(item => item.properties.id), state.revision)}>检查并合并（{operation.length}）</button><button className="secondary-button panel" onClick={() => setOperation([])}>清空选择</button></>}{wb.tool === 'draw' && operation.length > 0 && <button className="secondary-button panel" onClick={() => { setDrawPoints(points => points.slice(0, -1)); }}>撤销形状点</button>}</div></section>
       {state.flight_mode && wb.view === 'flights' && <FlightPanel onDetail={setDetail} />}
       {state.flight_mode && wb.view === 'observations' && <ObservationView detail={detail} />}
     </main>
-    <SearchPanel /><TopologyPanel /><FeatureDetails />
+    <SearchPanel /><TopologyPanel />{!dialog && <FeatureDetails />}{dialog && <GraphDialog dialog={dialog} onClose={finishOperation} onPreview={setPreviewGeometry} onConfirm={confirmDialog} onMergeCandidate={previewMerge} />}
     <div className="status panel">{wb.error || wb.status}</div>{wb.busy && <div className="busy"><span /></div>}
   </>;
 }
