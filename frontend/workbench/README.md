@@ -49,6 +49,31 @@ operation, refreshes `/api/state`, and leaves conflict resolution to the backend
 Server data stays in the API-facing components while transient UI state lives in
 the React context. Leaflet instances and layers stay in refs.
 
+## API contract generation
+
+API contract ownership is moving to Pydantic request and response models.
+FastAPI exports separate OpenAPI documents for graph-editing and flight modes,
+because each runtime mode deliberately exposes a different route set. New or
+changed API shapes must originate in Pydantic rather than in frontend types.
+
+Regenerate the committed OpenAPI documents and TypeScript declarations after
+changing an API model or route:
+
+```powershell
+pnpm --dir frontend/workbench contracts:generate
+```
+
+Generated files under `openapi/` and `src/api/generated/` must be committed and
+must not be edited by hand. Check for contract drift with:
+
+```powershell
+pnpm --dir frontend/workbench contracts:check
+```
+
+`src/api/types.ts` remains a temporary compatibility layer while endpoints are
+migrated to generated schemas; existing untyped response shapes remain visible
+as `unknown` until their Pydantic response DTO is introduced.
+
 ## Regression checks
 
 Build the frontend before running the browser suite:

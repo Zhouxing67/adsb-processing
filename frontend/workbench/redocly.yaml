@@ -1,0 +1,11 @@
+apis:
+  graph@v1:
+    root: ./openapi/graph.json
+    x-openapi-ts:
+      output: ./src/api/generated/graph.ts
+      immutable: true
+  flight@v1:
+    root: ./openapi/flight.json
+    x-openapi-ts:
+      output: ./src/api/generated/flight.ts
+      immutable: true

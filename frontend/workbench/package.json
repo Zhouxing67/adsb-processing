@@ -7,6 +7,9 @@
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
+    "contracts:export": "uv run --project ../.. python ../../scripts/export_workbench_openapi.py",
+    "contracts:generate": "pnpm contracts:export && openapi-typescript --redocly redocly.yaml",
+    "contracts:check": "uv run --project ../.. python ../../scripts/export_workbench_openapi.py --check && openapi-typescript --redocly redocly.yaml --check",
     "test:unit": "node --test tests/*.test.mjs",
     "test:browser": "playwright test"
   },
@@ -21,6 +24,7 @@
     "@types/leaflet": "1.9.15",
     "@types/react": "18.3.18",
     "@types/react-dom": "18.3.5",
+    "openapi-typescript": "^7.13.0",
     "typescript": "5.7.3",
     "vite": "6.4.1"
   }
