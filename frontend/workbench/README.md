@@ -28,26 +28,26 @@ adjust the proxy target in `vite.config.ts` for that development session.
 
 ## Module boundaries
 
-Startup reads `GET /api/state` and composes the interface for that session's mode.
-The shared map controller owns Leaflet layers, graph selection and revision
-state. The shell manages navigation layout and side rails. Only flight mode
-loads the flight and workspace controllers and mounts the React flight table.
+The frontend has one React root and one startup path. Startup reads
+`GET /api/state` and composes the interface for the current backend mode. React
+owns the complete document below `#root`; Leaflet is isolated behind `MapView`
+and never owns application state.
 
 | Module | Responsibility |
 |---|---|
-| `controllers/map-controller.js` | Map layers, search, topology, and graph editing commands. |
-| `controllers/flight-controller.js` | Committed catalogue filters, task submission and polling, flight geometry, and observations. The task progress display uses the backend summary. |
-| `controllers/workspace-controller.js` | Flight-mode page containers, navigation, and drag-to-split behavior. |
-| `features/map/MapToolbar.tsx` and `features/flights/FlightTable.tsx` | React views that subscribe to controller snapshots and issue commands. |
+| `app/WorkbenchContext.tsx` | The single client-state boundary: mode, selection, revision, panels, and graph commands. |
+| `app/App.tsx` | Application composition, graph tools, topology, feature details, and mode navigation. |
+| `api/client.ts` and `api/types.ts` | Typed access to the unchanged FastAPI contract and uniform error handling. |
+| `features/map/MapView.tsx` | Leaflet lifecycle and graph/flight layer rendering. |
+| `features/flights/FlightPanel.tsx` | Catalogue filters, selection, matching, geometry, and observation navigation. |
 | `domain/properties.ts` and `domain/popup-layout.ts` | Editable-field validation and map popup placement. |
-| `styles/tokens.css` and `styles/workbench.css` | Design tokens, layout, and responsive styles. |
+| `styles/*.css` | Design tokens, legacy visual vocabulary, and React layout overrides. |
 
-The `window.workbenchMap`, `window.workbenchFlights`, and navigation facades
-connect the ES module controllers to the mounted views. Resize observers track
-map and rail dimensions. The application lifecycle owns listeners, scheduled
-frames and timers, request aborts, and view unmounts. It disposes dependent views
-before removing the map and preserves resources when the page enters the browser
-back/forward cache.
+There are no global controller facades or `window` custom-event buses. Graph
+mutations always include the current revision; a 409 cancels the active
+operation, refreshes `/api/state`, and leaves conflict resolution to the backend.
+Server data stays in the API-facing components while transient UI state lives in
+the React context. Leaflet instances and layers stay in refs.
 
 ## Regression checks
 
@@ -58,10 +58,10 @@ pnpm --dir frontend/workbench test:unit
 pnpm --dir frontend/workbench test:browser
 ```
 
-Unit tests cover lifecycle disposal, editable property validation, and popup
-placement. They use Node.js with native TypeScript type stripping. Browser tests
+Unit tests cover editable property validation and popup placement. They use
+Node.js with native TypeScript type stripping. Browser tests
 use the project Python environment to start isolated graph and flight fixtures on
 ports 8891 and 8892, with headless Edge on Windows. They cover mode separation,
-editing and undo, rail visibility, flight filters, selection, matching progress,
-and map/detail navigation. Failed runs retain traces in the ignored
+editing and undo, flight filters, selection, matching, and map/detail navigation.
+Failed runs retain traces in the ignored
 `frontend/workbench/test-results` directory.
