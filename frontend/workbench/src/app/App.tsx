@@ -6,6 +6,8 @@ import { FlightPanel } from '../features/flights/FlightPanel';
 import { MapView } from '../features/map/MapView';
 import { GraphDialog } from '../features/graph-editor/GraphDialog';
 import { useGraphEditorMachine } from '../features/graph-editor/useGraphEditorMachine';
+import { RailResizer, RestoreRailWidth } from '../features/layout/RailResizer';
+import { RestoreSplitRatio, SplitViewGrip } from '../features/layout/SplitView';
 import { api } from '../api/client';
 import '../styles/react-app.css';
 
@@ -15,6 +17,13 @@ const tools: Array<{ key: EditorTool; label: string; symbol: string }> = [
   { key: 'merge', label: '合并重合节点', symbol: '◎' }, { key: 'snap', label: '人工吸附到边', symbol: '↦' },
   { key: 'delete', label: '删除 / 简化', symbol: '×' },
 ];
+const mapToolIcons = {
+  search: ['M21 21l-5-5', 'M19 10a7 7 0 1 1-14 0 7 7 0 0 1 14 0'],
+  topology: ['M8 6h8M6 8v8m12-8v8M8 18h8', 'M3 3h5v5H3zM16 3h5v5h-5zM3 16h5v5H3zM16 16h5v5H3z'],
+};
+function MapToolIcon({ name }: { name: keyof typeof mapToolIcons }) {
+  return <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{mapToolIcons[name].map((path, index) => <path d={path} key={index} />)}</svg>;
+}
 const toolMessages: Record<EditorTool, string> = {
   inspect: '查看模式 · 点击节点或派生边查看详情', split: '补充分割点 · 选择边后点击切分位置',
   draw: '直接绘制连接 · 选择起点、点击地图添加形状点、再选择终点', restore: '恢复来源连接 · 依次选择两个节点',
@@ -40,7 +49,7 @@ function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: { editing: bo
 
 function MapToolbar({ editing, onEditing }: { editing: boolean; onEditing(): void }) {
   const wb = useWorkbench();
-  return <div className="map-tools panel"><button aria-label="搜索" title="搜索图要素" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: !wb.searchOpen })}>⌕</button><button aria-label="拓扑检查" title="拓扑检查" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: !wb.topologyOpen })}>◇</button>{wb.state?.capabilities.can_edit_graph && <button className={editing ? 'active' : ''} aria-pressed={editing} onClick={onEditing}>{editing ? '退出编辑' : '编辑图'}</button>}</div>;
+  return <div className="map-tools panel"><button aria-label="搜索" title="搜索图要素" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: !wb.searchOpen })}><MapToolIcon name="search" /></button><button aria-label="拓扑检查" title="拓扑检查" onClick={() => wb.dispatch({ type: 'panel', panel: 'topologyOpen', value: !wb.topologyOpen })}><MapToolIcon name="topology" /></button>{wb.state?.capabilities.can_edit_graph && <button className={editing ? 'active' : ''} aria-pressed={editing} onClick={onEditing}>{editing ? '退出编辑' : '编辑图'}</button>}</div>;
 }
 
 function Inspector({ state, layers, onLayers }: { state: WorkbenchState; layers: LayerSettings; onLayers(value: LayerSettings): void }) {
@@ -121,6 +130,7 @@ function Workspace() {
   const [detail, setDetail] = useState<FlightDetail | null>(null);
   const [splitValidation, setSplitValidation] = useState(false);
   const [graphEditing, setGraphEditing] = useState(false);
+  const [splitView, setSplitView] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true), [rightOpen, setRightOpen] = useState(true);
   const [layers, setLayers] = useState<LayerSettings>({ base: 'none', edges: true, parking: true, nodes: false });
   const editor = useGraphEditorMachine();
@@ -130,24 +140,32 @@ function Workspace() {
     document.body.classList.toggle('read-only', Boolean(state?.flight_mode));
     return () => document.body.classList.remove('unified-workbench', 'react-workbench', 'flight-mode', 'read-only');
   }, [state?.flight_mode]);
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
+    return () => window.cancelAnimationFrame(frame);
+  }, [splitView, leftOpen, rightOpen, state?.flight_mode]);
 
   if (!state) return <main className="loading-screen">{wb.error || '正在载入工作台…'}</main>;
-  const editorLeft = !state.flight_mode && leftOpen && (graphEditing || wb.topologyOpen);
-  const shellLeft = leftOpen && (state.flight_mode || editorLeft);
+  const topologyLeft = leftOpen && wb.topologyOpen;
+  const editorLeft = !state.flight_mode && leftOpen && graphEditing;
+  const shellLeft = leftOpen && (state.flight_mode || topologyLeft || editorLeft);
   const rightContent = editor.dialog
     ? <GraphDialog dialog={editor.dialog} onClose={editor.reset} onPreview={editor.setPreviewGeometry} onConfirm={editor.confirmDialog} onMergeCandidate={editor.previewMerge} />
     : wb.selected && wb.detailsOpen ? <FeatureDetails /> : <Inspector state={state} layers={layers} onLayers={setLayers} />;
   const toggleEditing = () => { const next = !graphEditing; setGraphEditing(next); if (next) setLeftOpen(true); else { wb.dispatch({ type: 'tool', value: 'inspect' }); editor.reset(); } };
-  return <div className={`app-shell ${state.flight_mode ? 'flight-shell' : ''} ${shellLeft ? 'with-left-rail' : ''} ${rightOpen ? 'with-right-rail' : ''}`}>
+  return <div className={`app-shell ${state.flight_mode ? 'flight-shell' : ''} ${splitView ? 'flight-split-view' : ''} ${shellLeft ? 'with-left-rail' : ''} ${rightOpen ? 'with-right-rail' : ''}`}>
+    <RestoreRailWidth /><RestoreSplitRatio />
     <Header editing={graphEditing} leftOpen={leftOpen} rightOpen={rightOpen} onLeft={() => setLeftOpen(value => !value)} onRight={() => setRightOpen(value => !value)} />
-    {editorLeft && (wb.topologyOpen ? <TopologyPanel splitValidation={splitValidation} onSplitValidation={() => setSplitValidation(value => !value)} /> : <ToolDock />)}
-    {state.flight_mode && <nav className="main-tabs" aria-label="航班主视图"><button className={wb.view === 'map' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'map' })}>地图</button><button className={wb.view === 'flights' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>航班</button>{detail && <button className={wb.view === 'observations' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'observations' })}>观测记录</button>}</nav>}
+    {topologyLeft ? <TopologyPanel splitValidation={splitValidation} onSplitValidation={() => setSplitValidation(value => !value)} /> : editorLeft && <ToolDock />}
+    {state.flight_mode && <nav className="main-tabs" aria-label="航班主视图"><button className={wb.view === 'map' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'map' })}>地图</button><button className={wb.view === 'flights' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>航班</button>{detail && <button className={wb.view === 'observations' ? 'active' : ''} onClick={() => wb.dispatch({ type: 'view', value: 'observations' })}>观测记录</button>}<button id="split-view-toggle" aria-pressed={splitView} onClick={() => setSplitView(value => !value)}>{splitView ? '单页' : '并排'}</button></nav>}
     <main className="workspace react-workspace">
-      <section className={`main-view map-view ${wb.view !== 'map' ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} baseLayer={layers.base} showEdges={layers.edges} showParking={layers.parking} showNodes={layers.nodes} selected={[...editor.selection, ...(wb.selected ? [wb.selected] : [])]} drawPoints={editor.drawPoints} previewGeometry={editor.previewGeometry} focusFlightKey={wb.mapFocusKey} fitMapVersion={wb.fitMapVersion} observationLocation={wb.observationLocation} onFeature={editor.handleFeature} onMapClick={editor.handleMapClick} /><MapToolbar editing={graphEditing} onEditing={toggleEditing} /><div className="map-overlay-stack">{wb.tool === 'merge' && <><button className="secondary-button panel" onClick={() => void editor.openMergeCandidates()}>重复节点候选</button><button className="primary-button panel" disabled={editor.mergeNodeIds.length < 2} onClick={() => void editor.previewMerge(editor.mergeNodeIds, state.revision)}>检查并合并（{editor.mergeNodeIds.length}）</button><button className="secondary-button panel" onClick={editor.reset}>清空选择</button></>}{wb.tool === 'draw' && editor.selection.length > 0 && <button className="secondary-button panel" onClick={editor.undoDrawPoint}>撤销形状点</button>}</div></section>
-      {state.flight_mode && <FlightPanel active={wb.view === 'flights'} onDetail={setDetail} />}
+      <section className={`main-view map-view ${wb.view !== 'map' && !splitView ? 'hidden' : ''}`}><MapView state={state} flights={wb.mapFlights} splitValidation={splitValidation} baseLayer={layers.base} showEdges={layers.edges} showParking={layers.parking} showNodes={layers.nodes || wb.topologyOpen} selected={[...editor.selection, ...(wb.selected ? [wb.selected] : [])]} drawPoints={editor.drawPoints} previewGeometry={editor.previewGeometry} focusFlightKey={wb.mapFocusKey} fitMapVersion={wb.fitMapVersion} observationLocation={wb.observationLocation} onFeature={editor.handleFeature} onMapClick={editor.handleMapClick} /><MapToolbar editing={graphEditing} onEditing={toggleEditing} /><div className="map-overlay-stack">{wb.tool === 'merge' && <><button className="secondary-button panel" onClick={() => void editor.openMergeCandidates()}>重复节点候选</button><button className="primary-button panel" disabled={editor.mergeNodeIds.length < 2} onClick={() => void editor.previewMerge(editor.mergeNodeIds, state.revision)}>检查并合并（{editor.mergeNodeIds.length}）</button><button className="secondary-button panel" onClick={editor.reset}>清空选择</button></>}{wb.tool === 'draw' && editor.selection.length > 0 && <button className="secondary-button panel" onClick={editor.undoDrawPoint}>撤销形状点</button>}</div></section>
+      {state.flight_mode && <FlightPanel active={wb.view === 'flights' || (splitView && wb.view !== 'observations')} onDetail={setDetail} />}
       {state.flight_mode && wb.view === 'observations' && <ObservationView detail={detail} />}
+      {state.flight_mode && splitView && <SplitViewGrip />}
     </main>
     <SearchPanel />{rightOpen && <div className="right-rail">{rightContent}</div>}
+    {shellLeft && <RailResizer side="left" />}{rightOpen && <RailResizer side="right" />}
     <div className="status panel">{wb.error || wb.status}</div>{wb.busy && <div className="busy"><span /></div>}
   </div>;
 }

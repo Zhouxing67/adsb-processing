@@ -20,7 +20,6 @@ from .flight_match_tasks import FlightMatchTasks, MatchResultItem
 from .serializers import flight_geojson, path_geojson
 
 MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed"}
-MAX_MAP_FLIGHTS = 10
 BUSINESS_FIELD_NAMES = {
     "flight_id",
     "flight_number",
@@ -224,7 +223,6 @@ class FlightWorkbench:
             "dataset_max_points": self.dataset_max_points,
             "min_points": filters.min_points,
             "max_points": filters.max_points,
-            "max_map_flights": MAX_MAP_FLIGHTS,
             "graph_id": self.match_tasks.graph_id,
             "time": {
                 "input_semantics": self.input_time_semantics,

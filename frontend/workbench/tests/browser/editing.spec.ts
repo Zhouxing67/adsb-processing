@@ -10,7 +10,7 @@ test('graph editor is a single React application and edits properties', async ({
   await expect(page.getByRole('button', { name: /删除 \/ 简化/ })).toBeVisible();
   expect(requests).not.toContain('/api/flights');
   await page.getByRole('button', { name: /搜索/ }).click();
-  await page.getByPlaceholder('节点 ID 或完整边 ID').fill('(1, 2, 0)');
+  await page.getByPlaceholder('节点 ID 或完整边 ID').fill('1—2 · 0');
   await page.getByRole('button', { name: '选中', exact: true }).click();
   await expect(page.locator('.details')).toBeVisible();
   await page.locator('.property-form label').filter({ hasText: 'name' }).locator('input').fill('Updated Stand');

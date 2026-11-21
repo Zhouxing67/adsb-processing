@@ -19,6 +19,9 @@ test('flight catalogue, selection, matching, detail and map are React-owned', as
   await expect(page.getByRole('button', { name: '移出地图', exact: true }).first()).toBeVisible();
   await page.getByRole('button', { name: '地图', exact: true }).click();
   await expect(page.locator('#map canvas')).not.toHaveCount(0);
+  await expect(page.locator('.flight-map-label')).toHaveCount(1);
+  await page.locator('.selected-chip label').filter({ hasText: '轨迹' }).getByRole('checkbox').uncheck();
+  await expect(page.locator('.flight-map-label')).toHaveCount(0);
 });
 
 test('filter draft is committed explicitly and reset restores catalogue', async ({ page }) => {
@@ -31,6 +34,30 @@ test('filter draft is committed explicitly and reset restores catalogue', async 
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(1);
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
+});
+
+test('flight mode restores topology, split view and resizable rails', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: /拓扑检查/ }).click();
+  await expect(page.getByRole('heading', { name: '拓扑概览' })).toBeVisible();
+  await page.getByRole('button', { name: '并排', exact: true }).click();
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await expect(page.locator('.map-view')).toBeVisible();
+  await expect(page.locator('#flight-sheet')).toBeVisible();
+  await expect(page.getByRole('separator', { name: '调整地图与航班比例' })).toBeVisible();
+  const leftRail = page.getByRole('separator', { name: '调整左侧栏宽度' });
+  await leftRail.focus();
+  await leftRail.press('ArrowRight');
+  await expect.poll(() => page.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--sidebar-width').trim())).toBe('312px');
+});
+
+test('all filtered flights can be displayed without a ten-flight cap', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await page.getByRole('button', { name: '选择全部结果', exact: true }).click();
+  await expect(page.getByText('已选 18 条')).toBeVisible();
+  await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
+  await expect(page.locator('.map-selection .selected-chip')).toHaveCount(18);
 });
 
 test('selection and map display survive paging and reload', async ({ page }) => {

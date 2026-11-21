@@ -107,10 +107,8 @@ export function FlightPanel({ onDetail, active = true }: { onDetail(detail: Flig
   const addSelectedToMap = async () => {
     const used = new Set([...wb.mapFlights.values()].map(entry => entry.slot));
     const allocate = () => { let slot = 0; while (used.has(slot)) slot += 1; used.add(slot); return slot; };
-    const capacity = Math.max(0, (catalogue?.max_map_flights ?? wb.matchSelection.size) - wb.mapFlights.size);
     const pending = [...wb.matchSelection].filter(key => !wb.mapFlights.has(key));
-    if (pending.length > capacity) setError(`地图最多同时展示 ${catalogue?.max_map_flights} 条航班，本次仅加入前 ${capacity} 条`);
-    for (const key of pending.slice(0, capacity)) {
+    for (const key of pending) {
       if (wb.mapFlights.has(key)) continue;
       const item = catalogue?.items.find(row => row.flight_key === key);
       try {

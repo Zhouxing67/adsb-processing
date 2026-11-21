@@ -333,7 +333,6 @@ class FlightCatalogueResponse(ApiModel):
     dataset_max_points: int
     min_points: int
     max_points: int
-    max_map_flights: int
     graph_id: str
     time: TimeDisplayResponse
 

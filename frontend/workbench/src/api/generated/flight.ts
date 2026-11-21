@@ -233,8 +233,6 @@ export interface components {
             graph_id: string;
             /** Items */
             items: components["schemas"]["FlightCatalogueItemResponse"][];
-            /** Max Map Flights */
-            max_map_flights: number;
             /** Max Points */
             max_points: number;
             /** Min Points */

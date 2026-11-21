@@ -313,10 +313,6 @@
             "title": "Items",
             "type": "array"
           },
-          "max_map_flights": {
-            "title": "Max Map Flights",
-            "type": "integer"
-          },
           "max_points": {
             "title": "Max Points",
             "type": "integer"
@@ -367,7 +363,6 @@
           "dataset_max_points",
           "min_points",
           "max_points",
-          "max_map_flights",
           "graph_id",
           "time"
         ],

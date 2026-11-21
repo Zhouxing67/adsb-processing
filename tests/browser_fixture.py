@@ -55,6 +55,6 @@ database = create_flight_database(
 app = create_app(
     EditorSession(AirportGraph(graph, Proj("EPSG:32650"))),
     Path("outputs/browser-regression/unused.json"),
-    flight_database=database,
+    flight_database=database if args.flights else None,
 )
 uvicorn.run(app, host="127.0.0.1", port=args.port)

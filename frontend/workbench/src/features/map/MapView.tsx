@@ -80,6 +80,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
     const nodes = L.geoJSON({ ...state.nodes, features: showNodes ? state.nodes.features : [] } as never, {
       pointToLayer: (feature, latlng) => {
         const p = feature.properties as Record<string, unknown>;
+        if (p.node_type === 'runway_interface') return L.marker(latlng, { icon: L.divIcon({ className: 'business-node-icon runway-interface', html: 'R', iconSize: [20, 20] }) });
         return L.circleMarker(latlng, { radius: Math.max(Number(p.radius) || 0, 4), color: '#fff', weight: 1, fillColor: String(p.color || '#416878'), fillOpacity: .95 });
       },
       onEachFeature: (feature, layer) => { layer.bindPopup(featurePopup(feature)); layer.on('click', event => { L.DomEvent.stopPropagation(event); featureHandler.current(feature as SelectedFeature); }); },
@@ -96,7 +97,6 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
     group.clearLayers();
     [...flights.values()].forEach(entry => {
       const color = colors[entry.slot % colors.length], geometry = entry.geometry;
-      if (entry.trajectoryVisible) L.geoJSON(geometry.flight as never, { style: { color, weight: 3, dashArray: '7 6', opacity: .75 }, pointToLayer: (_f, ll) => L.circleMarker(ll, { radius: 3, color, fillColor: '#fff', weight: 2, fillOpacity: 1 }) }).addTo(group);
       if (entry.pathVisible && geometry.path) {
         L.geoJSON(geometry.path as never, { style: { color: '#fff', weight: 9, opacity: .9 } }).addTo(group);
         L.geoJSON(geometry.path as never, { style: { color, weight: 5.5, opacity: .95 } }).addTo(group);
@@ -108,8 +108,9 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
           L.marker([point[1], point[0]], { interactive: false, icon: L.divIcon({ className: 'path-direction', html: `<span style="color:${color}">▶</span>`, iconSize: [14, 14] }) }).addTo(group);
         });
       }
+      if (entry.trajectoryVisible) L.geoJSON(geometry.flight as never, { style: { color, weight: 3, dashArray: '7 6', opacity: .9 }, pointToLayer: (_f, ll) => L.circleMarker(ll, { radius: 3, color, fillColor: '#fff', weight: 2, fillOpacity: 1 }) }).addTo(group);
       const point = geometry.flight.features.find(feature => feature.geometry.type === 'Point');
-      if (point?.geometry.type === 'Point') L.marker([point.geometry.coordinates[1], point.geometry.coordinates[0]], { icon: L.divIcon({ className: 'flight-map-label', html: `<b style="background:${color}">${entry.slot + 1}</b><span>${entry.label.replace(/[&<>"']/g, '')}</span>` }) }).addTo(group);
+      if (entry.trajectoryVisible && point?.geometry.type === 'Point') L.marker([point.geometry.coordinates[1], point.geometry.coordinates[0]], { icon: L.divIcon({ className: 'flight-map-label', html: `<b style="background:${color}">${entry.slot + 1}</b><span>${entry.label.replace(/[&<>"']/g, '')}</span>` }) }).addTo(group);
     });
   }, [flights]);
 
