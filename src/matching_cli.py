@@ -9,7 +9,8 @@ from airport_surface import load_graph
 from batch_matching import BatchMatchingRunner, DatabaseDataset
 from config import ApplicationSettings, load_settings
 from flight import MovementType
-from flight.flight_repository import BEIJING, FlightDatabase, open_flight_database
+from flight.flight_catalogue_repository import BEIJING
+from flight.flight_repository import FlightDatabase, open_flight_database
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -16,6 +16,7 @@ from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
 from airport_workbench.flights import (
     CataloguePageOutOfRange,
+    FlightFilter,
     FlightWorkbench,
     flight_key,
 )
@@ -74,9 +75,9 @@ def test_catalogue_point_filter_is_closed_and_precedes_pagination() -> None:
         movement_types=["arrival", "arrival", "departure"],
     )
 
-    first = workbench.catalogue(min_points=2, max_points=3, page=1, page_size=1)
-    second = workbench.catalogue(min_points=2, max_points=3, page=2, page_size=1)
-    exact = workbench.catalogue(min_points=3, max_points=3)
+    first = workbench.catalogue(FlightFilter(min_points=2, max_points=3), page=1, page_size=1)
+    second = workbench.catalogue(FlightFilter(min_points=2, max_points=3), page=2, page_size=1)
+    exact = workbench.catalogue(FlightFilter(min_points=3, max_points=3))
 
     assert first["dataset_max_points"] == 4
     assert first["total"] == 2
@@ -91,8 +92,8 @@ def test_catalogue_empty_result_and_dataset_maximum_are_stable() -> None:
         SmallGraph(), [flight_with_points("short", 2), flight_with_points("long", 5)]
     )
 
-    empty = workbench.catalogue(query="missing")
-    filtered = workbench.catalogue(max_points=2)
+    empty = workbench.catalogue(FlightFilter(query="missing"))
+    filtered = workbench.catalogue(FlightFilter(max_points=2))
 
     assert empty["items"] == []
     assert empty["page"] == 0
@@ -113,11 +114,13 @@ def test_catalogue_combines_search_movement_status_and_point_range() -> None:
     workbench.results[arrival_key].status = "success"
 
     result = workbench.catalogue(
-        query="target",
-        movement_type="arrival",
-        status="success",
-        min_points=3,
-        max_points=3,
+        FlightFilter(
+            query="target",
+            movement_type="arrival",
+            status="success",
+            min_points=3,
+            max_points=3,
+        )
     )
 
     assert [item["flight_id"] for item in result["items"]] == ["target-arrival"]
@@ -131,7 +134,7 @@ def test_filtered_key_selection_covers_all_pages_and_is_fixed() -> None:
     )
 
     selected = workbench.filtered_keys(
-        query="arrival", movement_type="arrival", min_points=3, max_points=3
+        FlightFilter(query="arrival", movement_type="arrival", min_points=3, max_points=3)
     )
 
     assert selected["count"] == 25
@@ -149,11 +152,14 @@ def test_filtered_key_selection_covers_all_pages_and_is_fixed() -> None:
         ({"max_points": 6}, "dataset maximum"),
     ],
 )
-def test_catalogue_rejects_invalid_point_ranges(kwargs: dict, message: str) -> None:
+@pytest.mark.parametrize("operation", ["catalogue", "filtered_keys"])
+def test_flight_filters_share_point_range_validation(
+    kwargs: dict, message: str, operation: str
+) -> None:
     workbench = FlightWorkbench(SmallGraph(), [flight_with_points("five", 5)])
 
     with pytest.raises(ValueError, match=message):
-        workbench.catalogue(**kwargs)
+        getattr(workbench, operation)(FlightFilter(**kwargs))
 
 
 def test_catalogue_rejects_page_beyond_filtered_last_page() -> None:
@@ -359,7 +365,8 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
 def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     from datetime import date
 
-    from flight.flight_repository import BEIJING, FlightDatabase, database_flight_key
+    from flight.flight_catalogue_repository import BEIJING
+    from flight.flight_repository import FlightDatabase, database_flight_key
 
     duckdb = pytest.importorskip("duckdb")
     database = tmp_path / "catalogue.duckdb"
@@ -390,9 +397,12 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     departure = database_flight_key("departure", "same")
     criteria = {"start_date": date(2024, 6, 15), "end_date": date(2024, 6, 15), "stands": [""]}
     assert not workbench.flights
-    assert workbench.catalogue(**criteria)["total"] == 2
-    assert workbench.catalogue(end_date=date(2024, 6, 14))["total"] == 0
-    assert workbench.catalogue(movement_type="arrival")["items"][0]["flight_key"] == arrival
+    assert workbench.catalogue(FlightFilter(**criteria))["total"] == 2
+    assert workbench.catalogue(FlightFilter(end_date=date(2024, 6, 14)))["total"] == 0
+    assert (
+        workbench.catalogue(FlightFilter(movement_type="arrival"))["items"][0]["flight_key"]
+        == arrival
+    )
     detail = workbench.detail(arrival, observation_page=2, observation_page_size=1)
     assert detail["summary"]["start_time"] == "2024-06-15T00:05:00+08:00"
     assert detail["observations"][0]["timestamp"] == "2024-06-14T16:06:00+00:00"
@@ -402,15 +412,15 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
 
     with pytest.raises(RuntimeError, match="事务失败"):
         workbench.update_stand(arrival, "invalid")
-    assert workbench.filtered_keys(**criteria)["count"] == 2
+    assert workbench.filtered_keys(FlightFilter(**criteria))["count"] == 2
     workbench.update_stand(arrival, "009")
-    assert workbench.filtered_keys(**criteria)["flight_keys"] == [departure]
+    assert workbench.filtered_keys(FlightFilter(**criteria))["flight_keys"] == [departure]
     assert workbench.detail(arrival)["fields"]["arr_stand_position"] == "009"
     assert workbench.detail(departure)["fields"]["dep_stand_position"] is None
-    assert [flight.point_count for flight in store.iterate("arrival", None)] == [2]
-    assert list(store.iterate("arrival", 0)) == []
+    assert [flight.point_count for flight in store.observations.iterate("arrival", None)] == [2]
+    assert list(store.observations.iterate("arrival", 0)) == []
 
-    with store.connection() as db:
+    with duckdb.connect(str(database), read_only=True) as db:
         assert db.execute(
             "SELECT arr_stand_position FROM adsb_202406_arr ORDER BY timestamp"
         ).fetchall() == [("009",), ("009",)]
@@ -454,16 +464,16 @@ def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
                      range(points)
             """)
     store = FlightDatabase(database)
-    assert store.validation_flights() == [
+    assert store.catalogue.validation_flights() == [
         dict(
             flight_id="eligible", movement=movement, stand="009", flight_points=30, total_flights=2
         )
         for movement in ("arr", "dep")
     ]
-    assert store.validation_flights(31) == []
+    assert store.catalogue.validation_flights(31) == []
     workbench = FlightWorkbench(SmallGraph(), flight_database=store)
-    assert workbench.catalogue(validation_only=True)["total"] == 2
-    assert workbench.filtered_keys(validation_only=True, movement_type="departure")[
+    assert workbench.catalogue(FlightFilter(validation_only=True))["total"] == 2
+    assert workbench.filtered_keys(FlightFilter(validation_only=True, movement_type="departure"))[
         "flight_keys"
     ] == [database_flight_key("departure", "eligible")]
 

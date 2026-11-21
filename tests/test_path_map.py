@@ -285,7 +285,10 @@ def test_database_flight_matches_using_its_od(
 
     database = FlightDatabase(database_path)
     matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
-    for flight in (database.flight(movement, "flight"), *database.iterate(movement, None)):
+    for flight in (
+        database.observations.flight(movement, "flight"),
+        *database.observations.iterate(movement, None),
+    ):
         assert (flight.stand_ref, flight.runway_ref) == ("009", "01")
         assert flight.number == "CA123"
         assert flight.sche_dep == datetime(2026, 1, 1, tzinfo=timezone.utc)

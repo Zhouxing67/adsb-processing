@@ -415,8 +415,7 @@ class EditorSession:
             )
         return compact_source_segments(segments)
 
-    @versioned_preview
-    def connection_candidates(self, u: Any, v: Any) -> list[dict[str, Any]]:
+    def _connection_candidates(self, u: Any, v: Any) -> list[dict[str, Any]]:
         self.require_node(u)
         self.require_node(v)
         """Find short continuous paths through one or more immutable SourceEdges."""
@@ -473,13 +472,17 @@ class EditorSession:
             return []
         return candidates
 
+    @versioned_preview
+    def connection_candidates(self, u: Any, v: Any) -> list[dict[str, Any]]:
+        return self._connection_candidates(u, v)
+
     @versioned_edit
     def restore_source_connection(self, u: Any, v: Any, candidate_id: str) -> Any:
         self.require_node(u)
         self.require_node(v)
         candidates = [
             candidate
-            for candidate in self.connection_candidates.__wrapped__(self, u, v)
+            for candidate in self._connection_candidates(u, v)
             if candidate["candidate_id"] == candidate_id
         ]
         if len(candidates) != 1:
@@ -570,8 +573,7 @@ class EditorSession:
             raise GraphObjectNotFound(f"节点不存在: {internal!r}")
         return canonical
 
-    @versioned_preview
-    def merge_nodes_preview(
+    def _merge_nodes_preview(
         self, node_ids: Sequence[Any], canonical_node: Any | None = None
     ) -> dict[str, Any]:
         members = self._merge_nodes(node_ids)
@@ -659,9 +661,15 @@ class EditorSession:
             "source_edges_unchanged": True,
         }
 
+    @versioned_preview
+    def merge_nodes_preview(
+        self, node_ids: Sequence[Any], canonical_node: Any | None = None
+    ) -> dict[str, Any]:
+        return self._merge_nodes_preview(node_ids, canonical_node)
+
     @versioned_edit
     def merge_nodes(self, node_ids: Sequence[Any], canonical_node: Any | None = None) -> Any:
-        preview = self.merge_nodes_preview.__wrapped__(self, node_ids, canonical_node)
+        preview = self._merge_nodes_preview(node_ids, canonical_node)
         members = tuple(preview["node_ids"])
         canonical = preview["canonical_node_id"]
         original_positions = {
@@ -993,8 +1001,7 @@ class EditorSession:
             data.clear()
             data.update(**protected, **attributes)
 
-    @versioned_preview
-    def source_split_preview(
+    def _source_split_preview(
         self, u: Any, v: Any, key: Any, longitude: float, latitude: float
     ) -> dict[str, Any]:
         u, v, key = self.require_edge(u, v, key)
@@ -1059,14 +1066,19 @@ class EditorSession:
         }
 
     @versioned_preview
-    def manual_snap_preview(self, node: Any, u: Any, v: Any, key: Any) -> dict[str, Any]:
+    def source_split_preview(
+        self, u: Any, v: Any, key: Any, longitude: float, latitude: float
+    ) -> dict[str, Any]:
+        return self._source_split_preview(u, v, key, longitude, latitude)
+
+    def _manual_snap_preview(self, node: Any, u: Any, v: Any, key: Any) -> dict[str, Any]:
         """Preview an explicit user-selected graph-node to source-edge snap."""
         self.require_node(node)
         u, v, key = self.require_edge(u, v, key)
         if node in {u, v}:
             raise ValueError("该节点已经是目标边的拓扑端点")
         longitude, latitude = self.graph.nodes[node]["pos"][:2]
-        split = self.source_split_preview.__wrapped__(self, u, v, key, longitude, latitude)
+        split = self._source_split_preview(u, v, key, longitude, latitude)
         source = self.airport_graph.get_source_edge(split["source_id"])
         projected_source = self.airport_graph.project_shape(source.geometry)
         station = float(split["manual_station_m"])
@@ -1092,6 +1104,10 @@ class EditorSession:
             "connector_geometry": mapping(LineString([(longitude, latitude), snapped_position])),
             "source_edge_unchanged": True,
         }
+
+    @versioned_preview
+    def manual_snap_preview(self, node: Any, u: Any, v: Any, key: Any) -> dict[str, Any]:
+        return self._manual_snap_preview(node, u, v, key)
 
     def _split_source_chain_with_existing_node(
         self,
@@ -1144,7 +1160,7 @@ class EditorSession:
     def manual_snap_node_to_edge(self, node: Any, u: Any, v: Any, key: Any) -> None:
         self.require_node(node)
         u, v, key = self.require_edge(u, v, key)
-        preview = self.manual_snap_preview.__wrapped__(self, node, u, v, key)
+        preview = self._manual_snap_preview(node, u, v, key)
         incident = [
             (eu, ev, edge_key)
             for eu, ev, edge_key in self.graph.edges(node, keys=True)
@@ -1190,7 +1206,7 @@ class EditorSession:
         osm_node_id: Any | None = None,
     ) -> Any:
         u, v, key = self.require_edge(u, v, key)
-        preview = self.source_split_preview.__wrapped__(self, u, v, key, longitude, latitude)
+        preview = self._source_split_preview(u, v, key, longitude, latitude)
         data = deepcopy(self.graph.edges[u, v, key])
         segments = edge_source_segments(data)
         if osm_node_id is not None:
@@ -1350,22 +1366,4 @@ def open_workbench(
         input_time_semantics=input_time_semantics,
         display_timezone=display_timezone,
         flight_database=flight_database,
-    )
-
-
-def edit_graph(
-    airport_graph: AirportGraph,
-    *,
-    save_path: str | FilePath = DEFAULT_GRAPH_PATH,
-    host: str = "127.0.0.1",
-    port: int = 8765,
-    open_browser: bool = True,
-) -> AirportGraph:
-    """Backward-compatible graph-only editing entry point."""
-    return open_workbench(
-        airport_graph,
-        save_path=save_path,
-        host=host,
-        port=port,
-        open_browser=open_browser,
     )

@@ -55,7 +55,7 @@ from .api_models import (
     normalize_error_detail,
 )
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
-from .flights import CataloguePageOutOfRange, FlightWorkbench
+from .flights import CataloguePageOutOfRange, FlightFilter, FlightWorkbench
 from .identifiers import EdgeIdentity, NodeIdField
 from .serializers import serialize_flights, serialize_paths
 
@@ -155,6 +155,20 @@ class UpdateStandRequest(BaseModel):
 class MatchFlightsRequest(BaseModel):
     flight_keys: list[str] = Field(default_factory=list)
     force: bool = False
+
+
+def _flight_filter(item: FlightFilterRequest) -> FlightFilter:
+    return FlightFilter(
+        query=item.q,
+        movement_type=item.movement_type,
+        status=item.match_status,
+        min_points=item.min_points,
+        max_points=item.max_points,
+        stands=tuple(item.stands),
+        start_date=item.start_date,
+        end_date=item.end_date,
+        validation_only=item.validation_only,
+    )
 
 
 class BrowserState:
@@ -398,11 +412,18 @@ def create_app(
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error_handler(_request: Request, error: StarletteHTTPException) -> JSONResponse:
+    async def http_error_handler(request: Request, error: StarletteHTTPException) -> JSONResponse:
+        detail = error.detail
+        if (
+            flight_mode
+            and error.status_code == 405
+            and request.url.path in {getattr(route, "path", None) for route in graph_routes.routes}
+        ):
+            detail = "航班工作台不允许修改机场图"
         return JSONResponse(
             status_code=error.status_code,
             content=ErrorResponse(
-                detail=normalize_error_detail(error.status_code, error.detail)
+                detail=normalize_error_detail(error.status_code, detail)
             ).model_dump(mode="json"),
             headers=error.headers,
         )
@@ -431,30 +452,6 @@ def create_app(
             ).model_dump(mode="json"),
         )
 
-    @app.middleware("http")
-    async def enforce_flight_permissions(request: Request, call_next: Callable[..., Any]) -> Any:
-        match_api = request.url.path == "/api/matches" and request.method == "POST"
-        safe_method = request.method in {"GET", "HEAD", "OPTIONS"}
-        route = request.url.path.split("/")
-        stand_api = (
-            request.method == "PATCH"
-            and len(route) == 5
-            and route[1:3] == ["api", "flights"]
-            and route[4] == "stand"
-        )
-        graph_write_blocked = flight_mode and not (match_api or stand_api)
-        if graph_write_blocked and not safe_method:
-            return JSONResponse(
-                status_code=405,
-                content=ErrorResponse(
-                    detail=error_detail(
-                        ApiErrorCode.METHOD_NOT_ALLOWED,
-                        "航班工作台不允许修改机场图",
-                    )
-                ).model_dump(mode="json"),
-            )
-        return await call_next(request)
-
     @app.get("/api/state")
     def state() -> WorkbenchStateResponse:
         value = browser.state(not flight_mode and on_finish is not None, save_path)
@@ -478,15 +475,7 @@ def create_app(
     ) -> FlightCatalogueResponse:
         try:
             value = flight_workbench.catalogue(
-                query=filters.q,
-                movement_type=filters.movement_type,
-                status=filters.match_status,
-                min_points=filters.min_points,
-                max_points=filters.max_points,
-                stands=filters.stands,
-                start_date=filters.start_date,
-                end_date=filters.end_date,
-                validation_only=filters.validation_only,
+                _flight_filter(filters),
                 page=filters.page,
                 page_size=filters.page_size,
             )
@@ -541,17 +530,7 @@ def create_app(
         filters: Annotated[FlightFilterRequest, Query()],
     ) -> FlightSelectionResponse:
         try:
-            value = flight_workbench.filtered_keys(
-                query=filters.q,
-                movement_type=filters.movement_type,
-                status=filters.match_status,
-                min_points=filters.min_points,
-                max_points=filters.max_points,
-                stands=filters.stands,
-                start_date=filters.start_date,
-                end_date=filters.end_date,
-                validation_only=filters.validation_only,
-            )
+            value = flight_workbench.filtered_keys(_flight_filter(filters))
             return FlightSelectionResponse.model_validate(value)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

@@ -12,7 +12,8 @@ from zoneinfo import ZoneInfo
 
 from airport_surface import AirportGraph
 from flight import Flight
-from flight.flight_repository import STAND_COLUMNS, FlightDatabase, database_flight_key
+from flight.flight_catalogue_repository import STAND_COLUMNS
+from flight.flight_repository import FlightDatabase, database_flight_key, flight_source_name
 from path_map import MatchConfig, Path
 from utils.json_value import to_json_value
 
@@ -91,6 +92,42 @@ class FlightCatalogItem:
     can_edit_stand: bool = False
 
 
+@dataclass(frozen=True, slots=True)
+class FlightFilter:
+    query: str = ""
+    movement_type: str | None = None
+    status: str | None = None
+    min_points: int = 0
+    max_points: int | None = None
+    stands: tuple[str, ...] = ()
+    start_date: date | None = None
+    end_date: date | None = None
+    validation_only: bool = False
+
+    def validate(self, dataset_max_points: int, *, supports_validation: bool) -> FlightFilter:
+        if self.status and self.status not in MATCH_STATUSES:
+            raise ValueError("unknown match status")
+        if self.min_points < 0:
+            raise ValueError("min_points must be a non-negative integer")
+        maximum = dataset_max_points if self.max_points is None else self.max_points
+        if maximum < 0:
+            raise ValueError("max_points must be a non-negative integer")
+        if self.min_points > maximum:
+            raise ValueError("min_points must not be greater than max_points")
+        if maximum > dataset_max_points:
+            raise ValueError(f"max_points must not exceed dataset maximum {dataset_max_points}")
+        if self.start_date and self.end_date and self.start_date > self.end_date:
+            raise ValueError("起始日期不得晚于终止日期")
+        if self.validation_only and not supports_validation:
+            raise ValueError("验证航班筛选需要数据库")
+        return replace(
+            self,
+            query=self.query.strip(),
+            max_points=maximum,
+            stands=tuple(self.stands),
+        )
+
+
 class FlightWorkbench:
     """Expose flight catalogue and matching actions to the workbench API."""
 
@@ -152,7 +189,7 @@ class FlightWorkbench:
                 False,
             )
         if flight_database:
-            for summary in flight_database.summaries():
+            for summary in flight_database.catalogue.summaries():
                 movement = summary.movement
                 key = database_flight_key(movement, summary.flight_id)
                 inconsistent = () if summary.number_count <= 1 else ("flight_number",)
@@ -160,7 +197,7 @@ class FlightWorkbench:
                     inconsistent += (STAND_COLUMNS[movement][1],)
                 self.items[key] = FlightCatalogItem(
                     flight_key=key,
-                    source=flight_database.source_name(movement),
+                    source=flight_source_name(movement),
                     flight_id=summary.flight_id,
                     flight_number=summary.flight_number,
                     movement_type=movement,
@@ -206,7 +243,7 @@ class FlightWorkbench:
             if not item.can_edit_stand or self.flight_database is None:
                 raise ValueError("该航班没有可编辑的数据库机位记录")
             _, column = STAND_COLUMNS[item.movement_type]
-            self.flight_database.update_stand(item.movement_type, item.flight_id, stand)
+            self.flight_database.stands.update(item.movement_type, item.flight_id, stand)
             self.items[key] = replace(
                 item,
                 stand_position=stand,
@@ -217,48 +254,21 @@ class FlightWorkbench:
 
     def catalogue(
         self,
+        filters: FlightFilter = FlightFilter(),
         *,
-        query: str = "",
-        movement_type: str | None = None,
-        status: str | None = None,
-        min_points: int = 0,
-        max_points: int | None = None,
-        stands: Sequence[str] = (),
-        start_date: date | None = None,
-        end_date: date | None = None,
-        validation_only: bool = False,
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
         self.sync_graph()
         if page < 1 or page_size < 1 or page_size > 100:
             raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
-        if status and status not in MATCH_STATUSES:
-            raise ValueError("unknown match status")
-        if min_points < 0:
-            raise ValueError("min_points must be a non-negative integer")
-        effective_max = self.dataset_max_points if max_points is None else max_points
-        if effective_max < 0:
-            raise ValueError("max_points must be a non-negative integer")
-        if min_points > effective_max:
-            raise ValueError("min_points must not be greater than max_points")
-        if effective_max > self.dataset_max_points:
-            raise ValueError(
-                f"max_points must not exceed dataset maximum {self.dataset_max_points}"
-            )
+        filters = filters.validate(
+            self.dataset_max_points,
+            supports_validation=self.flight_database is not None,
+        )
         rows = []
         with self.lock:
-            keys = self._filtered_keys(
-                query,
-                movement_type,
-                status,
-                min_points,
-                effective_max,
-                stands,
-                start_date,
-                end_date,
-                validation_only,
-            )
+            keys = self._filtered_keys(filters)
             start = (page - 1) * page_size
             for key in keys[start : start + page_size]:
                 item = self.items[key]
@@ -290,8 +300,8 @@ class FlightWorkbench:
             "page": actual_page,
             "page_size": page_size,
             "dataset_max_points": self.dataset_max_points,
-            "min_points": min_points,
-            "max_points": effective_max,
+            "min_points": filters.min_points,
+            "max_points": filters.max_points,
             "max_map_flights": MAX_MAP_FLIGHTS,
             "graph_id": self.match_tasks.graph_id,
             "time": {
@@ -302,33 +312,16 @@ class FlightWorkbench:
 
     def filtered_keys(
         self,
-        *,
-        query: str = "",
-        movement_type: str | None = None,
-        status: str | None = None,
-        min_points: int = 0,
-        max_points: int | None = None,
-        stands: Sequence[str] = (),
-        start_date: date | None = None,
-        end_date: date | None = None,
-        validation_only: bool = False,
+        filters: FlightFilter = FlightFilter(),
     ) -> dict[str, Any]:
         """Return the fixed key set matching the currently committed filters."""
         self.sync_graph()
-        effective_max = self.dataset_max_points if max_points is None else max_points
-        self._validate_filters(status, min_points, effective_max)
+        filters = filters.validate(
+            self.dataset_max_points,
+            supports_validation=self.flight_database is not None,
+        )
         with self.lock:
-            keys = self._filtered_keys(
-                query,
-                movement_type,
-                status,
-                min_points,
-                effective_max,
-                stands,
-                start_date,
-                end_date,
-                validation_only,
-            )
+            keys = self._filtered_keys(filters)
         return {"flight_keys": keys, "count": len(keys)}
 
     def detail(
@@ -346,7 +339,7 @@ class FlightWorkbench:
             item = self.items[flight_key]
             if self.flight_database:
                 columns, fields, inconsistent, page_records, observation_total = (
-                    self.flight_database.detail(
+                    self.flight_database.observations.detail(
                         item.movement_type,
                         item.flight_id,
                         start,
@@ -422,61 +415,36 @@ class FlightWorkbench:
                 "match": result.public(),
             }
 
-    def _validate_filters(self, status: str | None, min_points: int, max_points: int) -> None:
-        if status and status not in MATCH_STATUSES:
-            raise ValueError("unknown match status")
-        if min_points < 0 or max_points < 0:
-            raise ValueError("point limits must be non-negative integers")
-        if min_points > max_points:
-            raise ValueError("min_points must not be greater than max_points")
-        if max_points > self.dataset_max_points:
-            raise ValueError(
-                f"max_points must not exceed dataset maximum {self.dataset_max_points}"
-            )
-
-    def _filtered_keys(
-        self,
-        query: str,
-        movement_type: str | None,
-        status: str | None,
-        min_points: int,
-        max_points: int,
-        stands: Sequence[str] = (),
-        start_date: date | None = None,
-        end_date: date | None = None,
-        validation_only: bool = False,
-    ) -> list[str]:
-        if start_date and end_date and start_date > end_date:
-            raise ValueError("起始日期不得晚于终止日期")
-        if validation_only and self.flight_database is None:
-            raise ValueError("验证航班筛选需要数据库")
+    def _filtered_keys(self, filters: FlightFilter) -> list[str]:
+        maximum = filters.max_points
+        assert maximum is not None
         if self.flight_database:
             eligible = None
-            if validation_only:
+            if filters.validation_only:
                 directions = {"dep": "departure", "arr": "arrival"}
                 eligible = {
                     database_flight_key(directions[row["movement"]], row["flight_id"])
-                    for row in self.flight_database.validation_flights()
+                    for row in self.flight_database.catalogue.validation_flights()
                     if row["flight_id"] is not None
                 }
             return [
                 key
-                for summary in self.flight_database.summaries(
-                    movement=movement_type,
-                    query=query.strip(),
-                    min_points=min_points,
-                    max_points=max_points,
-                    stands=tuple(stands),
-                    start_date=start_date,
-                    end_date=end_date,
+                for summary in self.flight_database.catalogue.summaries(
+                    movement=filters.movement_type,
+                    query=filters.query,
+                    min_points=filters.min_points,
+                    max_points=maximum,
+                    stands=filters.stands,
+                    start_date=filters.start_date,
+                    end_date=filters.end_date,
                     display_timezone=self.display_timezone,
                 )
                 if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
                 and (eligible is None or key in eligible)
-                and (not status or self.results[key].status == status)
+                and (not filters.status or self.results[key].status == filters.status)
             ]
-        selected_stands = set(stands)
-        needle = query.strip().casefold()
+        selected_stands = set(filters.stands)
+        needle = filters.query.casefold()
         keys = []
         for key, item in self.items.items():
             result = self.results[key]
@@ -486,9 +454,9 @@ class FlightWorkbench:
                 and needle not in str(item.flight_number or "").casefold()
             ):
                 continue
-            if movement_type and movement_type != item.movement_type:
+            if filters.movement_type and filters.movement_type != item.movement_type:
                 continue
-            if status and status != result.status:
+            if filters.status and filters.status != result.status:
                 continue
             if selected_stands and (
                 item.movement_type not in STAND_COLUMNS
@@ -496,11 +464,13 @@ class FlightWorkbench:
                 or (item.stand_position or "") not in selected_stands
             ):
                 continue
-            if start_date or end_date:
+            if filters.start_date or filters.end_date:
                 day = date.fromisoformat(self._display_time(item.start_time)[:10])
-                if (start_date and day < start_date) or (end_date and day > end_date):
+                if (filters.start_date and day < filters.start_date) or (
+                    filters.end_date and day > filters.end_date
+                ):
                     continue
-            if min_points <= item.point_count <= max_points:
+            if filters.min_points <= item.point_count <= maximum:
                 keys.append(key)
         return keys
 
@@ -528,7 +498,7 @@ class FlightWorkbench:
         try:
             if self.flight_database:
                 item = self.items[flight_key]
-                return self.flight_database.flight(item.movement_type, item.flight_id)
+                return self.flight_database.observations.flight(item.movement_type, item.flight_id)
             return self.flights[flight_key]
         except KeyError as error:
             raise KeyError("未知 flight_key") from error

@@ -12,7 +12,7 @@ from zoneinfo import ZoneInfo
 
 from airport_surface import graph_id, load_graph, save_graph
 from flight import Flight, MovementType
-from flight.flight_repository import FlightDatabase
+from flight.flight_repository import FlightDatabase, flight_source_name
 from path_map import (
     BatchStats,
     MatchConfig,
@@ -32,10 +32,10 @@ class DatabaseDataset:
 
     @property
     def source(self) -> str:
-        return self.database.source_name(self.movement_type.value)
+        return flight_source_name(self.movement_type.value)
 
     def iterate(self, limit: int | None = None) -> Iterator[Flight]:
-        yield from self.database.iterate(self.movement_type.value, limit)
+        yield from self.database.observations.iterate(self.movement_type.value, limit)
 
 
 class BatchMatchingRunner:
