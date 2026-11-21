@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
-from typing import TYPE_CHECKING, Annotated, Any, Callable, Mapping, Sequence
+from typing import Annotated, Any, Callable
 
 import networkx as nx
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
@@ -18,7 +18,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airport_surface import edge_source_segments
 from airport_surface.graph import DEFAULT_GRAPH_PATH
-from flight import Flight
 from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
 
@@ -49,9 +48,6 @@ from .api_models import (
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightFilter, FlightWorkbench
 from .identifiers import EdgeIdentity, NodeIdField
-
-if TYPE_CHECKING:
-    from path_map import Path
 
 VALIDATION_EDGE_COLORS = (
     "#406c80",
@@ -321,26 +317,18 @@ def create_app(
     save_path: FilePath = DEFAULT_GRAPH_PATH,
     on_finish: Callable[[], None] | None = None,
     *,
-    flights: Sequence[Flight] = (),
-    paths_by_flight_key: Mapping[str, Path] | None = None,
     match_config: Any | None = None,
-    flight_sources: Sequence[str] | None = None,
-    movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
     flight_database: FlightDatabase | None = None,
 ) -> FastAPI:
     browser = BrowserState(session)
-    flight_mode = bool(flights) or flight_database is not None
+    flight_mode = flight_database is not None
     flight_workbench = None
-    if flight_mode:
+    if flight_database is not None:
         flight_workbench = FlightWorkbench(
             session.airport_graph,
-            flights,
-            sources=flight_sources,
-            flight_database=flight_database,
-            movement_types=movement_types,
-            paths_by_flight_key=paths_by_flight_key,
+            flight_database,
             match_config=match_config,
             input_time_semantics=input_time_semantics,
             display_timezone=display_timezone,

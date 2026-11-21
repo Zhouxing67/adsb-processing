@@ -2,10 +2,12 @@
 
 import argparse
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import networkx as nx
 import pandas as pd
 import uvicorn
+from flight_database_fixture import create_flight_database
 from pyproj import Proj
 from shapely.geometry import LineString
 
@@ -44,10 +46,15 @@ flights = [
     )
     for i in range(args.flights)
 ]
+database_directory = TemporaryDirectory()
+database = create_flight_database(
+    Path(database_directory.name) / "browser.duckdb",
+    flights,
+    ["arrival" if i % 2 == 0 else "departure" for i in range(args.flights)],
+)
 app = create_app(
     EditorSession(AirportGraph(graph, Proj("EPSG:32650"))),
     Path("outputs/browser-regression/unused.json"),
-    flights=flights,
-    movement_types=["arrival" if i % 2 == 0 else "departure" for i in range(args.flights)],
+    flight_database=database,
 )
 uvicorn.run(app, host="127.0.0.1", port=args.port)

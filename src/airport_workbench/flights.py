@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from math import ceil
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Sequence
 from zoneinfo import ZoneInfo
 
 from airport_surface import AirportGraph
 from flight import Flight
 from flight.flight_catalogue_repository import STAND_COLUMNS
 from flight.flight_repository import FlightDatabase, database_flight_key, flight_source_name
-from path_map import MatchConfig, Path
+from path_map import MatchConfig
 from utils.json_value import to_json_value
 
 from .flight_match_tasks import FlightMatchTasks, MatchResultItem
@@ -47,34 +46,6 @@ class CataloguePageOutOfRange(ValueError):
         self.requested_page = requested_page
         self.total_pages = total_pages
         super().__init__(f"page must be between 1 and {total_pages}; got {requested_page}")
-
-
-def flight_key(index: int, source: str, original_flight_id: str) -> str:
-    """Build the stable session key used by catalogue and explicit path associations."""
-    seed = f"{index}\0{source}\0{original_flight_id}".encode()
-    return f"f-{hashlib.sha256(seed).hexdigest()[:16]}"
-
-
-def _distinct_values(rows: Iterable[Mapping[str, Any]], name: str) -> list[Any]:
-    distinct = []
-    for row in rows:
-        value = to_json_value(row.get(name))
-        if value is not None and value not in distinct:
-            distinct.append(value)
-    return distinct
-
-
-def _consistent_value(
-    rows: tuple[dict[str, Any], ...],
-    names: Iterable[str],
-) -> tuple[Any, bool]:
-    for name in names:
-        distinct = _distinct_values(rows, name)
-        if len(distinct) == 1:
-            return distinct[0], True
-        if len(distinct) > 1:
-            return None, False
-    return None, True
 
 
 @dataclass(frozen=True, slots=True)
@@ -134,84 +105,44 @@ class FlightWorkbench:
     def __init__(
         self,
         airport_graph: AirportGraph,
-        flights: Sequence[Flight] = (),
+        flight_database: FlightDatabase,
         *,
-        sources: Sequence[str] | None = None,
-        movement_types: Sequence[str] | None = None,
-        paths_by_flight_key: Mapping[str, Path] | None = None,
         match_config: MatchConfig | None = None,
         input_time_semantics: str = "UTC",
         display_timezone: str = "UTC",
-        flight_database: FlightDatabase | None = None,
     ) -> None:
         self.airport_graph = airport_graph
         self.match_config = match_config or MatchConfig()
         self.input_time_semantics = input_time_semantics
         self.display_timezone = display_timezone
         self.lock = threading.RLock()
-        self.flights: dict[str, Flight] = {}
         self.items: dict[str, FlightCatalogItem] = {}
-        source_values = list(sources or ())
-        movement_values = list(movement_types or ())
         self.flight_database = flight_database
-        for index, flight in enumerate(flights):
-            source = source_values[index] if index < len(source_values) else "provided"
-            movement = movement_values[index] if index < len(movement_values) else "unknown"
-            key = flight_key(index, source, flight.flight_id)
-            rows = flight.rows
-            number, number_consistent = _consistent_value(
-                rows,
-                ("flight_number", "NUMBER", "number", "callsign", "flight", "ident"),
-            )
-            inconsistent = () if number_consistent else ("flight_number",)
-            stand_column = STAND_COLUMNS.get(movement, ("", ""))[1]
-            distinct = {str(value).strip() for value in _distinct_values(rows, stand_column)}
-            distinct.discard("")
-            stand = next(iter(distinct)) if len(distinct) == 1 else None
-            consistent = len(distinct) <= 1
-            if not consistent:
-                inconsistent += (stand_column,)
-            self.flights[key] = flight
+        for summary in flight_database.catalogue.summaries():
+            movement = summary.movement
+            key = database_flight_key(movement, summary.flight_id)
+            inconsistent = () if summary.number_count <= 1 else ("flight_number",)
+            if summary.stand_count > 1:
+                inconsistent += (STAND_COLUMNS[movement][1],)
             self.items[key] = FlightCatalogItem(
-                key,
-                source,
-                flight.flight_id,
-                number,
-                movement,
-                flight.observations[0].timestamp.isoformat(),
-                flight.observations[-1].timestamp.isoformat(),
-                flight.point_count,
-                inconsistent,
-                stand,
-                False,
+                flight_key=key,
+                source=flight_source_name(movement),
+                flight_id=summary.flight_id,
+                flight_number=summary.flight_number,
+                movement_type=movement,
+                start_time=summary.start_time.isoformat(),
+                end_time=summary.end_time.isoformat(),
+                point_count=summary.point_count,
+                inconsistent_fields=inconsistent,
+                stand_position=summary.stand_position,
+                can_edit_stand=not flight_database.read_only,
             )
-        if flight_database:
-            for summary in flight_database.catalogue.summaries():
-                movement = summary.movement
-                key = database_flight_key(movement, summary.flight_id)
-                inconsistent = () if summary.number_count <= 1 else ("flight_number",)
-                if summary.stand_count > 1:
-                    inconsistent += (STAND_COLUMNS[movement][1],)
-                self.items[key] = FlightCatalogItem(
-                    flight_key=key,
-                    source=flight_source_name(movement),
-                    flight_id=summary.flight_id,
-                    flight_number=summary.flight_number,
-                    movement_type=movement,
-                    start_time=summary.start_time.isoformat(),
-                    end_time=summary.end_time.isoformat(),
-                    point_count=summary.point_count,
-                    inconsistent_fields=inconsistent,
-                    stand_position=summary.stand_position,
-                    can_edit_stand=not flight_database.read_only,
-                )
         self.match_tasks = FlightMatchTasks(
             self.items,
             self._flight,
             airport_graph=self.airport_graph,
             lock=self.lock,
             config=self.match_config,
-            paths=paths_by_flight_key or {},
         )
         self.dataset_max_points = max((item.point_count for item in self.items.values()), default=0)
 
@@ -232,7 +163,7 @@ class FlightWorkbench:
         stand = (stand.strip() or None) if stand is not None else None
         with self.lock:
             item = self.items[key]
-            if not item.can_edit_stand or self.flight_database is None:
+            if not item.can_edit_stand:
                 raise ValueError("该航班没有可编辑的数据库机位记录")
             _, column = STAND_COLUMNS[item.movement_type]
             self.flight_database.stands.update(item.movement_type, item.flight_id, stand)
@@ -255,7 +186,7 @@ class FlightWorkbench:
             raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
         filters = filters.validate(
             self.dataset_max_points,
-            supports_validation=self.flight_database is not None,
+            supports_validation=True,
         )
         rows = []
         with self.lock:
@@ -285,7 +216,7 @@ class FlightWorkbench:
         return {
             "items": rows,
             "stand_options": stand_options,
-            "supports_validation_filter": self.flight_database is not None,
+            "supports_validation_filter": True,
             "total": total,
             "total_pages": total_pages,
             "page": actual_page,
@@ -308,7 +239,7 @@ class FlightWorkbench:
         """Return the fixed key set matching the currently committed filters."""
         filters = filters.validate(
             self.dataset_max_points,
-            supports_validation=self.flight_database is not None,
+            supports_validation=True,
         )
         with self.lock:
             keys = self._filtered_keys(filters)
@@ -327,25 +258,17 @@ class FlightWorkbench:
         start = (observation_page - 1) * observation_page_size
         with self.lock:
             item = self.items[flight_key]
-            if self.flight_database:
-                columns, fields, inconsistent, page_records, observation_total = (
-                    self.flight_database.observations.detail(
-                        item.movement_type,
-                        item.flight_id,
-                        start,
-                        observation_page_size,
-                        BUSINESS_FIELD_NAMES,
-                    )
+            columns, fields, inconsistent, page_records, observation_total = (
+                self.flight_database.observations.detail(
+                    item.movement_type,
+                    item.flight_id,
+                    start,
+                    observation_page_size,
+                    BUSINESS_FIELD_NAMES,
                 )
-                fields = {name: to_json_value(value) for name, value in fields.items()}
-                inconsistent = to_json_value(inconsistent)
-            else:
-                flight = self.flights[flight_key]
-                rows = flight.rows
-                columns = list(dict.fromkeys(name for row in rows for name in row))
-                fields, inconsistent = self._detail_fields(rows, columns)
-                observation_total = flight.point_count
-                page_records = rows[start : start + observation_page_size]
+            )
+            fields = {name: to_json_value(value) for name, value in fields.items()}
+            inconsistent = to_json_value(inconsistent)
         observation_pages = ceil(observation_total / observation_page_size)
         if observation_pages and observation_page > observation_pages:
             raise CataloguePageOutOfRange(observation_page, observation_pages)
@@ -377,20 +300,6 @@ class FlightWorkbench:
             "match": self.results[flight_key].public(),
         }
 
-    @staticmethod
-    def _detail_fields(
-        rows: tuple[dict[str, Any], ...],
-        columns: Iterable[str],
-    ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
-        fields = {}
-        inconsistent = {}
-        for column in columns:
-            values = _distinct_values(rows, column)
-            fields[column] = values[0] if len(values) == 1 else None
-            if len(values) > 1 and column.casefold() in BUSINESS_FIELD_NAMES:
-                inconsistent[column] = values
-        return fields, inconsistent
-
     def geometry(self, flight_key: str) -> dict[str, Any]:
         flight = self._flight(flight_key)
         with self.lock:
@@ -407,61 +316,30 @@ class FlightWorkbench:
     def _filtered_keys(self, filters: FlightFilter) -> list[str]:
         maximum = filters.max_points
         assert maximum is not None
-        if self.flight_database:
-            eligible = None
-            if filters.validation_only:
-                directions = {"dep": "departure", "arr": "arrival"}
-                eligible = {
-                    database_flight_key(directions[row["movement"]], row["flight_id"])
-                    for row in self.flight_database.catalogue.validation_flights()
-                    if row["flight_id"] is not None
-                }
-            return [
-                key
-                for summary in self.flight_database.catalogue.summaries(
-                    movement=filters.movement_type,
-                    query=filters.query,
-                    min_points=filters.min_points,
-                    max_points=maximum,
-                    stands=filters.stands,
-                    start_date=filters.start_date,
-                    end_date=filters.end_date,
-                    display_timezone=self.display_timezone,
-                )
-                if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
-                and (eligible is None or key in eligible)
-                and (not filters.status or self.results[key].status == filters.status)
-            ]
-        selected_stands = set(filters.stands)
-        needle = filters.query.casefold()
-        keys = []
-        for key, item in self.items.items():
-            result = self.results[key]
-            if (
-                needle
-                and needle not in str(item.flight_id).casefold()
-                and needle not in str(item.flight_number or "").casefold()
-            ):
-                continue
-            if filters.movement_type and filters.movement_type != item.movement_type:
-                continue
-            if filters.status and filters.status != result.status:
-                continue
-            if selected_stands and (
-                item.movement_type not in STAND_COLUMNS
-                or STAND_COLUMNS[item.movement_type][1] in item.inconsistent_fields
-                or (item.stand_position or "") not in selected_stands
-            ):
-                continue
-            if filters.start_date or filters.end_date:
-                day = date.fromisoformat(self._display_time(item.start_time)[:10])
-                if (filters.start_date and day < filters.start_date) or (
-                    filters.end_date and day > filters.end_date
-                ):
-                    continue
-            if filters.min_points <= item.point_count <= maximum:
-                keys.append(key)
-        return keys
+        eligible = None
+        if filters.validation_only:
+            directions = {"dep": "departure", "arr": "arrival"}
+            eligible = {
+                database_flight_key(directions[row["movement"]], row["flight_id"])
+                for row in self.flight_database.catalogue.validation_flights()
+                if row["flight_id"] is not None
+            }
+        return [
+            key
+            for summary in self.flight_database.catalogue.summaries(
+                movement=filters.movement_type,
+                query=filters.query,
+                min_points=filters.min_points,
+                max_points=maximum,
+                stands=filters.stands,
+                start_date=filters.start_date,
+                end_date=filters.end_date,
+                display_timezone=self.display_timezone,
+            )
+            if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
+            and (eligible is None or key in eligible)
+            and (not filters.status or self.results[key].status == filters.status)
+        ]
 
     @staticmethod
     def _observation_columns(columns: Iterable[Any]) -> list[Any]:
@@ -485,10 +363,8 @@ class FlightWorkbench:
 
     def _flight(self, flight_key: str) -> Flight:
         try:
-            if self.flight_database:
-                item = self.items[flight_key]
-                return self.flight_database.observations.flight(item.movement_type, item.flight_id)
-            return self.flights[flight_key]
+            item = self.items[flight_key]
+            return self.flight_database.observations.flight(item.movement_type, item.flight_id)
         except KeyError as error:
             raise KeyError("未知 flight_key") from error
 

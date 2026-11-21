@@ -40,6 +40,7 @@ module-name = ["config", "flight", "airport_surface", "airport_workbench", "path
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = [".", "src"]
 
 [tool.ruff]
 target-version = "py312"

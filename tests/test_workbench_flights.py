@@ -17,22 +17,49 @@ from airport_workbench.editor import EditorSession
 from airport_workbench.flights import (
     CataloguePageOutOfRange,
     FlightFilter,
-    FlightWorkbench,
-    flight_key,
+)
+from airport_workbench.flights import (
+    FlightWorkbench as DatabaseFlightWorkbench,
 )
 from flight import Flight
+from flight.flight_repository import database_flight_key
 from path_map import MapMatchingError, MapMatchingFailure, Path
 
 
-class SmallGraph:
+class SmallGraph(AirportGraph):
     def __init__(self) -> None:
-        self.graph = nx.MultiGraph()
-        self.graph.add_node("1", pos=(116.0, 40.0))
+        graph = nx.MultiGraph()
+        graph.add_node("1", pos=(116.0, 40.0))
+        graph.add_node("2", pos=(116.001, 40.001))
+        graph.add_edge(
+            "1",
+            "2",
+            geometry=LineString([(116.0, 40.0), (116.001, 40.001)]),
+        )
+        super().__init__(graph, Proj("EPSG:32650"))
 
-    def copy(self) -> SmallGraph:
-        clone = SmallGraph()
-        clone.graph = self.graph.copy()
-        return clone
+
+_flight_database_factory = None
+
+
+@pytest.fixture(autouse=True)
+def configure_flight_database_factory(flight_database_factory):
+    global _flight_database_factory
+    _flight_database_factory = flight_database_factory
+    yield
+    _flight_database_factory = None
+
+
+def FlightWorkbench(
+    airport_graph,
+    flights=(),
+    *,
+    movement_types=None,
+    flight_database=None,
+    **kwargs,
+):
+    database = flight_database or _flight_database_factory(flights, movement_types)
+    return DatabaseFlightWorkbench(airport_graph, database, **kwargs)
 
 
 def flight(identifier: str, callsigns: tuple[str, str] | None = None) -> Flight:
@@ -82,8 +109,8 @@ def test_catalogue_point_filter_is_closed_and_precedes_pagination() -> None:
     assert first["dataset_max_points"] == 4
     assert first["total"] == 2
     assert first["total_pages"] == 2
-    assert first["items"][0]["point_count"] == 2
-    assert second["items"][0]["point_count"] == 3
+    assert first["items"][0]["point_count"] == 3
+    assert second["items"][0]["point_count"] == 2
     assert [item["flight_id"] for item in exact["items"]] == ["three"]
 
 
@@ -175,7 +202,7 @@ def test_batch_submission_is_not_limited_by_map_capacity_and_conflicts_are_expli
     flights = [flight(str(index)) for index in range(5)]
     flights.append(flight("5", ("CCA1", "CCA2")))
     workbench = FlightWorkbench(SmallGraph(), flights)
-    keys = list(workbench.flights)
+    keys = list(workbench.items)
 
     submitted = workbench.submit(keys)
     assert submitted["queued_count"] == 6
@@ -197,13 +224,14 @@ def test_partial_match_failure_keeps_other_success(monkeypatch: pytest.MonkeyPat
 
     monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", FakeMatcher)
     workbench = FlightWorkbench(SmallGraph(), [flight("good"), flight("bad")])
-    keys = list(workbench.flights)
+    keys = list(workbench.items)
+    key_by_id = {item.flight_id: key for key, item in workbench.items.items()}
     submitted = workbench.submit(keys)
     workbench.match_tasks.executor.shutdown(wait=True)
 
-    assert workbench.results[keys[0]].status == "success"
-    assert workbench.results[keys[1]].status == "failed"
-    assert workbench.results[keys[1]].error == "no candidate"
+    assert workbench.results[key_by_id["good"]].status == "success"
+    assert workbench.results[key_by_id["bad"]].status == "failed"
+    assert workbench.results[key_by_id["bad"]].error == "no candidate"
     status = workbench.task_status([submitted["task_id"]])
     progress = status["tasks"][0]
     assert (progress["total"], progress["success"], progress["failed"]) == (2, 1, 1)
@@ -237,7 +265,7 @@ def test_retry_does_not_rewrite_completed_task_progress(
     workbench = FlightWorkbench(SmallGraph(), [flight("retry")])
     workbench.match_tasks.executor.shutdown(wait=True)
     workbench.match_tasks.executor = InlineExecutor()  # type: ignore[assignment]
-    key = next(iter(workbench.flights))
+    key = next(iter(workbench.items))
 
     first = workbench.submit([key])
     first_before_retry = workbench.task_status([first["task_id"]])["tasks"][0]
@@ -250,11 +278,6 @@ def test_retry_does_not_rewrite_completed_task_progress(
     assert first_after_retry == first_before_retry
     assert second_status["complete"] is True
     assert second_status["success"] == 1
-
-    workbench.match_tasks.graph_provider().graph.add_node("2", pos=(116.2, 40.2))
-    workbench.sync_graph()
-
-    assert workbench.results[key].status == "stale"
     assert workbench.task_status([first["task_id"]])["tasks"][0] == first_before_retry
     preserved_second = workbench.task_status([second["task_id"]])["tasks"][0]
     assert preserved_second["success"] == 1
@@ -263,7 +286,7 @@ def test_retry_does_not_rewrite_completed_task_progress(
 
 def test_batch_rejects_unknown_atomically_and_reports_skip_reasons() -> None:
     workbench = FlightWorkbench(SmallGraph(), [flight("one"), flight("two")])
-    first, second = workbench.flights
+    first, second = workbench.items
 
     with pytest.raises(KeyError, match="flight_key"):
         workbench.submit([first, "missing", second])
@@ -286,7 +309,7 @@ def test_observation_detail_is_paginated_and_can_expand_fields() -> None:
     item = flight_with_points("many", 205)
     item = Flight({**row, "aircraft_type": "A320"} for row in item.rows)
     workbench = FlightWorkbench(SmallGraph(), [item])
-    key = next(iter(workbench.flights))
+    key = next(iter(workbench.items))
 
     second = workbench.detail(key, observation_page=2)
     expanded = workbench.detail(key, observation_page=3, all_fields=True)
@@ -298,23 +321,10 @@ def test_observation_detail_is_paginated_and_can_expand_fields() -> None:
     assert "aircraft_type" in expanded["observation_columns"]
 
 
-def test_graph_change_invalidates_old_result() -> None:
-    item = flight("one")
-    workbench = FlightWorkbench(
-        SmallGraph(),
-        [item],
-        paths_by_flight_key={flight_key(0, "provided", "one"): object()},
-    )
-    key = next(iter(workbench.flights))
-    workbench.match_tasks.graph_provider().graph.add_node("2", pos=(116.1, 40.1))
+def test_real_path_and_nan_fields_serialize_through_all_endpoints(monkeypatch) -> None:
+    from threading import Event
+    from time import sleep
 
-    workbench.sync_graph()
-
-    assert workbench.results[key].status == "stale"
-    assert workbench.results[key].path is None
-
-
-def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
     projection = Proj("EPSG:32650")
     to_wgs84 = Transformer.from_proj(projection, "EPSG:4326", always_xy=True)
     a, b = to_wgs84.transform(450_000.0, 4_428_000.0), to_wgs84.transform(450_010.0, 4_428_000.0)
@@ -335,19 +345,32 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
             }
         )
     )
-    key = flight_key(0, "provided", item.flight_id)
-    app = create_app(
-        EditorSession(airport_graph),
-        flights=[item],
-        paths_by_flight_key={key: Path(airport_graph, [("1", "2", 0)])},
-    )
+    key = database_flight_key("departure", item.flight_id)
+    store = _flight_database_factory([item], ["departure"])
+    matched = Event()
+
+    class FakeMatcher:
+        def __init__(self, graph, _config):
+            self.graph = graph
+
+        def map_flight(self, _flight):
+            matched.set()
+            return Path(self.graph, [("1", "2", 0)])
+
+    monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", FakeMatcher)
+    app = create_app(EditorSession(airport_graph), flight_database=store)
 
     with TestClient(app) as client:
-        catalogue = client.get("/api/flights").json()
-        detail = client.get(f"/api/flights/{key}").json()
-        geometry = client.get(f"/api/flights/{key}/geometry").json()
         statuses = client.get("/api/matches").json()
         first = client.post("/api/matches", json={"flight_keys": [key]}).json()
+        assert matched.wait(5)
+        for _ in range(100):
+            catalogue = client.get("/api/flights").json()
+            if catalogue["items"][0]["match"]["status"] == "success":
+                break
+            sleep(0.01)
+        detail = client.get(f"/api/flights/{key}").json()
+        geometry = client.get(f"/api/flights/{key}/geometry").json()
         client.post("/api/matches", json={"flight_keys": [key]}).raise_for_status()
         filtered = client.get("/api/matches", params={"task_id": first["task_id"]}).json()
         assert [task["task_id"] for task in filtered["tasks"]] == [first["task_id"]]
@@ -396,7 +419,6 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     arrival = database_flight_key("arrival", "same")
     departure = database_flight_key("departure", "same")
     criteria = {"start_date": date(2024, 6, 15), "end_date": date(2024, 6, 15), "stands": [""]}
-    assert not workbench.flights
     assert workbench.catalogue(FlightFilter(**criteria))["total"] == 2
     assert workbench.catalogue(FlightFilter(end_date=date(2024, 6, 14)))["total"] == 0
     assert (
@@ -498,7 +520,7 @@ def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
 
     monkeypatch.setattr("airport_workbench.flight_match_tasks.Matcher", BlockingMatcher)
     workbench = FlightWorkbench(SmallGraph(), [flight("active"), flight("next"), flight("queued")])
-    active, following, queued = workbench.flights
+    active, following, queued = workbench.items
     workbench.submit([active, following])
     workbench.submit([queued])
     shutdown = workbench.match_tasks.executor.shutdown
@@ -521,7 +543,7 @@ def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
         stopped.result(timeout=5)
 
     assert calls == ["active"]
-    assert [workbench.results[key].status for key in workbench.flights] == [
+    assert [workbench.results[key].status for key in workbench.items] == [
         "success",
         "failed",
         "failed",

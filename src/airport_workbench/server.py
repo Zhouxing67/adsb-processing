@@ -6,7 +6,6 @@ import argparse
 import threading
 import time
 import webbrowser
-from collections.abc import Mapping, Sequence
 from pathlib import Path as FilePath
 from typing import Any
 
@@ -14,9 +13,7 @@ import uvicorn
 
 from airport_surface import AirportGraph
 from airport_surface.graph import DEFAULT_GRAPH_PATH, load_graph
-from flight import Flight
 from flight.flight_repository import FlightDatabase
-from path_map import Path
 
 from .app import create_app
 from .editor import EditorSession
@@ -25,15 +22,11 @@ from .editor import EditorSession
 def open_workbench(
     airport_graph: AirportGraph,
     *,
-    flights: Sequence[Flight] = (),
-    paths_by_flight_key: Mapping[str, Path] | None = None,
     save_path: str | FilePath = DEFAULT_GRAPH_PATH,
     host: str = "127.0.0.1",
     port: int = 8765,
     open_browser: bool = True,
     match_config: Any | None = None,
-    flight_sources: Sequence[str] | None = None,
-    movement_types: Sequence[str] | None = None,
     input_time_semantics: str = "UTC",
     display_timezone: str = "UTC",
     flight_database: FlightDatabase | None = None,
@@ -49,11 +42,7 @@ def open_workbench(
         session,
         FilePath(save_path),
         on_finish=finish,
-        flights=flights,
-        paths_by_flight_key=paths_by_flight_key,
         match_config=match_config,
-        flight_sources=flight_sources,
-        movement_types=movement_types,
         input_time_semantics=input_time_semantics,
         display_timezone=display_timezone,
         flight_database=flight_database,

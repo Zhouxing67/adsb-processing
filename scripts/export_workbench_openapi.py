@@ -5,17 +5,17 @@ from __future__ import annotations
 import argparse
 import json
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import networkx as nx
-import pandas as pd
 from pyproj import Proj
 from shapely.geometry import LineString
 
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
-from flight import Flight
+from flight.flight_repository import FlightDatabase
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENAPI_DIRECTORY = ROOT / "frontend" / "workbench" / "openapi"
@@ -35,33 +35,42 @@ def _session() -> EditorSession:
     return EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
 
 
-def _flight() -> Flight:
-    return Flight(
-        pd.DataFrame(
-            {
-                "flight_id": ["OPENAPI"] * 2,
-                "timestamp": pd.date_range("2024-01-01", periods=2, freq="1min", tz="UTC"),
-                "longitude": [116.59, 116.595],
-                "latitude": [40.07, 40.07],
-                "dep_stand_position": ["A01", "A01"],
-            }
-        )
-    )
+def _flight_database(path: Path) -> FlightDatabase:
+    import duckdb
+
+    with duckdb.connect(str(path)) as connection:
+        connection.execute("""
+            CREATE TABLE adsb_202406_dep (
+                flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+                longitude DOUBLE, latitude DOUBLE, dep_stand_position VARCHAR,
+                org_runway VARCHAR
+            );
+            INSERT INTO adsb_202406_dep VALUES
+                ('OPENAPI', 'OPENAPI', '2024-01-01 00:00:00', 116.59, 40.07, 'A01', NULL),
+                ('OPENAPI', 'OPENAPI', '2024-01-01 00:01:00', 116.595, 40.07, 'A01', NULL);
+            CREATE TABLE adsb_202406_arr (
+                flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+                longitude DOUBLE, latitude DOUBLE, arr_stand_position VARCHAR,
+                dst_runway VARCHAR
+            );
+        """)
+    return FlightDatabase(path)
 
 
 def workbench_openapi_documents() -> dict[str, dict[str, Any]]:
     """Build contracts from the same application factory used in production."""
     graph_app = create_app(_session(), ROOT / "outputs" / "openapi-unused.json")
-    flight_app = create_app(
-        _session(),
-        ROOT / "outputs" / "openapi-unused.json",
-        flights=[_flight()],
-        movement_types=["departure"],
-    )
-    return {
-        "graph.json": graph_app.openapi(),
-        "flight.json": flight_app.openapi(),
-    }
+    with TemporaryDirectory(dir=ROOT) as directory:
+        database = _flight_database(Path(directory) / "openapi.duckdb")
+        flight_app = create_app(
+            _session(),
+            ROOT / "outputs" / "openapi-unused.json",
+            flight_database=database,
+        )
+        return {
+            "graph.json": graph_app.openapi(),
+            "flight.json": flight_app.openapi(),
+        }
 
 
 def _serialized(document: dict[str, Any]) -> str:

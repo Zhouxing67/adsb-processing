@@ -125,18 +125,24 @@ def test_old_collections_are_verified_then_ignored(tmp_path):
         load_graph(path)
 
 
-def test_node_attribute_edit_is_undoable_and_read_only_is_protected(flight_samples):
+def test_node_attribute_edit_is_undoable_and_read_only_is_protected(
+    flight_samples, flight_database_factory
+):
     from fastapi.testclient import TestClient
 
     from airport_workbench.app import create_app
 
     graph = nx.MultiGraph()
     graph.add_node("1", pos=(0, 0))
+    graph.add_node("2", pos=(0.001, 0))
+    graph.add_edge("1", "2", geometry=LineString([(0, 0), (0.001, 0)]))
     session = EditorSession(AirportGraph(graph, Proj("EPSG:3857")))
     session.update_node_attributes("1", {"name": "reviewed"}, expected_revision=0)
     session.undo(expected_revision=1)
     assert "name" not in session.graph.nodes["1"]
-    with TestClient(create_app(session, flights=flight_samples)) as client:
+    with TestClient(
+        create_app(session, flight_database=flight_database_factory(flight_samples))
+    ) as client:
         response = client.post(
             "/api/update-node",
             json={

@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from functools import partial
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Callable, Iterable, Sequence
 
 from airport_surface import AirportGraph, graph_id
 from flight import Flight
@@ -64,7 +64,6 @@ class FlightMatchTasks:
         airport_graph: AirportGraph,
         lock: Any,
         config: MatchConfig,
-        paths: Mapping[str, Path],
     ) -> None:
         self.load_flight = load_flight
         self.lock = lock
@@ -76,15 +75,7 @@ class FlightMatchTasks:
         self.tasks: dict[str, MatchTask] = {}
         self.results: dict[str, MatchResultItem] = {}
         for key in flight_keys:
-            result = MatchResultItem(key)
-            path = paths.get(key)
-            if path is not None:
-                result.graph_id = self.graph_id
-                result.config = asdict(self.match_config)
-                result.status = "success"
-                result.path = path
-                result.updated_at = self._now()
-            self.results[key] = result
+            self.results[key] = MatchResultItem(key)
 
     def close(self) -> None:
         with self.lock:

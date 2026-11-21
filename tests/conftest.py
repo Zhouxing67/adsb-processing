@@ -1,4 +1,5 @@
 import pytest
+from flight_database_fixture import create_flight_database
 
 
 @pytest.fixture
@@ -19,3 +20,19 @@ def flight_samples():
             )
         )
     ]
+
+
+@pytest.fixture
+def flight_database_factory(tmp_path):
+    counter = 0
+
+    def create(flights, movement_types=None):
+        nonlocal counter
+        counter += 1
+        return create_flight_database(
+            tmp_path / f"flight-fixture-{counter}.duckdb",
+            flights,
+            movement_types,
+        )
+
+    return create

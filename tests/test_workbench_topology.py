@@ -1,11 +1,13 @@
 from pathlib import Path
-from threading import RLock
 from types import SimpleNamespace
 
 import networkx as nx
+from pyproj import Proj
 from shapely.geometry import LineString
 
+from airport_surface import AirportGraph
 from airport_workbench.app import BrowserState, _edge_colors, create_app
+from airport_workbench.editor import EditorSession
 
 
 class _AirportGraph:
@@ -61,16 +63,15 @@ def test_validation_colors_differ_for_incident_edges() -> None:
     assert len(set(colors.values())) == 3
 
 
-def test_read_only_viewer_hides_editing_state_and_rejects_writes(flight_samples) -> None:
+def test_read_only_viewer_hides_editing_state_and_rejects_writes(
+    flight_samples, flight_database_factory
+) -> None:
     graph = nx.MultiGraph()
     graph.add_node("1", pos=(0.0, 0.0))
-    session = SimpleNamespace(
-        graph=graph,
-        lock=RLock(),
-        airport_graph=_AirportGraph(),
-        can_undo=False,
-    )
-    app = create_app(session, flights=flight_samples)
+    graph.add_node("2", pos=(0.001, 0.0))
+    graph.add_edge("1", "2", geometry=LineString([(0.0, 0.0), (0.001, 0.0)]))
+    session = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
+    app = create_app(session, flight_database=flight_database_factory(flight_samples))
     state_route = next(
         route for route in app.routes if getattr(route, "path", None) == "/api/state"
     )

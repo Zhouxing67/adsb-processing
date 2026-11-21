@@ -17,7 +17,9 @@ from flight import Flight
     "with_flights,editable",
     [(False, True), (True, False)],
 )
-def test_capabilities_keep_server_permissions(with_flights, editable):
+def test_capabilities_keep_server_permissions(
+    with_flights, editable, flight_database_factory
+):
     graph = nx.MultiGraph()
     graph.add_node("1", pos=(116.0, 40.0))
     graph.add_node("2", pos=(116.001, 40.001))
@@ -39,7 +41,10 @@ def test_capabilities_keep_server_permissions(with_flights, editable):
         if with_flights
         else []
     )
-    with TestClient(create_app(session, Path("unused.json"), flights=flights)) as client:
+    database = flight_database_factory(flights) if with_flights else None
+    with TestClient(
+        create_app(session, Path("unused.json"), flight_database=database)
+    ) as client:
         capabilities = client.get("/api/state").json()["capabilities"]
         assert capabilities == {
             "can_edit_graph": editable,
