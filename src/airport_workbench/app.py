@@ -40,14 +40,7 @@ from .api_models import (
 )
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightWorkbench
-from .identifiers import (
-    EdgeIdentity,
-    EncodedValue,
-    decode_edge,
-    decode_value,
-    encode_edge,
-    encode_value,
-)
+from .identifiers import EdgeIdentity, NodeIdField
 from .serializers import serialize_flights, serialize_paths
 
 if TYPE_CHECKING:
@@ -89,26 +82,26 @@ class VersionedRequest(BaseModel):
 
 
 class DrawConnectionRequest(VersionedRequest):
-    start: EncodedValue
-    end: EncodedValue
+    start: NodeIdField
+    end: NodeIdField
     intermediate_points: list[tuple[float, float]] = Field(default_factory=list, max_length=10000)
     aeroway: str = "taxiway"
     ref: str | None = None
 
 
 class RestoreRequest(VersionedRequest):
-    start: EncodedValue
-    end: EncodedValue
+    start: NodeIdField
+    end: NodeIdField
     candidate_id: str | None = None
 
 
 class MergeNodesRequest(VersionedRequest):
-    node_ids: list[EncodedValue] = Field(default_factory=list)
-    canonical_node_id: EncodedValue | None = None
+    node_ids: list[NodeIdField] = Field(default_factory=list)
+    canonical_node_id: NodeIdField | None = None
 
 
 class UpdatedNodeAttributes(VersionedRequest):
-    node: EncodedValue
+    node: NodeIdField
     attributes: dict[str, Any]
 
 
@@ -122,7 +115,7 @@ class EdgeRequest(VersionedRequest):
 
 
 class NodeDeletionRequest(VersionedRequest):
-    node: EncodedValue
+    node: NodeIdField
     pair_ids: list[str] = Field(default_factory=list)
     discard_unpaired: bool = False
 
@@ -131,11 +124,11 @@ class SourceSplitRequest(VersionedRequest):
     edge: EdgeIdentity
     longitude: float
     latitude: float
-    osm_node_id: EncodedValue | None = None
+    osm_node_id: NodeIdField | None = None
 
 
 class ManualSnapRequest(VersionedRequest):
-    node: EncodedValue
+    node: NodeIdField
     edge: EdgeIdentity
 
 
@@ -159,15 +152,11 @@ class BrowserState:
         self.flights = tuple(flights)
         self.paths = tuple(paths)
 
-    def state(
-        self, can_finish: bool, save_path: FilePath
-    ) -> dict[str, Any]:
+    def state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
         with self.session.lock:
             return self._state(can_finish, save_path)
 
-    def _state(
-        self, can_finish: bool, save_path: FilePath
-    ) -> dict[str, Any]:
+    def _state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
         graph = self.session.graph
         components = sorted(nx.connected_components(graph), key=len, reverse=True)
         component_by_node = {
@@ -199,8 +188,8 @@ class BrowserState:
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
                     "properties": {
-                        "id": encode_value(node),
-                        "node_id": repr(node),
+                        "id": node,
+                        "node_id": node,
                         "node_type": (
                             "runway_interface"
                             if node in getattr(self.session.airport_graph, "runway_interfaces", {})
@@ -217,7 +206,7 @@ class BrowserState:
                             if degree == 1
                             else "connected"
                         ),
-                        "neighbours": ", ".join(repr(item) for item in graph.neighbors(node)),
+                        "neighbours": ", ".join(graph.neighbors(node)),
                         "attributes": repr(
                             {key: value for key, value in data.items() if key != "pos"}
                         ),
@@ -242,19 +231,16 @@ class BrowserState:
                     "type": "Feature",
                     "geometry": mapping(geometry),
                     "properties": {
-                        "id": encode_edge(u, v, key),
+                        "id": {"u": u, "v": v, "key": key},
                         "edge_id": repr((u, v, key)),
-                        "u": repr(u),
-                        "v": repr(v),
-                        "u_id": encode_value(u),
-                        "v_id": encode_value(v),
-                        "key": repr(key),
+                        "u": u,
+                        "v": v,
+                        "u_id": u,
+                        "v_id": v,
+                        "key": key,
                         "validation_color": edge_colors[(u, v, key)],
                         "geometry_length_m": round(self.session.airport_graph.length(geometry), 2),
-                        "source_id": data.get("source_id"),
                         "source_type": data.get("source_type"),
-                        "source_start_m": data.get("source_start_m"),
-                        "source_end_m": data.get("source_end_m"),
                         "osm_node_ids": repr(data.get("osm_node_ids", ())),
                         "source_segments": repr(edge_source_segments(data)),
                         "aeroway": data.get("aeroway"),
@@ -288,22 +274,22 @@ class BrowserState:
                 "isolated_count": len(isolated_nodes),
                 "dangling_count": len(dangling_nodes),
                 "parallel_pair_count": len(parallel_groups),
-                "isolated_nodes": [repr(node) for node in isolated_nodes[:100]],
-                "dangling_nodes": [repr(node) for node in dangling_nodes[:100]],
+                "isolated_nodes": isolated_nodes[:100],
+                "dangling_nodes": dangling_nodes[:100],
                 "components": [
                     {
                         "index": index,
                         "size": len(members),
-                        "node_ids": [encode_value(node) for node in members],
+                        "node_ids": list(members),
                     }
                     for index, members in enumerate(components, start=1)
                 ],
                 "parallel_groups": [
                     {
-                        "u": repr(u),
-                        "v": repr(v),
+                        "u": u,
+                        "v": v,
                         "edge_ids": [
-                            encode_edge(eu, ev, edge_key)
+                            {"u": eu, "v": ev, "key": edge_key}
                             for eu, ev, edge_key in graph.edges(keys=True)
                             if edge_key in keys and ({eu, ev} == {u, v})
                         ],
@@ -396,9 +382,7 @@ def create_app(
         )
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_error_handler(
-        _request: Request, error: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_error_handler(_request: Request, error: StarletteHTTPException) -> JSONResponse:
         return JSONResponse(
             status_code=error.status_code,
             content=ErrorResponse(
@@ -437,8 +421,10 @@ def create_app(
         safe_method = request.method in {"GET", "HEAD", "OPTIONS"}
         route = request.url.path.split("/")
         stand_api = (
-            request.method == "PATCH" and len(route) == 5
-            and route[1:3] == ["api", "flights"] and route[4] == "stand"
+            request.method == "PATCH"
+            and len(route) == 5
+            and route[1:3] == ["api", "flights"]
+            and route[4] == "stand"
         )
         graph_write_blocked = flight_mode and not (match_api or stand_api)
         if graph_write_blocked and not safe_method:
@@ -591,11 +577,10 @@ def create_app(
 
     @graph_routes.post("/api/draw-connection")
     def draw_connection(item: DrawConnectionRequest) -> dict[str, Any]:
-        start, end = decode_value(item.start), decode_value(item.end)
         try:
             result = session.draw_connection(
-                start,
-                end,
+                item.start,
+                item.end,
                 item.intermediate_points,
                 aeroway=item.aeroway,
                 ref=item.ref,
@@ -607,13 +592,14 @@ def create_app(
 
     @graph_routes.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
-        start, end = decode_value(item.start), decode_value(item.end)
-        if start == end:
+        if item.start == item.end:
             raise HTTPException(400, "起点和终点不能相同")
-        result = session.connection_candidates(start, end, expected_revision=item.expected_revision)
+        result = session.connection_candidates(
+            item.start, item.end, expected_revision=item.expected_revision
+        )
         return {
             "revision": result.revision,
-            "current_endpoints": [repr(start), repr(end)],
+            "current_endpoints": [item.start, item.end],
             "candidates": [
                 {
                     **{
@@ -631,11 +617,10 @@ def create_app(
     def restore_confirm(item: RestoreRequest) -> dict[str, Any]:
         if item.candidate_id is None:
             raise HTTPException(400, "必须选择一个来源路径")
-        start, end = decode_value(item.start), decode_value(item.end)
         try:
             result = session.restore_source_connection(
-                start,
-                end,
+                item.start,
+                item.end,
                 item.candidate_id,
                 expected_revision=item.expected_revision,
             )
@@ -650,43 +635,32 @@ def create_app(
     def merge_candidates() -> dict[str, Any]:
         with session.lock:
             candidates = session.merge_candidates()
-            payload = to_json_value(candidates)
-            for raw, encoded in zip(candidates, payload):
-                encoded["node_ids"] = [encode_value(node) for node in raw["node_ids"]]
-                for raw_node, node in zip(raw["nodes"], encoded["nodes"]):
-                    node["id"] = encode_value(raw_node["node_id"])
             return {
                 "revision": session.revision,
-                "candidates": payload,
+                "candidates": to_json_value(candidates),
             }
 
     @graph_routes.post("/api/merge-nodes-preview")
     def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
-        node_ids = [decode_value(node) for node in item.node_ids]
-        canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
         try:
             result = session.merge_nodes_preview(
-                node_ids,
-                canonical,
+                item.node_ids,
+                item.canonical_node_id,
                 expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         value = to_json_value(result.value)
         value["revision"] = result.revision
-        value["node_ids"] = [encode_value(node) for node in result.value["node_ids"]]
-        value["canonical_node_id"] = encode_value(result.value["canonical_node_id"])
-        for encoded, node in zip(value["node_ids"], value["nodes"]):
-            node["id"] = encoded
         return value
 
     @graph_routes.post("/api/merge-nodes-confirm")
     def merge_nodes_confirm(item: MergeNodesRequest) -> dict[str, Any]:
-        node_ids = [decode_value(node) for node in item.node_ids]
-        canonical = decode_value(item.canonical_node_id) if item.canonical_node_id else None
         try:
             result = session.merge_nodes(
-                node_ids, canonical, expected_revision=item.expected_revision
+                item.node_ids,
+                item.canonical_node_id,
+                expected_revision=item.expected_revision,
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -698,13 +672,13 @@ def create_app(
     @graph_routes.post("/api/delete-edge-preview")
     def delete_edge_preview(item: EdgeRequest) -> dict[str, Any]:
         result = session.derived_edge_removal_preview(
-            *decode_edge(item.edge), expected_revision=item.expected_revision
+            *item.edge.as_tuple(), expected_revision=item.expected_revision
         )
         return {**result.value, "revision": result.revision}
 
     @graph_routes.post("/api/delete-edge-confirm")
     def delete_edge_confirm(item: EdgeRequest) -> dict[str, Any]:
-        edge = decode_edge(item.edge)
+        edge = item.edge.as_tuple()
         result = session.remove_derived_edge(*edge, expected_revision=item.expected_revision)
         return {
             "message": f"已删除派生边 {edge!r}，SourceEdge 保持不变",
@@ -714,19 +688,16 @@ def create_app(
     @graph_routes.post("/api/delete-node-preview")
     def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
         try:
-            result = session.node_deletion_plan(
-                decode_value(item.node), expected_revision=item.expected_revision
-            )
+            result = session.node_deletion_plan(item.node, expected_revision=item.expected_revision)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         return {**result.value, "revision": result.revision}
 
     @graph_routes.post("/api/delete-node-confirm")
     def delete_node_confirm(item: NodeDeletionRequest) -> dict[str, Any]:
-        node = decode_value(item.node)
         try:
             result = session.remove_node_with_pairs(
-                node,
+                item.node,
                 item.pair_ids,
                 item.discard_unpaired,
                 expected_revision=item.expected_revision,
@@ -734,7 +705,7 @@ def create_app(
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         return {
-            "message": f"已按所选来源策略删除节点 {node!r}",
+            "message": f"已按所选来源策略删除节点 {item.node!r}",
             "revision": result.revision,
         }
 
@@ -742,7 +713,7 @@ def create_app(
     def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
         try:
             result = session.source_split_preview(
-                *decode_edge(item.edge),
+                *item.edge.as_tuple(),
                 item.longitude,
                 item.latitude,
                 expected_revision=item.expected_revision,
@@ -752,19 +723,17 @@ def create_app(
         value = to_json_value(result.value)
         value["revision"] = result.revision
         for candidate in value["candidates"]:
-            candidate["id"] = encode_value(candidate.pop("canonical_node_id"))
-        if value.get("recommended_node") is not None:
-            value["recommended_node"] = encode_value(value["recommended_node"])
+            candidate["id"] = candidate.pop("canonical_node_id")
         return value
 
     @graph_routes.post("/api/split-source-confirm")
     def split_source_confirm(item: SourceSplitRequest) -> dict[str, Any]:
         try:
             node = session.split_source_edge(
-                *decode_edge(item.edge),
+                *item.edge.as_tuple(),
                 item.longitude,
                 item.latitude,
-                decode_value(item.osm_node_id) if item.osm_node_id else None,
+                item.osm_node_id,
                 expected_revision=item.expected_revision,
             )
         except ValueError as error:
@@ -776,11 +745,10 @@ def create_app(
 
     @graph_routes.post("/api/manual-snap-preview")
     def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
-        node = decode_value(item.node)
-        edge = decode_edge(item.edge)
+        edge = item.edge.as_tuple()
         try:
             result = session.manual_snap_preview(
-                node, *edge, expected_revision=item.expected_revision
+                item.node, *edge, expected_revision=item.expected_revision
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
@@ -788,30 +756,31 @@ def create_app(
 
     @graph_routes.post("/api/manual-snap-confirm")
     def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
-        node = decode_value(item.node)
-        edge = decode_edge(item.edge)
+        edge = item.edge.as_tuple()
         try:
             result = session.manual_snap_node_to_edge(
-                node, *edge, expected_revision=item.expected_revision
+                item.node, *edge, expected_revision=item.expected_revision
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         return {
-            "message": f"已将节点 {node!r} 人工接入目标边",
+            "message": f"已将节点 {item.node!r} 人工接入目标边",
             "revision": result.revision,
         }
 
     @graph_routes.post("/api/update-node")
     def update_node(item: UpdatedNodeAttributes) -> dict[str, Any]:
-        node = decode_value(item.node)
         result = session.update_node_attributes(
-            node, item.attributes, expected_revision=item.expected_revision
+            item.node, item.attributes, expected_revision=item.expected_revision
         )
-        return {"message": f"已更新节点 {node!r} 的属性", "revision": result.revision}
+        return {
+            "message": f"已更新节点 {item.node!r} 的属性",
+            "revision": result.revision,
+        }
 
     @graph_routes.post("/api/update-edge")
     def update_edge(item: UpdatedEdgeAttributes) -> dict[str, Any]:
-        edge = decode_edge(item.edge)
+        edge = item.edge.as_tuple()
         result = session.update_edge_attributes(
             *edge, item.attributes, expected_revision=item.expected_revision
         )

@@ -3,11 +3,11 @@ export interface LineGeometry { type: 'LineString'; coordinates: Array<[number, 
 export interface GeoFeature<G, P = Record<string, unknown>> { type: 'Feature'; geometry: G; properties: P }
 export interface GeoCollection<G = PointGeometry | LineGeometry, P = Record<string, unknown>> { type: 'FeatureCollection'; features: Array<GeoFeature<G, P>> }
 
-export type EncodedValue = { type: string; value: unknown };
-export type EdgeIdentity = { u: EncodedValue; v: EncodedValue; key: EncodedValue };
+export type NodeId = string;
+export type EdgeIdentity = { u: NodeId; v: NodeId; key: number };
 
 export interface NodeProperties {
-  id: EncodedValue; node_id: string; node_type: string; degree: number;
+  id: NodeId; node_id: NodeId; node_type: string; degree: number;
   component: number; topology_role: string; editable_attributes: Record<string, unknown>;
   color: string; radius: number;
 }
@@ -20,7 +20,7 @@ export interface TopologySummary {
   component_count: number; largest_component: number; isolated_count: number;
   dangling_count: number; parallel_pair_count: number; isolated_nodes: string[];
   dangling_nodes: string[];
-  components: Array<{ index: number; size: number; node_ids: EncodedValue[] }>;
+  components: Array<{ index: number; size: number; node_ids: NodeId[] }>;
   parallel_groups: Array<{ u: string; v: string; edge_ids: EdgeIdentity[] }>;
 }
 export interface WorkbenchState {

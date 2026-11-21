@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { api } from '../../api/client';
-import type { EdgeProperties, EncodedValue, GeoFeature, LineGeometry, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
+import type { EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
 import type { EdgeDeletePreview, GraphDialogState, MergeCandidates, MergePreview, NodeDeletePreview, RestorePreview, SnapPreview, SplitPreview } from './types';
@@ -44,7 +44,7 @@ export function useGraphEditorMachine() {
     wb.dispatch({ type: 'selected', value: null });
   }, [wb]);
   const openDialog = useCallback((dialog: GraphDialogState) => send({ type: 'OPEN_DIALOG', dialog }), []);
-  const previewMerge = useCallback(async (nodeIds: EncodedValue[], revision: number) => {
+  const previewMerge = useCallback(async (nodeIds: NodeId[], revision: number) => {
     const preview = await wb.previewGraphCommand<MergePreview>('/api/merge-nodes-preview', { node_ids: nodeIds, expected_revision: revision });
     if (preview) openDialog({ kind: 'merge', preview });
   }, [wb, openDialog]);
@@ -75,7 +75,7 @@ export function useGraphEditorMachine() {
     }
     if (wb.tool === 'merge') {
       if (!isNode(feature)) return;
-      const duplicate = machine.selection.some(item => isNode(item) && JSON.stringify(item.properties.id) === JSON.stringify(feature.properties.id));
+      const duplicate = machine.selection.some(item => isNode(item) && item.properties.id === feature.properties.id);
       const selection = duplicate ? machine.selection : [...machine.selection, feature];
       if (!duplicate) send({ type: 'SELECT', selection });
       wb.dispatch({ type: 'status', value: `已选择 ${selection.length} 个待合并节点` });
@@ -117,7 +117,7 @@ export function useGraphEditorMachine() {
     }
   }, [machine, wb, openDialog]);
 
-  const mergeNodeIds = machine.selection.reduce<EncodedValue[]>((ids, item) => { if (isNode(item)) ids.push(item.properties.id); return ids; }, []);
+  const mergeNodeIds = machine.selection.reduce<NodeId[]>((ids, item) => { if (isNode(item)) ids.push(item.properties.id); return ids; }, []);
   const undoDrawPoint = useCallback(() => send({ type: 'UNDO_POINT' }), []);
   const setPreviewGeometry = useCallback((geometry: LineGeometry | null) => send({ type: 'SET_PREVIEW', geometry }), []);
 

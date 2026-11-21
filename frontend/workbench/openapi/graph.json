@@ -9,7 +9,7 @@
             "type": "string"
           },
           "end": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           },
           "expected_revision": {
             "title": "Expected Revision",
@@ -45,7 +45,7 @@
             "title": "Ref"
           },
           "start": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           }
         },
         "required": [
@@ -61,13 +61,13 @@
         "description": "The stable identity of one MultiGraph edge.",
         "properties": {
           "key": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/EdgeKeyField"
           },
           "u": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           },
           "v": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           }
         },
         "required": [
@@ -77,6 +77,10 @@
         ],
         "title": "EdgeIdentity",
         "type": "object"
+      },
+      "EdgeKeyField": {
+        "minimum": 0.0,
+        "type": "integer"
       },
       "EdgeRequest": {
         "properties": {
@@ -93,30 +97,6 @@
           "edge"
         ],
         "title": "EdgeRequest",
-        "type": "object"
-      },
-      "EncodedValue": {
-        "additionalProperties": false,
-        "description": "An integer or string graph identifier without JavaScript number coercion.",
-        "properties": {
-          "type": {
-            "enum": [
-              "int",
-              "str"
-            ],
-            "title": "Type",
-            "type": "string"
-          },
-          "value": {
-            "title": "Value",
-            "type": "string"
-          }
-        },
-        "required": [
-          "type",
-          "value"
-        ],
-        "title": "EncodedValue",
         "type": "object"
       },
       "ErrorDetail": {
@@ -169,7 +149,7 @@
             "type": "integer"
           },
           "node": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           }
         },
         "required": [
@@ -185,7 +165,7 @@
           "canonical_node_id": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/EncodedValue"
+                "$ref": "#/components/schemas/NodeIdField"
               },
               {
                 "type": "null"
@@ -198,7 +178,7 @@
           },
           "node_ids": {
             "items": {
-              "$ref": "#/components/schemas/EncodedValue"
+              "$ref": "#/components/schemas/NodeIdField"
             },
             "title": "Node Ids",
             "type": "array"
@@ -222,7 +202,7 @@
             "type": "integer"
           },
           "node": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           },
           "pair_ids": {
             "items": {
@@ -239,6 +219,10 @@
         "title": "NodeDeletionRequest",
         "type": "object"
       },
+      "NodeIdField": {
+        "pattern": "^-?[1-9][0-9]*$",
+        "type": "string"
+      },
       "RestoreRequest": {
         "properties": {
           "candidate_id": {
@@ -253,14 +237,14 @@
             "title": "Candidate Id"
           },
           "end": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           },
           "expected_revision": {
             "title": "Expected Revision",
             "type": "integer"
           },
           "start": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           }
         },
         "required": [
@@ -291,7 +275,7 @@
           "osm_node_id": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/EncodedValue"
+                "$ref": "#/components/schemas/NodeIdField"
               },
               {
                 "type": "null"
@@ -343,7 +327,7 @@
             "type": "integer"
           },
           "node": {
-            "$ref": "#/components/schemas/EncodedValue"
+            "$ref": "#/components/schemas/NodeIdField"
           }
         },
         "required": [

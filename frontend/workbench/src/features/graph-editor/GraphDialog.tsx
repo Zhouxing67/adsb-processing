@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { EncodedValue, LineGeometry } from '../../api/types';
+import type { LineGeometry, NodeId } from '../../api/types';
 import type { GraphDialogState } from './types';
 
 interface Props {
@@ -7,7 +7,7 @@ interface Props {
   onClose(): void;
   onPreview(geometry: LineGeometry | null): void;
   onConfirm(path: string, body: Record<string, unknown>): Promise<void>;
-  onMergeCandidate(nodeIds: EncodedValue[], revision: number): Promise<void>;
+  onMergeCandidate(nodeIds: NodeId[], revision: number): Promise<void>;
 }
 export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCandidate }: Props) {
   const [choice, setChoice] = useState(0);
@@ -15,9 +15,9 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
   const [discard, setDiscard] = useState(false);
   useEffect(() => {
     const preferred = dialog.kind === 'merge'
-      ? dialog.preview.nodes.findIndex(node => JSON.stringify(node.id) === JSON.stringify(dialog.preview.canonical_node_id))
+      ? dialog.preview.nodes.findIndex(node => node.id === dialog.preview.canonical_node_id)
       : dialog.kind === 'split' && dialog.preview.recommended_node
-        ? dialog.preview.candidates.findIndex(candidate => JSON.stringify(candidate.id) === JSON.stringify(dialog.preview.recommended_node))
+        ? dialog.preview.candidates.findIndex(candidate => candidate.id === dialog.preview.recommended_node)
         : 0;
     setChoice(Math.max(0, preferred)); setDiscard(false);
     if (dialog.kind === 'delete-node') {
@@ -60,7 +60,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
     {dialog.kind === 'merge' && <><h2>合并节点预览</h2><dl><div><dt>最大距离</dt><dd>{dialog.preview.max_distance_m.toFixed(3)} m</dd></div><div><dt>受影响边</dt><dd>{dialog.preview.affected_edges.length}</dd></div></dl><h3>选择规范节点</h3>{dialog.preview.nodes.map((node, index) => <label className="source-option" key={JSON.stringify(node.id)}><input type="radio" checked={choice === index} onChange={() => setChoice(index)} /><span>{node.node_id} · {node.manual ? '人工图节点' : 'OSM 图节点'} · 度 {node.degree}</span></label>)}{dialog.preview.warnings.map(item => <p className="warning" key={item}>{item}</p>)}</>}
     {dialog.kind === 'delete-edge' && <><h2>删除派生边</h2><p>{dialog.preview.edge}</p>{dialog.preview.source_segments.map(segment => <p key={`${segment.source_id}-${segment.source_start_m}`}>{segment.source_id} [{segment.source_start_m.toFixed(2)}, {segment.source_end_m.toFixed(2)}]{segment.reversed ? ' 反向' : ''}</p>)}<p className="field-note">SourceEdge 不会被删除。</p></>}
     {dialog.kind === 'delete-node' && <><h2>半边配对</h2><p>节点 {dialog.preview.node} · {dialog.preview.half_edges.length} 条关联半边</p><div className="source-options">{dialog.preview.pair_candidates.map(pair => <label className="source-option pair-option" key={pair.pair_id} onMouseEnter={() => onPreview(pair.geometry)}><input type="checkbox" checked={pairs.has(pair.pair_id)} onChange={event => setPairs(value => { const next = new Set(value); if (event.target.checked) { dialog.preview.pair_candidates.filter(item => item.pair_id !== pair.pair_id && (item.left === pair.left || item.left === pair.right || item.right === pair.left || item.right === pair.right)).forEach(item => next.delete(item.pair_id)); next.add(pair.pair_id); } else next.delete(pair.pair_id); return next; })} /><span><strong>{pair.endpoints.join(' ↔ ')}</strong><br />{pair.source_ids.join(' + ')} · 转角 {pair.angle_degrees}° · {pair.same_source ? '同源' : '跨来源'}</span></label>)}</div><p className="field-note">已选择 {pairs.size} 组连接 · 未使用：{unpaired.join(', ') || '无'}</p>{unpaired.length > 0 && <label className="source-option"><input type="checkbox" checked={discard} onChange={event => setDiscard(event.target.checked)} /><span>明确删除未配对半边</span></label>}</>}
-    {dialog.kind === 'split' && <><h2>补充图分割点</h2><p>命中来源：{dialog.preview.source_id}</p>{dialog.preview.candidates.length ? dialog.preview.candidates.map((candidate, index) => <label className="source-option" key={JSON.stringify(candidate.id)}><input type="radio" checked={choice === index} onChange={() => setChoice(index)} /><span>OSM Node {String(candidate.id.value)} · 距离 {candidate.distance_m.toFixed(2)} m</span></label>) : <p>没有合适 OSM Node，将创建人工节点。</p>}</>}
+    {dialog.kind === 'split' && <><h2>补充图分割点</h2><p>命中来源：{dialog.preview.source_id}</p>{dialog.preview.candidates.length ? dialog.preview.candidates.map((candidate, index) => <label className="source-option" key={candidate.id}><input type="radio" checked={choice === index} onChange={() => setChoice(index)} /><span>OSM Node {candidate.id} · 距离 {candidate.distance_m.toFixed(2)} m</span></label>) : <p>没有合适 OSM Node，将创建人工节点。</p>}</>}
     {dialog.kind === 'snap' && <><h2>人工吸附预览</h2><dl><div><dt>节点</dt><dd>{dialog.preview.node}</dd></div><div><dt>目标边</dt><dd>{dialog.preview.edge}</dd></div><div><dt>移动距离</dt><dd>{dialog.preview.distance_m.toFixed(3)} m</dd></div><div><dt>目标来源</dt><dd>{dialog.preview.target_source_id}</dd></div></dl><p className="field-note">确认后将移动图节点、重建关联边，并切分目标来源区间。</p></>}
     <div className="dialog-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={dialog.kind === 'delete-node' && unpaired.length > 0 && !discard} onClick={() => void confirm()}>确认</button></div>
   </aside>;

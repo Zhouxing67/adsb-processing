@@ -22,10 +22,7 @@ from path_map import BatchStats, Matcher, match_batch
 settings = load_settings()
 database = open_flight_database(settings.database, read_only=True)
 matcher = Matcher(load_graph(settings.graph_path), settings.matching)
-inputs = (
-    (flight.flight_id, flight)
-    for flight in database.iterate("arrival", limit=10)
-)
+inputs = ((flight.flight_id, flight) for flight in database.iterate("arrival", limit=10))
 
 stats = BatchStats()
 for outcome in match_batch(matcher, inputs):

@@ -1,5 +1,4 @@
 export type Aeroway = 'taxiway' | 'runway' | 'parking_position';
-export type FeatureId = { type: string; value: unknown };
 export interface PropertyPatch { aeroway: Aeroway | null; name: string | null; ref: string | null }
 export interface VersionedPropertyEdit { expected_revision: number; attributes: PropertyPatch }
 export const aerowayTypes: readonly Aeroway[] = ['taxiway', 'runway', 'parking_position'];

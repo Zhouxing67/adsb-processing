@@ -4,8 +4,8 @@ from pathlib import Path
 
 import pytest
 
-from flight import Flight, MovementType
 from airport_surface import load_graph
+from flight import Flight, MovementType
 from path_map import MatchConfig, Matcher
 from path_map.candidates import CandidateIndex
 from path_map.path import DirectedEdge
@@ -35,8 +35,8 @@ def test_target_turn_is_measured_from_local_directed_tangents(target_case):
         max_angle_deg=150,
         tangent_sample_m=10,
     )
-    incoming = DirectedEdge(244881041, 244881044, 0)
-    outgoing = DirectedEdge(244881044, 1055651195, 0)
+    incoming = DirectedEdge("244881041", "244881044", 0)
+    outgoing = DirectedEdge("244881044", "1055651195", 0)
 
     angle = constraint.turn_angle(incoming, outgoing)
 
@@ -52,11 +52,10 @@ def test_target_flight_never_returns_the_prohibited_turn(target_case):
         pytest.skip("Departure sample does not include stand and runway metadata")
     path = Matcher(airport_graph, MatchConfig()).map_flight(flight)
 
-    prohibited = (244881044, 1055651195, 244881044)
+    prohibited = ("244881044", "1055651195", "244881044")
     assert all(
-        tuple(path.nodes[index : index + 3]) != prohibited
-        for index in range(len(path.nodes) - 2)
+        tuple(path.nodes[index : index + 3]) != prohibited for index in range(len(path.nodes) - 2)
     )
-    assert (244881041, 244881044, 244881048) in tuple(
+    assert ("244881041", "244881044", "244881048") in tuple(
         tuple(path.nodes[index : index + 3]) for index in range(len(path.nodes) - 2)
     )

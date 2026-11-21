@@ -62,10 +62,10 @@ def path_geojson(path: Path, index: int = 0, *, flight_key: str | None = None) -
                     "path_index": index,
                     "flight_key": flight_key,
                     "sequence": sequence,
-                    "u": repr(edge.from_),
-                    "v": repr(edge.to_),
-                    "key": repr(edge.key_),
-                    "edge_id": repr(edge.id),
+                    "u": edge.from_,
+                    "v": edge.to_,
+                    "key": edge.key_,
+                    "edge_id": {"u": edge.from_, "v": edge.to_, "key": edge.key_},
                 },
             }
         )

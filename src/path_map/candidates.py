@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Hashable
 
 import numpy as np
 from shapely import STRtree
 from shapely.geometry import LineString, Point
 
-from airport_surface import AirportGraph
+from airport_surface import AirportGraph, NodeId
 
 from .path import EdgeId
 
@@ -59,7 +58,7 @@ class CandidateIndex:
             raise ValueError("Airport graph has no non-empty edge geometries")
         self.tree = STRtree(self.lines)
 
-    def _orient_from_node(self, line: LineString, node: Hashable) -> LineString:
+    def _orient_from_node(self, line: LineString, node: NodeId) -> LineString:
         pos = self.airport_graph.graph.nodes[node].get("pos")
         if pos is None:
             return line

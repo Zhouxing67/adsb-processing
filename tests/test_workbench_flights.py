@@ -26,7 +26,7 @@ from path_map import MapMatchingError, MapMatchingFailure, Path
 class SmallGraph:
     def __init__(self) -> None:
         self.graph = nx.MultiGraph()
-        self.graph.add_node("a", pos=(116.0, 40.0))
+        self.graph.add_node("1", pos=(116.0, 40.0))
 
     def copy(self) -> SmallGraph:
         clone = SmallGraph()
@@ -220,9 +220,7 @@ def test_retry_does_not_rewrite_completed_task_progress(
             nonlocal attempts
             attempts += 1
             if attempts == 1:
-                raise MapMatchingError(
-                    MapMatchingFailure.NO_LEGAL_PATH, "first attempt failed"
-                )
+                raise MapMatchingError(MapMatchingFailure.NO_LEGAL_PATH, "first attempt failed")
             return object()
 
     class InlineExecutor:
@@ -247,7 +245,7 @@ def test_retry_does_not_rewrite_completed_task_progress(
     assert second_status["complete"] is True
     assert second_status["success"] == 1
 
-    workbench.match_tasks.graph_provider().graph.add_node("changed", pos=(116.2, 40.2))
+    workbench.match_tasks.graph_provider().graph.add_node("2", pos=(116.2, 40.2))
     workbench.sync_graph()
 
     assert workbench.results[key].status == "stale"
@@ -302,7 +300,7 @@ def test_graph_change_invalidates_old_result() -> None:
         paths_by_flight_key={flight_key(0, "provided", "one"): object()},
     )
     key = next(iter(workbench.flights))
-    workbench.match_tasks.graph_provider().graph.add_node("b", pos=(116.1, 40.1))
+    workbench.match_tasks.graph_provider().graph.add_node("2", pos=(116.1, 40.1))
 
     workbench.sync_graph()
 
@@ -313,13 +311,11 @@ def test_graph_change_invalidates_old_result() -> None:
 def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
     projection = Proj("EPSG:32650")
     to_wgs84 = Transformer.from_proj(projection, "EPSG:4326", always_xy=True)
-    a, b = to_wgs84.transform(450_000.0, 4_428_000.0), to_wgs84.transform(
-        450_010.0, 4_428_000.0
-    )
+    a, b = to_wgs84.transform(450_000.0, 4_428_000.0), to_wgs84.transform(450_010.0, 4_428_000.0)
     graph = nx.MultiGraph()
-    graph.add_node("a", pos=a)
-    graph.add_node("b", pos=b)
-    graph.add_edge("a", "b", key="ab", geometry=LineString([a, b]))
+    graph.add_node("1", pos=a)
+    graph.add_node("2", pos=b)
+    graph.add_edge("1", "2", key=0, geometry=LineString([a, b]))
     airport_graph = AirportGraph(graph, projection)
     item = Flight(
         pd.DataFrame(
@@ -337,7 +333,7 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints() -> None:
     app = create_app(
         EditorSession(airport_graph),
         flights=[item],
-        paths_by_flight_key={key: Path(airport_graph, [("a", "b", "ab")])},
+        paths_by_flight_key={key: Path(airport_graph, [("1", "2", 0)])},
     )
 
     with TestClient(app) as client:
@@ -369,7 +365,8 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     database = tmp_path / "catalogue.duckdb"
     with duckdb.connect(str(database)) as connection:
         for movement, stand_column in (
-            ("arr", "arr_stand_position"), ("dep", "dep_stand_position"),
+            ("arr", "arr_stand_position"),
+            ("dep", "dep_stand_position"),
         ):
             connection.execute(f"""
                 CREATE TABLE adsb_202406_{movement} (
@@ -384,7 +381,10 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
 
     store = FlightDatabase(database)
     workbench = FlightWorkbench(
-        SmallGraph(), flight_database=store, display_timezone=BEIJING, input_time_semantics=BEIJING,
+        SmallGraph(),
+        flight_database=store,
+        display_timezone=BEIJING,
+        input_time_semantics=BEIJING,
     )
     arrival = database_flight_key("arrival", "same")
     departure = database_flight_key("departure", "same")
@@ -418,8 +418,8 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     assert restarted.detail(arrival)["fields"]["arr_stand_position"] == "009"
 
     graph = SmallGraph().graph
-    graph.add_node("b", pos=(116.001, 40.001))
-    graph.add_edge("a", "b", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
+    graph.add_node("2", pos=(116.001, 40.001))
+    graph.add_edge("1", "2", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
     editor = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
     with TestClient(create_app(editor, flight_database=store)) as client:
         response = client.patch(f"/api/flights/{arrival}/stand", json={"stand_position": None})
@@ -455,15 +455,17 @@ def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
             """)
     store = FlightDatabase(database)
     assert store.validation_flights() == [
-        dict(flight_id="eligible", movement=movement, stand="009", flight_points=30, total_flights=2)
+        dict(
+            flight_id="eligible", movement=movement, stand="009", flight_points=30, total_flights=2
+        )
         for movement in ("arr", "dep")
     ]
     assert store.validation_flights(31) == []
     workbench = FlightWorkbench(SmallGraph(), flight_database=store)
     assert workbench.catalogue(validation_only=True)["total"] == 2
-    assert workbench.filtered_keys(validation_only=True, movement_type="departure")["flight_keys"] == [
-        database_flight_key("departure", "eligible")
-    ]
+    assert workbench.filtered_keys(validation_only=True, movement_type="departure")[
+        "flight_keys"
+    ] == [database_flight_key("departure", "eligible")]
 
 
 def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
@@ -510,5 +512,7 @@ def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):
 
     assert calls == ["active"]
     assert [workbench.results[key].status for key in workbench.flights] == [
-        "success", "failed", "failed",
+        "success",
+        "failed",
+        "failed",
     ]

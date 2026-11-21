@@ -355,7 +355,7 @@ export interface components {
              * @default taxiway
              */
             aeroway: string;
-            end: components["schemas"]["EncodedValue"];
+            end: components["schemas"]["NodeIdField"];
             /** Expected Revision */
             expected_revision: number;
             /** Intermediate Points */
@@ -365,35 +365,23 @@ export interface components {
             ][];
             /** Ref */
             ref?: string | null;
-            start: components["schemas"]["EncodedValue"];
+            start: components["schemas"]["NodeIdField"];
         };
         /**
          * EdgeIdentity
          * @description The stable identity of one MultiGraph edge.
          */
         EdgeIdentity: {
-            key: components["schemas"]["EncodedValue"];
-            u: components["schemas"]["EncodedValue"];
-            v: components["schemas"]["EncodedValue"];
+            key: components["schemas"]["EdgeKeyField"];
+            u: components["schemas"]["NodeIdField"];
+            v: components["schemas"]["NodeIdField"];
         };
+        EdgeKeyField: number;
         /** EdgeRequest */
         EdgeRequest: {
             edge: components["schemas"]["EdgeIdentity"];
             /** Expected Revision */
             expected_revision: number;
-        };
-        /**
-         * EncodedValue
-         * @description An integer or string graph identifier without JavaScript number coercion.
-         */
-        EncodedValue: {
-            /**
-             * Type
-             * @enum {string}
-             */
-            type: "int" | "str";
-            /** Value */
-            value: string;
         };
         /** ErrorDetail */
         ErrorDetail: {
@@ -416,15 +404,15 @@ export interface components {
             edge: components["schemas"]["EdgeIdentity"];
             /** Expected Revision */
             expected_revision: number;
-            node: components["schemas"]["EncodedValue"];
+            node: components["schemas"]["NodeIdField"];
         };
         /** MergeNodesRequest */
         MergeNodesRequest: {
-            canonical_node_id?: components["schemas"]["EncodedValue"] | null;
+            canonical_node_id?: components["schemas"]["NodeIdField"] | null;
             /** Expected Revision */
             expected_revision: number;
             /** Node Ids */
-            node_ids?: components["schemas"]["EncodedValue"][];
+            node_ids?: components["schemas"]["NodeIdField"][];
         };
         /** NodeDeletionRequest */
         NodeDeletionRequest: {
@@ -435,18 +423,19 @@ export interface components {
             discard_unpaired: boolean;
             /** Expected Revision */
             expected_revision: number;
-            node: components["schemas"]["EncodedValue"];
+            node: components["schemas"]["NodeIdField"];
             /** Pair Ids */
             pair_ids?: string[];
         };
+        NodeIdField: string;
         /** RestoreRequest */
         RestoreRequest: {
             /** Candidate Id */
             candidate_id?: string | null;
-            end: components["schemas"]["EncodedValue"];
+            end: components["schemas"]["NodeIdField"];
             /** Expected Revision */
             expected_revision: number;
-            start: components["schemas"]["EncodedValue"];
+            start: components["schemas"]["NodeIdField"];
         };
         /** SourceSplitRequest */
         SourceSplitRequest: {
@@ -457,7 +446,7 @@ export interface components {
             latitude: number;
             /** Longitude */
             longitude: number;
-            osm_node_id?: components["schemas"]["EncodedValue"] | null;
+            osm_node_id?: components["schemas"]["NodeIdField"] | null;
         };
         /** UpdatedEdgeAttributes */
         UpdatedEdgeAttributes: {
@@ -477,7 +466,7 @@ export interface components {
             };
             /** Expected Revision */
             expected_revision: number;
-            node: components["schemas"]["EncodedValue"];
+            node: components["schemas"]["NodeIdField"];
         };
         /** VersionedRequest */
         VersionedRequest: {

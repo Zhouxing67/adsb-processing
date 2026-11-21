@@ -17,7 +17,6 @@ from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, ParamSpec, Se
 
 import networkx as nx
 from shapely.geometry import LineString, Point, mapping
-from shapely.ops import substring, transform
 
 from airport_surface import (
     AirportGraph,
@@ -213,12 +212,17 @@ class EditorSession:
             on_finish()
             return CommandResult(output, self.revision)
 
-    def _new_node_id(self) -> int:
-        integer_nodes = [node for node in self.graph if isinstance(node, int)]
-        candidate = min([0, *integer_nodes]) - 1
-        while candidate in self.graph:
+    def _new_node_id(self) -> str:
+        reserved = (
+            set(self.graph)
+            | set(self.airport_graph.source_nodes)
+            | set(self.airport_graph.node_aliases)
+            | set(self.airport_graph.node_aliases.values())
+        )
+        candidate = -1
+        while str(candidate) in reserved:
             candidate -= 1
-        return candidate
+        return str(candidate)
 
     @versioned_edit
     def add_node(self, longitude: float, latitude: float, **attributes: Any) -> Any:
@@ -281,9 +285,6 @@ class EditorSession:
                 first=u,
                 last=v,
                 source_type="manual",
-                source_id=source_id,
-                source_start_m=0.0,
-                source_end_m=length,
                 source_segments=(SourceSegment(source_id, 0.0, length),),
                 **attributes,
             )
@@ -323,12 +324,9 @@ class EditorSession:
             )
             registry[source_id] = source
             data.update(
-                source_id=source_id,
-                source_start_m=0.0,
-                source_end_m=self.airport_graph.length(geometry),
                 source_segments=(
                     SourceSegment(source_id, 0.0, self.airport_graph.length(geometry)),
-                ),
+                )
             )
             self.graph.edges[u, v, key].update(data)
         return key
@@ -340,9 +338,16 @@ class EditorSession:
         data = self.graph.edges[u, v, key]
         preview = {
             "edge": repr((u, v, key)),
-            "endpoints": [repr(u), repr(v)],
-            "source_id": data.get("source_id"),
-            "source_interval": [data.get("source_start_m"), data.get("source_end_m")],
+            "endpoints": [u, v],
+            "source_segments": [
+                {
+                    "source_id": segment.source_id,
+                    "source_start_m": segment.source_start_m,
+                    "source_end_m": segment.source_end_m,
+                    "reversed": segment.reversed,
+                }
+                for segment in edge_source_segments(data)
+            ],
         }
         with self._edit():
             self.graph.remove_edge(u, v, key)
@@ -354,9 +359,7 @@ class EditorSession:
         data = self.graph.edges[u, v, key]
         return {
             "edge": repr((u, v, key)),
-            "endpoints": [repr(u), repr(v)],
-            "source_id": data.get("source_id"),
-            "source_interval": [data.get("source_start_m"), data.get("source_end_m")],
+            "endpoints": [u, v],
             "source_segments": [
                 {
                     "source_id": segment.source_id,
@@ -713,9 +716,7 @@ class EditorSession:
                 key = self.graph.add_edge(first, last, **data)
                 added_edges.append((first, last, key))
             attributes = (
-                mutable_source_attributes(
-                    self.airport_graph.source_nodes[canonical].attributes
-                )
+                mutable_source_attributes(self.airport_graph.source_nodes[canonical].attributes)
                 if canonical in self.airport_graph.source_nodes
                 else {}
             )
@@ -830,7 +831,7 @@ class EditorSession:
                     "pair_id": f"p{index}",
                     "left": left["half_id"],
                     "right": right["half_id"],
-                    "endpoints": [repr(left["outer"]), repr(right["outer"])],
+                    "endpoints": [left["outer"], right["outer"]],
                     "source_ids": source_ids,
                     "same_source": len(set(source_ids)) == 1,
                     "angle_degrees": round(self._pair_angle(node, left, right), 1),
@@ -852,13 +853,13 @@ class EditorSession:
                 candidate["recommended"] = True
                 used.update((candidate["left"], candidate["right"]))
         return {
-            "node": repr(node),
+            "node": node,
             "degree": self.graph.degree[node],
             "half_edges": [
                 {
                     "half_id": record["half_id"],
                     "edge": repr((record["u"], record["v"], record["key"])),
-                    "outer_node": repr(record["outer"]),
+                    "outer_node": record["outer"],
                     "source_ids": [
                         segment.source_id for segment in edge_source_segments(record["data"])
                     ],
@@ -1256,85 +1257,6 @@ class EditorSession:
             validate_edge_sources(self.airport_graph)
         return node
 
-    def _split_edge(
-        self,
-        u: Any,
-        v: Any,
-        key: Any,
-        data: dict[str, Any],
-        projected: LineString,
-        point: Point,
-        node: Any,
-    ) -> None:
-        first = data.get("first", u)
-        last = data.get("last", v)
-        snapped = projected.interpolate(projected.project(point))
-        distance = projected.project(snapped)
-        left = substring(projected, 0, distance)
-        right = substring(projected, distance, projected.length)
-        if (
-            not isinstance(left, LineString)
-            or not isinstance(right, LineString)
-            or left.length == 0
-            or right.length == 0
-        ):
-            raise ValueError("切分位置不能与原边端点重合")
-        source_id = data.get("source_id")
-        if source_id in source_registry(self.airport_graph):
-            source_line = self.airport_graph.project_shape(
-                source_registry(self.airport_graph)[source_id].geometry
-            )
-            source_distance = source_line.project(point)
-            start_m = float(data["source_start_m"])
-            end_m = float(data["source_end_m"])
-            left_wgs84 = geometry_from_source_interval(
-                self.airport_graph, source_id, start_m, source_distance, first, node
-            )
-            right_wgs84 = geometry_from_source_interval(
-                self.airport_graph, source_id, source_distance, end_m, node, last
-            )
-        else:
-            source_distance = distance
-            start_m = 0.0
-            end_m = projected.length
-            left_wgs84 = transform(self.airport_graph.to_wgs84.transform, left)
-            right_wgs84 = transform(self.airport_graph.to_wgs84.transform, right)
-        original_id = repr((u, v, key))
-        left_data = deepcopy(data)
-        right_data = deepcopy(data)
-        left_data.update(
-            geometry=left_wgs84,
-            first=first,
-            last=node,
-            split_from=source_id or original_id,
-            source_start_m=start_m,
-            source_end_m=source_distance,
-        )
-        right_data.update(
-            geometry=right_wgs84,
-            first=node,
-            last=last,
-            split_from=source_id or original_id,
-            source_start_m=source_distance,
-            source_end_m=end_m,
-        )
-        if source_id in source_registry(self.airport_graph):
-            apply_source_segments(left_data, (SourceSegment(source_id, start_m, source_distance),))
-            apply_source_segments(right_data, (SourceSegment(source_id, source_distance, end_m),))
-            left_data["osm_node_ids"] = self._source_nodes_in_interval(
-                source_id, start_m, source_distance
-            )
-            right_data["osm_node_ids"] = self._source_nodes_in_interval(
-                source_id, source_distance, end_m
-            )
-        for name in ("length", "length_m"):
-            if name in data:
-                left_data[name] = left.length
-                right_data[name] = right.length
-        self.graph.remove_edge(u, v, key)
-        self.graph.add_edge(first, node, **left_data)
-        self.graph.add_edge(node, last, **right_data)
-
     def _source_nodes_in_interval(
         self, source_id: str, start_m: float, end_m: float
     ) -> tuple[Any, ...]:
@@ -1347,6 +1269,7 @@ class EditorSession:
             if start_m - 1e-3 <= station <= end_m + 1e-3:
                 result.append(node_id)
         return tuple(result)
+
 
 def _serve_workbench(
     airport_graph: AirportGraph,

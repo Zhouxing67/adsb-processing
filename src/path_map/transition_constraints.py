@@ -61,9 +61,7 @@ class LocalTurnConstraint:
                 end.y - incoming_sample.y,
             )
 
-    def turn_angle(
-        self, incoming_edge: DirectedEdge, outgoing_edge: DirectedEdge
-    ) -> float | None:
+    def turn_angle(self, incoming_edge: DirectedEdge, outgoing_edge: DirectedEdge) -> float | None:
         """Return the local turn angle, or None for disconnected/degenerate edges."""
         if incoming_edge.to_ != outgoing_edge.from_:
             return None
@@ -73,10 +71,7 @@ class LocalTurnConstraint:
             return None
         incoming_norm = hypot(*incoming)
         outgoing_norm = hypot(*outgoing)
-        if (
-            incoming_norm <= ZERO_DISTANCE_TOLERANCE_M
-            or outgoing_norm <= ZERO_DISTANCE_TOLERANCE_M
-        ):
+        if incoming_norm <= ZERO_DISTANCE_TOLERANCE_M or outgoing_norm <= ZERO_DISTANCE_TOLERANCE_M:
             return None
         cosine = (incoming[0] * outgoing[0] + incoming[1] * outgoing[1]) / (
             incoming_norm * outgoing_norm

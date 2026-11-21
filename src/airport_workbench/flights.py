@@ -45,9 +45,7 @@ class CataloguePageOutOfRange(ValueError):
     def __init__(self, requested_page: int, total_pages: int) -> None:
         self.requested_page = requested_page
         self.total_pages = total_pages
-        super().__init__(
-            f"page must be between 1 and {total_pages}; got {requested_page}"
-        )
+        super().__init__(f"page must be between 1 and {total_pages}; got {requested_page}")
 
 
 def flight_key(index: int, source: str, original_flight_id: str) -> str:
@@ -66,7 +64,8 @@ def _distinct_values(rows: Iterable[Mapping[str, Any]], name: str) -> list[Any]:
 
 
 def _consistent_value(
-    rows: tuple[dict[str, Any], ...], names: Iterable[str],
+    rows: tuple[dict[str, Any], ...],
+    names: Iterable[str],
 ) -> tuple[Any, bool]:
     for name in names:
         distinct = _distinct_values(rows, name)
@@ -132,9 +131,7 @@ class FlightWorkbench:
             )
             inconsistent = () if number_consistent else ("flight_number",)
             stand_column = STAND_COLUMNS.get(movement, ("", ""))[1]
-            distinct = {
-                str(value).strip() for value in _distinct_values(rows, stand_column)
-            }
+            distinct = {str(value).strip() for value in _distinct_values(rows, stand_column)}
             distinct.discard("")
             stand = next(iter(distinct)) if len(distinct) == 1 else None
             consistent = len(distinct) <= 1
@@ -184,9 +181,7 @@ class FlightWorkbench:
             config=self.match_config,
             paths=paths_by_flight_key or {},
         )
-        self.dataset_max_points = max(
-            (item.point_count for item in self.items.values()), default=0
-        )
+        self.dataset_max_points = max((item.point_count for item in self.items.values()), default=0)
 
     @property
     def results(self) -> dict[str, MatchResultItem]:
@@ -213,7 +208,8 @@ class FlightWorkbench:
             _, column = STAND_COLUMNS[item.movement_type]
             self.flight_database.update_stand(item.movement_type, item.flight_id, stand)
             self.items[key] = replace(
-                item, stand_position=stand,
+                item,
+                stand_position=stand,
                 inconsistent_fields=tuple(
                     name for name in item.inconsistent_fields if name != column
                 ),
@@ -253,8 +249,15 @@ class FlightWorkbench:
         rows = []
         with self.lock:
             keys = self._filtered_keys(
-                query, movement_type, status, min_points, effective_max,
-                stands, start_date, end_date, validation_only,
+                query,
+                movement_type,
+                status,
+                min_points,
+                effective_max,
+                stands,
+                start_date,
+                end_date,
+                validation_only,
             )
             start = (page - 1) * page_size
             for key in keys[start : start + page_size]:
@@ -264,10 +267,13 @@ class FlightWorkbench:
                 row["start_time"] = self._display_time(item.start_time)
                 row["end_time"] = self._display_time(item.end_time)
                 rows.append({**row, "match": result.public()})
-            stand_options = sorted({
-                item.stand_position for item in self.items.values()
-                if item.stand_position is not None
-            })
+            stand_options = sorted(
+                {
+                    item.stand_position
+                    for item in self.items.values()
+                    if item.stand_position is not None
+                }
+            )
         total = len(keys)
         total_pages = ceil(total / page_size) if total else 0
         if total_pages and page > total_pages:
@@ -313,8 +319,15 @@ class FlightWorkbench:
         self._validate_filters(status, min_points, effective_max)
         with self.lock:
             keys = self._filtered_keys(
-                query, movement_type, status, min_points, effective_max,
-                stands, start_date, end_date, validation_only,
+                query,
+                movement_type,
+                status,
+                min_points,
+                effective_max,
+                stands,
+                start_date,
+                end_date,
+                validation_only,
             )
         return {"flight_keys": keys, "count": len(keys)}
 
@@ -334,7 +347,10 @@ class FlightWorkbench:
             if self.flight_database:
                 columns, fields, inconsistent, page_records, observation_total = (
                     self.flight_database.detail(
-                        item.movement_type, item.flight_id, start, observation_page_size,
+                        item.movement_type,
+                        item.flight_id,
+                        start,
+                        observation_page_size,
                         BUSINESS_FIELD_NAMES,
                     )
                 )
@@ -380,7 +396,8 @@ class FlightWorkbench:
 
     @staticmethod
     def _detail_fields(
-        rows: tuple[dict[str, Any], ...], columns: Iterable[str],
+        rows: tuple[dict[str, Any], ...],
+        columns: Iterable[str],
     ) -> tuple[dict[str, Any], dict[str, list[Any]]]:
         fields = {}
         inconsistent = {}
@@ -445,9 +462,13 @@ class FlightWorkbench:
             return [
                 key
                 for summary in self.flight_database.summaries(
-                    movement=movement_type, query=query.strip(),
-                    min_points=min_points, max_points=max_points, stands=tuple(stands),
-                    start_date=start_date, end_date=end_date,
+                    movement=movement_type,
+                    query=query.strip(),
+                    min_points=min_points,
+                    max_points=max_points,
+                    stands=tuple(stands),
+                    start_date=start_date,
+                    end_date=end_date,
                     display_timezone=self.display_timezone,
                 )
                 if (key := database_flight_key(summary.movement, summary.flight_id)) in self.results
@@ -459,9 +480,11 @@ class FlightWorkbench:
         keys = []
         for key, item in self.items.items():
             result = self.results[key]
-            if needle and needle not in str(item.flight_id).casefold() and needle not in str(
-                item.flight_number or ""
-            ).casefold():
+            if (
+                needle
+                and needle not in str(item.flight_id).casefold()
+                and needle not in str(item.flight_number or "").casefold()
+            ):
                 continue
             if movement_type and movement_type != item.movement_type:
                 continue
@@ -512,4 +535,3 @@ class FlightWorkbench:
 
     def _display_time(self, value: str) -> str:
         return datetime.fromisoformat(value).astimezone(ZoneInfo(self.display_timezone)).isoformat()
-

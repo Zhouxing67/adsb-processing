@@ -4,13 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any, Hashable, Iterator, Sequence
+from typing import Any, Iterator, Sequence
 
 from shapely.geometry import LineString
 
-from airport_surface import AirportGraph, graph_id
-
-type EdgeId = tuple[Hashable, Hashable, Hashable]
+from airport_surface import AirportGraph, EdgeId, EdgeKey, NodeId, graph_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,9 +19,9 @@ class DirectedEdge:
     连接同一对节点的多条平行边。三者共同确定一条具体的边。
     """
 
-    from_: Hashable
-    to_: Hashable
-    key_: Hashable
+    from_: NodeId
+    to_: NodeId
+    key_: EdgeKey
 
     @property
     def id(self) -> EdgeId:
@@ -79,9 +77,7 @@ class Path(Sequence[DirectedEdge]):
         """检查所有边存在于图中，并检查相邻边是否首尾相接。"""
         for edge in self._edges:
             if edge.from_ == edge.to_:
-                raise ValueError(
-                    f"Self-loop path direction is not supported: {edge.id!r}"
-                )
+                raise ValueError(f"Self-loop path direction is not supported: {edge.id!r}")
             if not self.airport_graph.graph.has_edge(edge.from_, edge.to_, edge.key_):
                 raise ValueError(f"Unknown graph edge: {(edge.from_, edge.to_, edge.key_)!r}")
         for left, right in pairwise(self._edges):
@@ -103,12 +99,10 @@ class Path(Sequence[DirectedEdge]):
         edges = self.airport_graph.graph.edges
         runway_interfaces = self.airport_graph.runway_interfaces
         departures = (
-            edges[first.id].get("aeroway") == "parking_position"
-            and last.to_ in runway_interfaces
+            edges[first.id].get("aeroway") == "parking_position" and last.to_ in runway_interfaces
         )
         arrivals = (
-            first.from_ in runway_interfaces
-            and edges[last.id].get("aeroway") == "parking_position"
+            first.from_ in runway_interfaces and edges[last.id].get("aeroway") == "parking_position"
         )
         if not (departures or arrivals):
             return False

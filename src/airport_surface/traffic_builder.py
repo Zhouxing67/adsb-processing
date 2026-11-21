@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 from collections import Counter, defaultdict
 from copy import deepcopy
-from typing import Any, Hashable, Mapping
+from typing import Any, Mapping
 
 import networkx as nx
 from pyproj import CRS, Proj
@@ -17,6 +17,7 @@ from .graph import (
     validate_edge_sources,
     validate_source_intervals,
 )
+from .identifiers import NodeId, normalize_osm_id
 from .models import (
     AirportGraph,
     GraphMetadata,
@@ -57,9 +58,9 @@ def _source_attributes(data: Mapping[str, Any]) -> dict[str, Any]:
 
 def _extract_sources(
     raw_graph: nx.MultiGraph,
-) -> tuple[dict[str, SourceEdge], dict[Hashable, tuple[float, float]], list[str]]:
+) -> tuple[dict[str, SourceEdge], dict[NodeId, tuple[float, float]], list[str]]:
     source_edges: dict[str, SourceEdge] = {}
-    node_positions: dict[Hashable, tuple[float, float]] = {}
+    node_positions: dict[NodeId, tuple[float, float]] = {}
     issues: list[str] = []
     for u, v, key, data in raw_graph.edges(keys=True, data=True):
         geometry = data.get("geometry")
@@ -68,9 +69,12 @@ def _extract_sources(
             continue
         raw_node_ids = data.get("nodes")
         node_ids = tuple(
-            raw_node_ids
-            if raw_node_ids is not None
-            else (data.get("first", u), data.get("last", v))
+            normalize_osm_id(node_id)
+            for node_id in (
+                raw_node_ids
+                if raw_node_ids is not None
+                else (data.get("first", u), data.get("last", v))
+            )
         )
         coordinates = tuple(tuple(coordinate[:2]) for coordinate in geometry.coords)
         if len(node_ids) != len(coordinates):
@@ -83,7 +87,8 @@ def _extract_sources(
             previous = node_positions.setdefault(node_id, coordinate)
             if previous != coordinate:
                 issues.append(f"OSM node {node_id!r} has inconsistent coordinates")
-        way_id = data.get("id_", data.get("osm_way_id"))
+        raw_way_id = data.get("id_", data.get("osm_way_id"))
+        way_id = normalize_osm_id(raw_way_id) if raw_way_id is not None else None
         source_id = _source_identifier(source_edges, way_id, u, v, key)
         source_edges[source_id] = SourceEdge(
             source_id,
@@ -97,14 +102,14 @@ def _extract_sources(
 
 
 def _canonicalize_source_nodes(
-    node_positions: Mapping[Hashable, tuple[float, float]],
-    node_attributes: Mapping[Hashable, Mapping[str, Any]] | None = None,
-) -> tuple[dict[Hashable, SourceNode], dict[Hashable, Hashable]]:
-    groups: dict[tuple[float, float], list[Hashable]] = defaultdict(list)
+    node_positions: Mapping[NodeId, tuple[float, float]],
+    node_attributes: Mapping[NodeId, Mapping[str, Any]] | None = None,
+) -> tuple[dict[NodeId, SourceNode], dict[NodeId, NodeId]]:
+    groups: dict[tuple[float, float], list[NodeId]] = defaultdict(list)
     for node_id, position in node_positions.items():
         groups[position].append(node_id)
-    source_nodes: dict[Hashable, SourceNode] = {}
-    aliases: dict[Hashable, Hashable] = {}
+    source_nodes: dict[NodeId, SourceNode] = {}
+    aliases: dict[NodeId, NodeId] = {}
     node_attributes = node_attributes or {}
     for position, node_ids in groups.items():
         canonical = node_ids[0]
@@ -120,11 +125,11 @@ def _canonicalize_source_nodes(
 
 
 def _topology_nodes(
-    source_edges: Mapping[str, SourceEdge], aliases: Mapping[Hashable, Hashable]
-) -> set[Hashable]:
-    node_sources: dict[Hashable, set[str]] = defaultdict(set)
-    repeated: set[Hashable] = set()
-    endpoints: set[Hashable] = set()
+    source_edges: Mapping[str, SourceEdge], aliases: Mapping[NodeId, NodeId]
+) -> set[NodeId]:
+    node_sources: dict[NodeId, set[str]] = defaultdict(set)
+    repeated: set[NodeId] = set()
+    endpoints: set[NodeId] = set()
     for source_id, source in source_edges.items():
         canonical = [aliases.get(node, node) for node in source.osm_node_ids]
         endpoints.update((canonical[0], canonical[-1]))
@@ -135,7 +140,7 @@ def _topology_nodes(
     return endpoints | shared | repeated
 
 
-def _node_attributes_from_osm(osm: Any) -> dict[Hashable, dict[str, Any]]:
+def _node_attributes_from_osm(osm: Any) -> dict[NodeId, dict[str, Any]]:
     """Extract available OSM node tags without making them topology evidence."""
     frame = osm.parse()
     if not {"type_", "id_"} <= set(frame.columns):
@@ -149,9 +154,9 @@ def _node_attributes_from_osm(osm: Any) -> dict[Hashable, dict[str, Any]]:
         "longitude",
         "nodes",
     }
-    attributes: dict[Hashable, dict[str, Any]] = {}
+    attributes: dict[NodeId, dict[str, Any]] = {}
     for _index, row in frame.loc[frame["type_"] == "node"].iterrows():
-        attributes[row["id_"]] = {
+        attributes[normalize_osm_id(row["id_"])] = {
             name: value
             for name, value in row.items()
             if name not in excluded
@@ -171,8 +176,8 @@ def _cumulative_distances(graph: AirportGraph, geometry: LineString) -> list[flo
 
 def _build_derived_graph(
     source_edges: Mapping[str, SourceEdge],
-    source_nodes: Mapping[Hashable, SourceNode],
-    aliases: Mapping[Hashable, Hashable],
+    source_nodes: Mapping[NodeId, SourceNode],
+    aliases: Mapping[NodeId, NodeId],
     projection: Any,
     airport: str,
     initial_issues: list[str],
@@ -216,10 +221,7 @@ def _build_derived_graph(
                 geometry=geometry,
                 first=first,
                 last=last,
-                source_id=source_id,
                 source_type=source.source_type,
-                source_start_m=distances[start_index],
-                source_end_m=distances[end_index],
                 osm_node_ids=original_nodes[start_index : end_index + 1],
                 source_segments=(
                     SourceSegment(source_id, distances[start_index], distances[end_index]),
@@ -261,7 +263,7 @@ def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
         for _, row in frame.loc[frame["aeroway"] == "parking_position"].iterrows():
             geometry = row["geometry"]
             if getattr(geometry, "geom_type", None) == "Point":
-                node_positions[row["id_"]] = (geometry.x, geometry.y)
+                node_positions[normalize_osm_id(row["id_"])] = (geometry.x, geometry.y)
         source_nodes, aliases = _canonicalize_source_nodes(
             node_positions, _node_attributes_from_osm(osm)
         )

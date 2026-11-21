@@ -18,47 +18,34 @@ from airport_workbench.editor import (
     GraphObjectNotFound,
     RevisionConflict,
 )
-from airport_workbench.identifiers import (
-    EdgeIdentity,
-    EncodedValue,
-    decode_edge,
-    decode_value,
-)
+from airport_workbench.identifiers import EdgeIdentity
 
 PROJECTION = CRS.from_epsg(3857)
 
 
-def value(kind: str, raw: str) -> dict[str, str]:
-    return {"type": kind, "value": raw}
-
-
 def graph_session() -> EditorSession:
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(0.0, 0.0))
-    graph.add_node("1", pos=(1.0, 0.0))
+    graph.add_node("1", pos=(0.0, 0.0))
+    graph.add_node("2", pos=(1.0, 0.0))
     graph.add_edge(
-        1,
         "1",
-        key="main",
+        "2",
+        key=0,
         geometry=LineString([(0.0, 0.0), (1.0, 0.0)]),
-        first=1,
-        last="1",
+        first="1",
+        last="2",
     )
     return EditorSession(AirportGraph(graph, PROJECTION, metadata=GraphMetadata("TEST")))
 
 
-def test_identifier_codec_preserves_supported_types_and_large_integer() -> None:
+def test_identifier_contract_accepts_canonical_strings_and_integer_edge_keys() -> None:
     large = 2**63 + 123
-    assert decode_value(EncodedValue(type="int", value=str(large))) == large
-    assert decode_value(EncodedValue(type="str", value=str(large))) == str(large)
-    edge = EdgeIdentity(
-        u=EncodedValue(type="int", value=str(large)),
-        v=EncodedValue(type="str", value="node"),
-        key=EncodedValue(type="int", value="7"),
-    )
-    assert decode_edge(edge) == (large, "node", 7)
+    edge = EdgeIdentity(u=str(large), v="-1", key=7)
+    assert edge.as_tuple() == (str(large), "-1", 7)
     with pytest.raises(ValueError):
-        EncodedValue(type="int", value="01")
+        EdgeIdentity(u="01", v="1", key=0)
+    with pytest.raises(ValueError):
+        EdgeIdentity(u="1", v="2", key=-1)
 
 
 def test_state_contains_stable_identities_without_temporary_tokens() -> None:
@@ -66,10 +53,10 @@ def test_state_contains_stable_identities_without_temporary_tokens() -> None:
         state = client.get("/api/state").json()
 
     nodes = [item["properties"] for item in state["nodes"]["features"]]
-    assert {item["id"]["type"] for item in nodes} == {"int", "str"}
+    assert {item["id"] for item in nodes} == {"1", "2"}
     assert all("token" not in item for item in nodes)
     edge = state["edges"]["features"][0]["properties"]
-    assert edge["id"]["key"] == value("str", "main")
+    assert edge["id"] == {"u": "1", "v": "2", "key": 0}
     assert "token" not in edge
 
 
@@ -79,7 +66,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
         first = client.post(
             "/api/update-node",
             json={
-                "node": value("int", "1"),
+                "node": "1",
                 "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
@@ -87,7 +74,7 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
         stale = client.post(
             "/api/update-node",
             json={
-                "node": value("str", "1"),
+                "node": "2",
                 "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
@@ -102,14 +89,14 @@ def test_two_clients_stale_edit_conflicts_without_extra_history() -> None:
     }
     assert session.revision == 1
     assert len(session._history) == 1
-    assert "name" not in session.graph.nodes["1"]
+    assert "name" not in session.graph.nodes["2"]
 
 
 def test_simultaneous_same_revision_allows_only_one_edit() -> None:
     session = graph_session()
     barrier = threading.Barrier(2)
 
-    def edit(node: int | str) -> str:
+    def edit(node: str) -> str:
         barrier.wait()
         try:
             session.update_node_attributes(
@@ -122,7 +109,7 @@ def test_simultaneous_same_revision_allows_only_one_edit() -> None:
             return "conflict"
 
     with ThreadPoolExecutor(max_workers=2) as executor:
-        outcomes = list(executor.map(edit, (1, "1")))
+        outcomes = list(executor.map(edit, ("1", "2")))
 
     assert sorted(outcomes) == ["conflict", "success"]
     assert session.revision == 1
@@ -141,7 +128,7 @@ def test_preview_revision_becomes_invalid_after_other_edit() -> None:
         client.post(
             "/api/update-node",
             json={
-                "node": value("int", "1"),
+                "node": "1",
                 "attributes": {"name": "reviewed"},
                 "expected_revision": 0,
             },
@@ -152,7 +139,7 @@ def test_preview_revision_becomes_invalid_after_other_edit() -> None:
         )
 
     assert confirm.status_code == 409
-    assert session.graph.has_edge(1, "1", "main")
+    assert session.graph.has_edge("1", "2", 0)
 
 
 def test_current_revision_missing_object_and_reversed_undirected_edge() -> None:
@@ -166,24 +153,22 @@ def test_current_revision_missing_object_and_reversed_undirected_edge() -> None:
 
     session = graph_session()
     result = session.update_edge_attributes(
-        "1", 1, "main", {"name": "reverse request"}, expected_revision=0
+        "2", "1", 0, {"name": "reverse request"}, expected_revision=0
     )
     assert result.revision == 1
-    assert session.graph.edges[1, "1", "main"]["name"] == "reverse request"
+    assert session.graph.edges["1", "2", 0]["name"] == "reverse request"
 
 
 def test_merged_old_node_id_is_not_resolved_through_aliases() -> None:
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(0.0, 0.0))
-    graph.add_node(2, pos=(0.000001, 0.0))
-    session = EditorSession(
-        AirportGraph(graph, PROJECTION, metadata=GraphMetadata("TEST"))
-    )
-    session.merge_nodes([1, 2], canonical_node=1, expected_revision=0)
+    graph.add_node("1", pos=(0.0, 0.0))
+    graph.add_node("2", pos=(0.000001, 0.0))
+    session = EditorSession(AirportGraph(graph, PROJECTION, metadata=GraphMetadata("TEST")))
+    session.merge_nodes(["1", "2"], canonical_node="1", expected_revision=0)
 
     with pytest.raises(GraphObjectNotFound):
         session.update_node_attributes(
-            2,
+            "2",
             {"name": "reviewed"},
             expected_revision=1,
         )
@@ -192,10 +177,8 @@ def test_merged_old_node_id_is_not_resolved_through_aliases() -> None:
 def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
     session = graph_session()
     with pytest.raises(TypeError, match="expected_revision"):
-        session.update_node_attributes(1, {"name": "reviewed"})
-    session.update_node_attributes(
-        1, {"name": "reviewed"}, expected_revision=0
-    )
+        session.update_node_attributes("1", {"name": "reviewed"})
+    session.update_node_attributes("1", {"name": "reviewed"}, expected_revision=0)
     result = session.undo(expected_revision=1)
     assert result.revision == 2
     with pytest.raises(RevisionConflict):
@@ -205,7 +188,7 @@ def test_undo_revision_is_monotonic_and_missing_revision_is_rejected() -> None:
         missing = client.post(
             "/api/update-node",
             json={
-                "node": value("int", "1"),
+                "node": "1",
                 "attributes": {"name": "reviewed"},
             },
         )
@@ -222,23 +205,23 @@ def test_failed_edit_rolls_back_graph_history_and_revision(monkeypatch: pytest.M
 
     monkeypatch.setattr(session, "_refresh", fail_refresh)
     with pytest.raises(RuntimeError, match="refresh failed"):
-        session.update_node_attributes(1, {"name": "partial"}, expected_revision=0)
+        session.update_node_attributes("1", {"name": "partial"}, expected_revision=0)
 
-    assert "name" not in session.graph.nodes[1]
+    assert "name" not in session.graph.nodes["1"]
     assert session.revision == 0
     assert session._history == []
 
 
 def test_self_loop_parallel_keys_and_missing_edge_are_resolved_exactly() -> None:
     session = graph_session()
-    session.graph.add_edge(1, 1, key=0, geometry=LineString([(0, 0), (0, 0)]))
-    session.graph.add_edge(1, "1", key=0, geometry=LineString([(0, 0), (1, 0)]))
+    session.graph.add_edge("1", "1", key=1, geometry=LineString([(0, 0), (0, 0)]))
+    session.graph.add_edge("1", "2", key=1, geometry=LineString([(0, 0), (1, 0)]))
 
-    assert session.require_edge(1, 1, 0) == (1, 1, 0)
-    assert session.require_edge("1", 1, 0) in {("1", 1, 0), (1, "1", 0)}
-    assert session.require_edge(1, "1", "main") == (1, "1", "main")
+    assert session.require_edge("1", "1", 1) == ("1", "1", 1)
+    assert session.require_edge("2", "1", 1) in {("2", "1", 1), ("1", "2", 1)}
+    assert session.require_edge("1", "2", 0) == ("1", "2", 0)
     with pytest.raises(GraphObjectNotFound):
-        session.require_edge(1, "1", "missing")
+        session.require_edge("1", "2", 99)
 
 
 def test_save_checks_revision_and_does_not_increment_it(tmp_path, monkeypatch) -> None:
@@ -263,9 +246,9 @@ def test_save_checks_revision_and_does_not_increment_it(tmp_path, monkeypatch) -
 
 def test_one_complex_delete_creates_one_revision_and_one_undo_record() -> None:
     session = graph_session()
-    plan = session.node_deletion_plan(1, expected_revision=0).value
+    plan = session.node_deletion_plan("1", expected_revision=0).value
     session.remove_node_with_pairs(
-        1,
+        "1",
         [],
         discard_unpaired=True,
         expected_revision=0,

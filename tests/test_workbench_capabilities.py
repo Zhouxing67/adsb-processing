@@ -19,9 +19,9 @@ from flight import Flight
 )
 def test_capabilities_keep_server_permissions(with_flights, editable):
     graph = nx.MultiGraph()
-    graph.add_node("a", pos=(116.0, 40.0))
-    graph.add_node("b", pos=(116.001, 40.001))
-    graph.add_edge("a", "b", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
+    graph.add_node("1", pos=(116.0, 40.0))
+    graph.add_node("2", pos=(116.001, 40.001))
+    graph.add_edge("1", "2", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
     session = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
     flights = (
         [
@@ -66,7 +66,7 @@ def test_capabilities_keep_server_permissions(with_flights, editable):
 
 def test_http_and_validation_errors_share_one_response_shape():
     graph = nx.MultiGraph()
-    graph.add_node("a", pos=(116.0, 40.0))
+    graph.add_node("1", pos=(116.0, 40.0))
     session = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
 
     with TestClient(create_app(session)) as client:

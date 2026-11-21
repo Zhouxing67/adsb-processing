@@ -5,13 +5,22 @@ from __future__ import annotations
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Hashable, Mapping, Self, overload
+from typing import Any, Mapping, Self, overload
 
 import networkx as nx
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
+
+from .identifiers import (
+    EdgeId,
+    NodeId,
+    OsmId,
+    normalize_osm_id,
+    validate_edge_key,
+    validate_node_id,
+)
 
 
 def _freeze_source_value(value: Any) -> Any:
@@ -41,14 +50,19 @@ def mutable_source_attributes(attributes: Mapping[str, Any]) -> dict[str, Any]:
 class SourceNode:
     """One canonical OSM node and any exactly colocated OSM aliases."""
 
-    node_id: Hashable
+    node_id: NodeId
     position: tuple[float, float]
-    osm_node_ids: tuple[Hashable, ...]
+    osm_node_ids: tuple[NodeId, ...]
     attributes: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "node_id", validate_node_id(self.node_id))
         object.__setattr__(self, "position", tuple(self.position[:2]))
-        object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
+        object.__setattr__(
+            self,
+            "osm_node_ids",
+            tuple(normalize_osm_id(node_id) for node_id in self.osm_node_ids),
+        )
         object.__setattr__(self, "attributes", _freeze_source_value(self.attributes))
 
 
@@ -59,12 +73,18 @@ class SourceEdge:
     source_id: str
     geometry: LineString
     source_type: str
-    osm_way_id: Any = None
-    osm_node_ids: tuple[Hashable, ...] = ()
+    osm_way_id: OsmId | None = None
+    osm_node_ids: tuple[NodeId, ...] = ()
     attributes: Mapping[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "osm_node_ids", tuple(self.osm_node_ids))
+        if self.osm_way_id is not None:
+            object.__setattr__(self, "osm_way_id", normalize_osm_id(self.osm_way_id))
+        object.__setattr__(
+            self,
+            "osm_node_ids",
+            tuple(normalize_osm_id(node_id) for node_id in self.osm_node_ids),
+        )
         object.__setattr__(self, "attributes", _freeze_source_value(self.attributes))
 
 
@@ -87,29 +107,21 @@ class SourceSegment:
 
 
 def edge_source_segments(data: Mapping[str, Any]) -> tuple[SourceSegment, ...]:
-    """Read new source chains and transparently normalize legacy single-source edges."""
+    """Read the authoritative source chain stored on a schema-v2 edge."""
     raw_segments = data.get("source_segments")
-    if raw_segments is not None:
-        return tuple(
-            item
-            if isinstance(item, SourceSegment)
-            else SourceSegment(
-                item["source_id"],
-                item["source_start_m"],
-                item["source_end_m"],
-                item.get("reversed", False),
-            )
-            for item in raw_segments
+    if raw_segments is None:
+        return ()
+    return tuple(
+        item
+        if isinstance(item, SourceSegment)
+        else SourceSegment(
+            item["source_id"],
+            item["source_start_m"],
+            item["source_end_m"],
+            item.get("reversed", False),
         )
-    if all(name in data for name in ("source_id", "source_start_m", "source_end_m")):
-        return (
-            SourceSegment(
-                str(data["source_id"]),
-                data["source_start_m"],
-                data["source_end_m"],
-            ),
-        )
-    return ()
+        for item in raw_segments
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,12 +144,16 @@ class AirportGraph:
         graph: nx.MultiGraph,
         projection: Any,
         *,
-        source_nodes: Mapping[Hashable, SourceNode] | None = None,
+        source_nodes: Mapping[NodeId, SourceNode] | None = None,
         source_edges: Mapping[str, SourceEdge] | None = None,
-        node_aliases: Mapping[Hashable, Hashable] | None = None,
+        node_aliases: Mapping[NodeId, NodeId] | None = None,
         metadata: GraphMetadata | None = None,
     ) -> None:
         self.graph = graph
+        for node in self.graph:
+            validate_node_id(node)
+        for _u, _v, key in self.graph.edges(keys=True):
+            validate_edge_key(key)
         self.projection = projection
         self.project = Transformer.from_proj(self.wgs84, projection, always_xy=True)
         self.to_wgs84 = Transformer.from_proj(projection, self.wgs84, always_xy=True)
@@ -157,7 +173,7 @@ class AirportGraph:
 
         Values contain the incident runway and taxiway edge IDs respectively.
         """
-        incident: dict[Hashable, dict[str, list[tuple[Hashable, Hashable, Hashable]]]] = {}
+        incident: dict[NodeId, dict[str, list[EdgeId]]] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
             kind = data.get("aeroway")
             if kind in ("runway", "taxiway"):
@@ -178,8 +194,8 @@ class AirportGraph:
         Direct graph mutations require an explicit rebuild. Edge IDs use the
         orientation returned by graph.edges(), independent of travel direction.
         """
-        forward: dict[str, list[tuple[Hashable, Hashable, Hashable]]] = {}
-        reverse: dict[tuple[Hashable, Hashable, Hashable], str] = {}
+        forward: dict[str, list[EdgeId]] = {}
+        reverse: dict[EdgeId, str] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
             if data.get("aeroway") != "parking_position":
                 continue
@@ -192,7 +208,6 @@ class AirportGraph:
             reverse[edge_id] = stand_id
         self.stand_to_edges = {stand_id: tuple(edges) for stand_id, edges in forward.items()}
         self.edge_to_stand = reverse
-
 
     @property
     def components(self) -> list[int]:
@@ -221,10 +236,10 @@ class AirportGraph:
     def length(self, geometry: BaseGeometry) -> float:
         return self.project_shape(geometry).length
 
-    def canonical_node_id(self, node_id: Hashable) -> Hashable:
+    def canonical_node_id(self, node_id: NodeId) -> NodeId:
         return self.node_aliases.get(node_id, node_id)
 
-    def get_source_node(self, node_id: Hashable) -> SourceNode:
+    def get_source_node(self, node_id: NodeId) -> SourceNode:
         return self.source_nodes[self.canonical_node_id(node_id)]
 
     def get_source_edge(self, source_id: str) -> SourceEdge:

@@ -7,12 +7,12 @@ import math
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from functools import cached_property
-from typing import Any, Hashable, Mapping
+from typing import Any, Mapping
 
 import networkx as nx
 from shapely.geometry import Point
 
-from airport_surface import AirportGraph
+from airport_surface import AirportGraph, NodeId
 from flight import Flight
 
 from .candidates import Candidate, CandidateIndex
@@ -90,7 +90,7 @@ class Matcher:
     def __init__(
         self,
         airport_graph: AirportGraph,
-        config: MatchConfig  = MatchConfig(),
+        config: MatchConfig = MatchConfig(),
     ) -> None:
         self.airport_graph = airport_graph
         self.config = config
@@ -154,7 +154,9 @@ class Matcher:
         # Boundary segments have no observed displacement. Their score penalizes
         # added network distance.
         boundary_observations = [
-            directed_observations[0], *directed_observations, directed_observations[-1]
+            directed_observations[0],
+            *directed_observations,
+            directed_observations[-1],
         ]
         try:
             states, transitions = viterbi(
@@ -167,19 +169,19 @@ class Matcher:
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError(
                 MapMatchingFailure.NO_LEGAL_PATH,
-                "No turn-constrained path matches the observations and flight OD"
+                "No turn-constrained path matches the observations and flight OD",
             ) from exc
         edges = _recover(transitions, states[0])
         if not edges:
             raise MapMatchingError(
                 MapMatchingFailure.NO_MOVEMENT,
                 "Retained candidates have no along-network movement; "
-                "a directed path cannot be determined"
+                "a directed path cannot be determined",
             )
         return Path(self.airport_graph, edges)
 
     def _runway_boundary(
-        self, node: Hashable, taxiway_edges: tuple[EdgeId, ...], departure: bool
+        self, node: NodeId, taxiway_edges: tuple[EdgeId, ...], departure: bool
     ) -> list[Candidate]:
         result = []
         for u, v, key in taxiway_edges:
@@ -190,7 +192,8 @@ class Matcher:
         return result
 
     def _flight_od_layers(
-        self, flight: Flight,
+        self,
+        flight: Flight,
     ) -> tuple[tuple[list[Candidate], list[Candidate]], set[EdgeId]]:
         if flight.od_error:
             raise MapMatchingError(
@@ -281,7 +284,9 @@ class Matcher:
                 directed[edge, offset] = candidate
                 reverse = (v, u, key)
                 directed[reverse, length - offset] = replace(
-                    candidate, edge_id=reverse, offset=length - offset,
+                    candidate,
+                    edge_id=reverse,
+                    offset=length - offset,
                     fraction=1.0 - candidate.fraction,
                 )
         return list(directed.values())
@@ -319,9 +324,8 @@ def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEd
         _append_transition_edges(output, transition.edges)
     return output
 
-def _append_transition_edges(
-    output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]
-) -> None:
+
+def _append_transition_edges(output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]) -> None:
     """Join transitions, collapsing only continued travel on their shared boundary edge."""
     start = 1 if output and edges and output[-1] == edges[0] else 0
     output.extend(edges[start:])

@@ -12,14 +12,14 @@ from airport_workbench.editor import RevisionConflict
 
 def session():
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(0, 0))
-    graph.add_node(2, pos=(0.002, 0))
+    graph.add_node("1", pos=(0, 0))
+    graph.add_node("2", pos=(0.002, 0))
     return EditorSession(AirportGraph(graph, Proj("EPSG:3857")))
 
 
 def test_manual_curve_roundtrip_and_complete_undo(tmp_path):
     editor = session()
-    editor.draw_connection(1, 2, [(0.001, 0.001)], ref="A", expected_revision=0)
+    editor.draw_connection("1", "2", [(0.001, 0.001)], ref="A", expected_revision=0)
     assert editor.revision == editor.topology_revision == 1
     assert len(editor._history) == 1
     assert editor.graph.number_of_nodes() == 2
@@ -32,18 +32,18 @@ def test_manual_curve_roundtrip_and_complete_undo(tmp_path):
     editor.save(path, expected_revision=1)
     restored = load_graph(path)
     validate_edge_sources(restored)
-    assert nx.has_path(restored.graph, 1, 2)
+    assert nx.has_path(restored.graph, "1", "2")
     assert next(iter(restored.graph.edges(data=True)))[2]["geometry"].equals(data["geometry"])
     editor.undo(expected_revision=editor.revision)
     assert editor.graph.number_of_edges() == 0
     assert editor.airport_graph.source_edges == {}
 
 
-@pytest.mark.parametrize("end,points", [(1, []), (2, [(float("nan"), 0)]), (2, [(181, 0)])])
+@pytest.mark.parametrize("end,points", [("1", []), ("2", [(float("nan"), 0)]), ("2", [(181, 0)])])
 def test_invalid_drawing_is_atomic(end, points):
     editor = session()
     with pytest.raises(ValueError):
-        editor.draw_connection(1, end, points, expected_revision=0)
+        editor.draw_connection("1", end, points, expected_revision=0)
     assert editor.revision == 0
     assert not editor.airport_graph.source_edges
 
@@ -52,14 +52,14 @@ def test_revision_conflict():
     editor = session()
     editor.add_node(0, 1, expected_revision=0)
     with pytest.raises(RevisionConflict):
-        editor.draw_connection(1, 2, [], expected_revision=0)
+        editor.draw_connection("1", "2", [], expected_revision=0)
     assert not editor.airport_graph.source_edges
 
 
 def test_api_and_read_only(flight_samples):
     payload = {
-        "start": {"type": "int", "value": "1"},
-        "end": {"type": "int", "value": "2"},
+        "start": "1",
+        "end": "2",
         "intermediate_points": [[0.001, 0.001]],
         "expected_revision": 0,
     }

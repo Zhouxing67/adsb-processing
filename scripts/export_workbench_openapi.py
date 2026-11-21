@@ -23,11 +23,11 @@ OPENAPI_DIRECTORY = ROOT / "frontend" / "workbench" / "openapi"
 
 def _session() -> EditorSession:
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(116.59, 40.07))
-    graph.add_node(2, pos=(116.595, 40.07))
+    graph.add_node("1", pos=(116.59, 40.07))
+    graph.add_node("2", pos=(116.595, 40.07))
     graph.add_edge(
-        1,
-        2,
+        "1",
+        "2",
         geometry=LineString([(116.59, 40.07), (116.595, 40.07)]),
         aeroway="parking_position",
         ref="A01",

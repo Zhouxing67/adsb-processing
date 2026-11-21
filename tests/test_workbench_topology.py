@@ -9,7 +9,6 @@ from airport_workbench.app import BrowserState, _edge_colors, create_app
 
 
 class _AirportGraph:
-
     @staticmethod
     def length(geometry: LineString) -> float:
         return geometry.length
@@ -30,11 +29,11 @@ def _browser_state(graph: nx.MultiGraph) -> dict:
 
 def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() -> None:
     graph = nx.MultiGraph()
-    graph.add_node("a", pos=(0.0, 0.0))
-    graph.add_node("b", pos=(1.0, 0.0))
-    graph.add_node("isolated", pos=(5.0, 5.0))
-    graph.add_edge("a", "b", key="left", geometry=LineString([(0, 0), (1, 0)]))
-    graph.add_edge("a", "b", key="right", geometry=LineString([(0, 0.1), (1, 0.1)]))
+    graph.add_node("1", pos=(0.0, 0.0))
+    graph.add_node("2", pos=(1.0, 0.0))
+    graph.add_node("3", pos=(5.0, 5.0))
+    graph.add_edge("1", "2", key=0, geometry=LineString([(0, 0), (1, 0)]))
+    graph.add_edge("1", "2", key=1, geometry=LineString([(0, 0.1), (1, 0.1)]))
 
     state = _browser_state(graph)
     topology = state["topology"]
@@ -48,16 +47,14 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
     assert isolated["properties"]["color"] == "#a34f6a"
     assert isolated["properties"]["radius"] == 5
     assert isolated["properties"]["node_type"] == "unclassified"
-    assert isolated["properties"]["id"] == {"type": "str", "value": "isolated"}
+    assert isolated["properties"]["id"] == "3"
     edge = state["edges"]["features"][0]["properties"]
-    assert edge["u_id"]["type"] == "str"
-    assert edge["v_id"]["type"] == "str"
-    assert {edge["u_id"]["value"], edge["v_id"]["value"]} == {"a", "b"}
+    assert {edge["u_id"], edge["v_id"]} == {"1", "2"}
 
 
 def test_validation_colors_differ_for_incident_edges() -> None:
     graph = nx.MultiGraph()
-    graph.add_edges_from([("hub", "a"), ("hub", "b"), ("hub", "c")])
+    graph.add_edges_from([("1", "2"), ("1", "3"), ("1", "4")])
 
     colors = _edge_colors(graph)
 
@@ -66,7 +63,7 @@ def test_validation_colors_differ_for_incident_edges() -> None:
 
 def test_read_only_viewer_hides_editing_state_and_rejects_writes(flight_samples) -> None:
     graph = nx.MultiGraph()
-    graph.add_node("a", pos=(0.0, 0.0))
+    graph.add_node("1", pos=(0.0, 0.0))
     session = SimpleNamespace(
         graph=graph,
         lock=RLock(),

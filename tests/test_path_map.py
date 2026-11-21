@@ -10,9 +10,9 @@ import pytest
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString, Point
 
+from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from flight import Flight
 from flight.flight_repository import FlightDatabase
-from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from path_map import (
     MapMatchingError,
     MatchConfig,
@@ -28,9 +28,9 @@ def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
     projection = Proj("EPSG:32650")
     to_wgs84 = Transformer.from_proj(projection, "EPSG:4326", always_xy=True)
     projected_positions = {
-        "A": (450_000.0, 4_428_000.0),
-        "B": (450_010.0, 4_428_000.0),
-        "C": (450_020.0, 4_428_000.0),
+        "1": (450_000.0, 4_428_000.0),
+        "2": (450_010.0, 4_428_000.0),
+        "3": (450_020.0, 4_428_000.0),
     }
     positions = {
         node: to_wgs84.transform(*position) for node, position in projected_positions.items()
@@ -38,8 +38,8 @@ def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
     graph = nx.MultiGraph()
     for node, position in positions.items():
         graph.add_node(node, pos=position)
-    graph.add_edge("A", "B", key="AB", geometry=LineString([positions["A"], positions["B"]]))
-    graph.add_edge("B", "C", key="BC", geometry=LineString([positions["B"], positions["C"]]))
+    graph.add_edge("1", "2", key=0, geometry=LineString([positions["1"], positions["2"]]))
+    graph.add_edge("2", "3", key=1, geometry=LineString([positions["2"], positions["3"]]))
     return AirportGraph(graph, projection), to_wgs84
 
 
@@ -48,16 +48,16 @@ def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
 def test_path_legality_checks_od_and_turns_in_both_directions(reverse, sharp_turn):
     airport_graph, to_wgs84 = straight_airport_graph()
     graph = airport_graph.graph
-    graph.edges["A", "B", "AB"]["aeroway"] = "parking_position"
-    graph.edges["B", "C", "BC"]["aeroway"] = "taxiway"
+    graph.edges["1", "2", 0]["aeroway"] = "parking_position"
+    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
     if sharp_turn:
-        graph.nodes["C"]["pos"] = to_wgs84.transform(450_002, 4_428_001)
-        graph.edges["B", "C", "BC"]["geometry"] = LineString(
-            [graph.nodes["B"]["pos"], graph.nodes["C"]["pos"]]
+        graph.nodes["3"]["pos"] = to_wgs84.transform(450_002, 4_428_001)
+        graph.edges["2", "3", 1]["geometry"] = LineString(
+            [graph.nodes["2"]["pos"], graph.nodes["3"]["pos"]]
         )
-    graph.add_edge("C", "D", key="CD", aeroway="runway")
+    graph.add_edge("3", "4", key="CD", aeroway="runway")
     airport_graph.rebuild_runway_interfaces()
-    edges = [("A", "B", "AB"), ("B", "C", "BC")]
+    edges = [("1", "2", 0), ("2", "3", 1)]
     if reverse:
         edges = [(v, u, key) for u, v, key in reversed(edges)]
 
@@ -70,11 +70,16 @@ def test_path_legality_checks_od_and_turns_in_both_directions(reverse, sharp_tur
 def straight_od_graph() -> tuple[AirportGraph, Transformer]:
     airport_graph, transform = straight_airport_graph()
     graph = airport_graph.graph
-    graph.edges["A", "B", "AB"].update(aeroway="parking_position", ref="009")
-    graph.edges["B", "C", "BC"]["aeroway"] = "taxiway"
-    graph.add_node("R", pos=transform.transform(450_030, 4_428_000))
-    graph.add_edge("C", "R", aeroway="runway", ref="01/19",
-                   geometry=LineString([graph.nodes["C"]["pos"], graph.nodes["R"]["pos"]]))
+    graph.edges["1", "2", 0].update(aeroway="parking_position", ref="009")
+    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
+    graph.add_node("5", pos=transform.transform(450_030, 4_428_000))
+    graph.add_edge(
+        "3",
+        "5",
+        aeroway="runway",
+        ref="01/19",
+        geometry=LineString([graph.nodes["3"]["pos"], graph.nodes["5"]["pos"]]),
+    )
     airport_graph.rebuild_stand_index()
     airport_graph.rebuild_runway_interfaces()
     return airport_graph, transform
@@ -91,13 +96,12 @@ def test_reusing_matcher_does_not_mutate_graph_or_change_result():
                 "org_runway": "01",
                 "arr_stand_position": "009",
                 "dst_runway": "01",
-                "timestamp": pd.date_range(
-                    "2026-01-01", periods=len(points), freq="5s", tz="UTC"
-                ),
+                "timestamp": pd.date_range("2026-01-01", periods=len(points), freq="5s", tz="UTC"),
                 "longitude": [point[0] for point in points],
                 "latitude": [point[1] for point in points],
             }
-        ), movement="departure",
+        ),
+        movement="departure",
     )
     matcher = Matcher(
         airport_graph,
@@ -114,7 +118,9 @@ def test_reusing_matcher_does_not_mutate_graph_or_change_result():
     assert nx.is_frozen(matcher._directed_router.graph)
 
 
-def make_flight(to_wgs84: Transformer, points: list[tuple[float, float]], *, movement="departure") -> Flight:
+def make_flight(
+    to_wgs84: Transformer, points: list[tuple[float, float]], *, movement="departure"
+) -> Flight:
     lon_lat = [to_wgs84.transform(x, y) for x, y in points]
     return Flight(
         pd.DataFrame(
@@ -128,7 +134,8 @@ def make_flight(to_wgs84: Transformer, points: list[tuple[float, float]], *, mov
                 "longitude": [point[0] for point in lon_lat],
                 "latitude": [point[1] for point in lon_lat],
             }
-        ), movement=movement,
+        ),
+        movement=movement,
     )
 
 
@@ -150,16 +157,19 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
     airport_graph, to_wgs84 = straight_airport_graph()
     graph = airport_graph.graph
     x, y = 450_000, 4_428_000
-    positions = {"C": (x + 2, y + 1), "D": (x + 10, y + 10), "R": (x - 8, y + 1)}
+    positions = {"3": (x + 2, y + 1), "4": (x + 10, y + 10), "5": (x - 8, y + 1)}
     for node, position in positions.items():
         graph.add_node(node, pos=to_wgs84.transform(*position))
-    graph.edges["A", "B", "AB"].update(aeroway="parking_position", ref="009")
-    links = [("B", "C", "BC", "taxiway"), ("C", "R", "CR", "runway")]
+    graph.edges["1", "2", 0].update(aeroway="parking_position", ref="009")
+    links = [("2", "3", 1, "taxiway"), ("3", "5", 2, "runway")]
     if detour:
-        links.extend([("B", "D", "BD", "taxiway"), ("D", "C", "DC", "taxiway")])
+        links.extend([("2", "4", 3, "taxiway"), ("4", "3", 4, "taxiway")])
     for u, v, key, kind in links:
         graph.add_edge(
-            u, v, key=key, aeroway=kind,
+            u,
+            v,
+            key=key,
+            aeroway=kind,
             geometry=LineString([graph.nodes[u]["pos"], graph.nodes[v]["pos"]]),
         )
     for _, _, data in graph.edges(data=True):
@@ -167,7 +177,7 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
             data["ref"] = "01/19"
     airport_graph.rebuild_stand_index()
     airport_graph.rebuild_runway_interfaces()
-    expected = [("A", "B", "AB"), ("B", "D", "BD"), ("D", "C", "DC")]
+    expected = [("1", "2", 0), ("2", "4", 3), ("4", "3", 4)]
     # The only observation lies inside the stand edge. Neither endpoint is observed.
     if not departure:
         expected = [(v, u, key) for u, v, key in reversed(expected)]
@@ -186,13 +196,15 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
 def test_fixed_od_cannot_reverse_direction_between_observations():
     airport_graph, to_wgs84 = straight_airport_graph()
     graph = airport_graph.graph
-    graph.edges["A", "B", "AB"].update(aeroway="parking_position", ref="009")
-    graph.edges["B", "C", "BC"]["aeroway"] = "taxiway"
+    graph.edges["1", "2", 0].update(aeroway="parking_position", ref="009")
+    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
     x, y = 450_000, 4_428_000
-    graph.add_node("R", pos=to_wgs84.transform(x + 30, y))
+    graph.add_node("5", pos=to_wgs84.transform(x + 30, y))
     graph.add_edge(
-        "C", "R", aeroway="runway",
-        geometry=LineString([graph.nodes["C"]["pos"], graph.nodes["R"]["pos"]]),
+        "3",
+        "5",
+        aeroway="runway",
+        geometry=LineString([graph.nodes["3"]["pos"], graph.nodes["5"]["pos"]]),
     )
     for _, _, data in graph.edges(data=True):
         if data.get("aeroway") == "runway":
@@ -203,9 +215,7 @@ def test_fixed_od_cannot_reverse_direction_between_observations():
     forward = make_flight(to_wgs84, [(x + 12, y), (x + 18, y)])
     reverse = make_flight(to_wgs84, [(x + 18, y), (x + 12, y)])
 
-    assert matcher.map_flight(forward).edge_ids == (
-        ("A", "B", "AB"), ("B", "C", "BC")
-    )
+    assert matcher.map_flight(forward).edge_ids == (("1", "2", 0), ("2", "3", 1))
     with pytest.raises(MapMatchingError, match="No turn-constrained path"):
         matcher.map_flight(reverse)
 
@@ -217,29 +227,36 @@ def test_fixed_od_cannot_reverse_direction_between_observations():
         ("arrival", "arr", "arr_stand_position", "dst_runway"),
     ],
 )
-def test_database_flight_matches_using_its_od(tmp_path, movement, suffix, stand_column, runway_column):
+def test_database_flight_matches_using_its_od(
+    tmp_path, movement, suffix, stand_column, runway_column
+):
     airport_graph, to_wgs84 = straight_airport_graph()
     graph = airport_graph.graph
-    graph.edges["A", "B", "AB"].update(aeroway="parking_position", ref="009")
-    graph.edges["B", "C", "BC"]["aeroway"] = "taxiway"
+    graph.edges["1", "2", 0].update(aeroway="parking_position", ref="009")
+    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
     x, y = 450_000, 4_428_000
-    graph.add_node("R", pos=to_wgs84.transform(x + 30, y))
+    graph.add_node("5", pos=to_wgs84.transform(x + 30, y))
     graph.add_edge(
-        "C", "R", aeroway="runway", ref="01/19",
-        geometry=LineString([graph.nodes["C"]["pos"], graph.nodes["R"]["pos"]]),
+        "3",
+        "5",
+        aeroway="runway",
+        ref="01/19",
+        geometry=LineString([graph.nodes["3"]["pos"], graph.nodes["5"]["pos"]]),
     )
     graph.add_edge(
-        "B", "R", aeroway="taxiway",
-        geometry=LineString([
-            graph.nodes["B"]["pos"], to_wgs84.transform(x + 20, y + 10), graph.nodes["R"]["pos"]
-        ]),
+        "2",
+        "5",
+        aeroway="taxiway",
+        geometry=LineString(
+            [graph.nodes["2"]["pos"], to_wgs84.transform(x + 20, y + 10), graph.nodes["5"]["pos"]]
+        ),
     )
     airport_graph.rebuild_stand_index()
     airport_graph.rebuild_runway_interfaces()
 
     database_path = tmp_path / "flights.duckdb"
     points = [x + 12, x + 18, x + 26]
-    expected = (("A", "B", "AB"), ("B", "C", "BC"))
+    expected = (("1", "2", 0), ("2", "3", 1))
     if movement == "arrival":
         points.reverse()
         expected = tuple((v, u, key) for u, v, key in reversed(expected))
@@ -253,8 +270,15 @@ def test_database_flight_matches_using_its_od(tmp_path, movement, suffix, stand_
         connection.executemany(
             f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
             [
-                ("flight", f"2026-01-01 00:00:0{i}", *to_wgs84.transform(px, y),
-                 " 009 " if i == 1 else None, " 01 ", "CA123", "2026-01-01 08:00:00")
+                (
+                    "flight",
+                    f"2026-01-01 00:00:0{i}",
+                    *to_wgs84.transform(px, y),
+                    " 009 " if i == 1 else None,
+                    " 01 ",
+                    "CA123",
+                    "2026-01-01 08:00:00",
+                )
                 for i, px in enumerate(points)
             ],
         )
@@ -269,7 +293,8 @@ def test_database_flight_matches_using_its_od(tmp_path, movement, suffix, stand_
         assert flight.actual_dep is None
         assert matcher.map_flight(flight).edge_ids == expected
     missing_od = Flight(
-        [{**row, runway_column: None} for row in flight.rows], movement=movement,
+        [{**row, runway_column: None} for row in flight.rows],
+        movement=movement,
     )
     with pytest.raises(MapMatchingError, match="Missing flight OD"):
         matcher.map_flight(missing_od)
@@ -288,7 +313,7 @@ def test_isolated_observation_without_candidates_is_skipped():
 
     path = robust_matcher(airport_graph).map_flight(flight)
 
-    assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
 
 
 def test_consecutive_observations_without_candidates_are_skipped():
@@ -305,7 +330,7 @@ def test_consecutive_observations_without_candidates_are_skipped():
 
     path = robust_matcher(airport_graph).map_flight(flight)
 
-    assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
 
 
 def test_candidate_radius_finds_candidates_across_the_complete_range():
@@ -317,7 +342,7 @@ def test_candidate_radius_finds_candidates_across_the_complete_range():
 
     path = robust_matcher(airport_graph).map_flight(flight)
 
-    assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
 
 
 def test_candidate_search_queries_once_with_complete_radius():
@@ -344,8 +369,8 @@ def test_complete_radius_keeps_farther_candidate_when_near_candidate_exists():
     candidates = matcher._candidates(0, Point(450_001, 4_428_000))
 
     assert [candidate.edge_id for candidate in candidates] == [
-        ("A", "B", "AB"),
-        ("B", "C", "BC"),
+        ("1", "2", 0),
+        ("2", "3", 1),
     ]
     assert [candidate.distance for candidate in candidates] == pytest.approx([0, 9])
 
@@ -357,7 +382,7 @@ def test_candidate_search_respects_max_candidates_after_distance_sorting():
     candidates = matcher._candidates(0, Point(450_001, 4_428_000))
 
     assert len(candidates) == 1
-    assert candidates[0].edge_id == ("A", "B", "AB")
+    assert candidates[0].edge_id == ("1", "2", 0)
 
 
 def test_self_loop_candidate_check_is_preserved():
@@ -366,11 +391,7 @@ def test_self_loop_candidate_check_is_preserved():
     matcher.index = type(
         "SelfLoopIndex",
         (),
-        {
-            "candidates": lambda self, *_args: [
-                Candidate(0, ("A", "A", "loop"), 0, Point(0, 0), 0, 0)
-            ]
-        },
+        {"candidates": lambda self, *_args: [Candidate(0, ("1", "1", 2), 0, Point(0, 0), 0, 0)]},
     )()
 
     with pytest.raises(MapMatchingError, match="self-loop"):
@@ -395,7 +416,7 @@ def test_one_observation_can_match_with_od():
         [(450_001, 4_428_000), (450_019, 4_428_500)],
     )
 
-    assert robust_matcher(airport_graph).map_flight(flight).nodes == ("A", "B", "C")
+    assert robust_matcher(airport_graph).map_flight(flight).nodes == ("1", "2", "3")
 
 
 @pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
@@ -426,11 +447,11 @@ def test_path_geometry_preserves_forward_reverse_and_repeated_order():
     airport_graph, _ = straight_airport_graph()
     path = Path(
         airport_graph,
-        [("A", "B", "AB"), ("B", "A", "AB"), ("A", "B", "AB")],
+        [("1", "2", 0), ("2", "1", 0), ("1", "2", 0)],
     )
 
     assert list(path.geometry.coords) == [
-        airport_graph.graph.nodes[node]["pos"] for node in ("A", "B", "A", "B")
+        airport_graph.graph.nodes[node]["pos"] for node in ("1", "2", "1", "2")
     ]
 
 
@@ -438,30 +459,28 @@ def test_path_geometry_preserves_closed_loop_and_repeated_edge_order():
     airport_graph, _ = straight_airport_graph()
     positions = nx.get_node_attributes(airport_graph.graph, "pos")
     airport_graph.graph.add_edge(
-        "C", "A", key="CA", geometry=LineString([positions["C"], positions["A"]])
+        "3", "1", key=2, geometry=LineString([positions["3"], positions["1"]])
     )
     path = Path(
         airport_graph,
-        [("A", "B", "AB"), ("B", "C", "BC"), ("C", "A", "CA"), ("A", "B", "AB")],
+        [("1", "2", 0), ("2", "3", 1), ("3", "1", 2), ("1", "2", 0)],
     )
 
-    assert list(path.geometry.coords) == [
-        positions[node] for node in ("A", "B", "C", "A", "B")
-    ]
+    assert list(path.geometry.coords) == [positions[node] for node in ("1", "2", "3", "1", "2")]
 
 
 def test_path_rejects_ambiguous_self_loop_direction():
     airport_graph, _ = straight_airport_graph()
-    position = airport_graph.graph.nodes["A"]["pos"]
+    position = airport_graph.graph.nodes["1"]["pos"]
     airport_graph.graph.add_edge(
-        "A",
-        "A",
-        key="loop",
+        "1",
+        "1",
+        key=2,
         geometry=LineString([position, (position[0] + 0.00001, position[1]), position]),
     )
 
     with pytest.raises(ValueError, match="Self-loop path direction is not supported"):
-        Path(airport_graph, [("A", "A", "loop")])
+        Path(airport_graph, [("1", "1", 2)])
 
 
 @pytest.mark.parametrize(
@@ -476,19 +495,20 @@ def test_repeated_positions_do_not_add_false_traversals(offsets):
     airport_graph, to_wgs84 = straight_od_graph()
     flight = make_flight(
         to_wgs84,
-        [(450_000 + offset, 4_428_000) for offset in offsets], movement="arrival",
+        [(450_000 + offset, 4_428_000) for offset in offsets],
+        movement="arrival",
     )
 
     path = robust_matcher(airport_graph).map_flight(flight)
 
-    assert path.edge_ids == (("C", "B", "BC"), ("B", "A", "AB"))
+    assert path.edge_ids == (("3", "2", 1), ("2", "1", 0))
 
 
 def test_stationary_observations_can_match_with_od():
     airport_graph, to_wgs84 = straight_od_graph()
     flight = make_flight(to_wgs84, [(450_007, 4_428_000)] * 3)
 
-    assert robust_matcher(airport_graph).map_flight(flight).nodes == ("A", "B", "C")
+    assert robust_matcher(airport_graph).map_flight(flight).nodes == ("1", "2", "3")
 
 
 def test_long_time_gap_does_not_reject_otherwise_valid_observations():
@@ -503,12 +523,12 @@ def test_long_time_gap_does_not_reject_otherwise_valid_observations():
 
     path = robust_matcher(airport_graph).map_flight(flight)
 
-    assert path.edge_ids == (("A", "B", "AB"), ("B", "C", "BC"))
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
 
 
 def test_path_record_round_trip_resolves_against_same_graph(tmp_path):
     airport_graph, _ = straight_airport_graph()
-    path = Path(airport_graph, [("A", "B", "AB"), ("B", "C", "BC")])
+    path = Path(airport_graph, [("1", "2", 0), ("2", "3", 1)])
     record = PathRecord.from_path(path)
     encoded = json.loads(json.dumps(record.to_dict()))
 
@@ -523,8 +543,8 @@ def test_path_record_round_trip_resolves_against_same_graph(tmp_path):
 
 def test_path_record_rejects_modified_graph():
     airport_graph, _ = straight_airport_graph()
-    record = PathRecord.from_path(Path(airport_graph, [("A", "B", "AB")]))
-    airport_graph.graph.edges["A", "B", "AB"]["ref"] = "A"
+    record = PathRecord.from_path(Path(airport_graph, [("1", "2", 0)]))
+    airport_graph.graph.edges["1", "2", 0]["ref"] = "1"
 
     with pytest.raises(PathGraphMismatch, match="Path requires graph"):
         record.resolve(airport_graph)

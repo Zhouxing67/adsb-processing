@@ -57,7 +57,7 @@ function ToolDock() {
 function TopologyPanel({ splitValidation, onSplitValidation }: { splitValidation: boolean; onSplitValidation(): void }) {
   const wb = useWorkbench(), topology = wb.state?.topology;
   const [reviewIndex, setReviewIndex] = useState(-1);
-  const nodes = useMemo(() => [...(wb.state?.nodes.features ?? [])].sort((a, b) => JSON.stringify(a.properties.id).localeCompare(JSON.stringify(b.properties.id))), [wb.state?.topology_revision]);
+  const nodes = useMemo(() => [...(wb.state?.nodes.features ?? [])].sort((a, b) => a.properties.id.localeCompare(b.properties.id)), [wb.state?.topology_revision]);
   const showReview = (index: number) => { const feature = nodes[index]; if (!feature) return; setReviewIndex(index); wb.dispatch({ type: 'selected', value: feature }); wb.dispatch({ type: 'status', value: index === nodes.length - 1 ? '已到最后一个节点；这不表示全部复核通过' : `遍历位置 ${index + 1} / ${nodes.length} · 节点 ${feature.properties.node_id}` }); };
   if (!wb.topologyOpen || !topology) return null;
   const metrics = [['连通分量', topology.component_count], ['最大分量', topology.largest_component], ['孤立节点', topology.isolated_count], ['悬挂节点', topology.dangling_count], ['平行边组', topology.parallel_pair_count]];
@@ -68,7 +68,7 @@ function TopologyPanel({ splitValidation, onSplitValidation }: { splitValidation
     <div className="topology-details">
       <h3>孤立节点</h3><p>{topology.isolated_nodes.slice(0, 20).join('、') || '无'}</p>
       <h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p>
-      <h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.some(id => JSON.stringify(id) === JSON.stringify(item.properties.id))); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}
+      <h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.includes(item.properties.id)); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}
     </div>
     <section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.node_id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section>
   </aside>;

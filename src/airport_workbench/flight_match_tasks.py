@@ -215,12 +215,14 @@ class FlightMatchTasks:
                 for item in items:
                     stats.add(item["status"], item["failure_type"], item["elapsed_seconds"])
                 total_stats.merge(stats)
-                payload.append({
-                    "task_id": task.task_id,
-                    "flight_keys": list(task.flight_keys),
-                    **stats.progress(),
-                    "items": items,
-                })
+                payload.append(
+                    {
+                        "task_id": task.task_id,
+                        "flight_keys": list(task.flight_keys),
+                        **stats.progress(),
+                        "items": items,
+                    }
+                )
         return {"graph_id": self.graph_id, "tasks": payload, "progress": total_stats.progress()}
 
     def _run(self, task_id: str, snapshot_id: str, keys: tuple[str, ...]) -> None:
@@ -241,7 +243,10 @@ class FlightMatchTasks:
             self._complete(task_id, snapshot_id, outcome)
 
     def _batch_inputs(
-        self, task_id: str, snapshot_id: str, keys: tuple[str, ...],
+        self,
+        task_id: str,
+        snapshot_id: str,
+        keys: tuple[str, ...],
     ) -> Iterable[tuple[str, Callable[[], Flight]]]:
         for key in keys:
             with self.graph_lock, self.lock:

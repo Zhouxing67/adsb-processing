@@ -9,21 +9,21 @@ import uvicorn
 from pyproj import Proj
 from shapely.geometry import LineString
 
-from flight import Flight
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
+from flight import Flight
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--port", type=int, required=True)
 parser.add_argument("--flights", type=int, default=0)
 args = parser.parse_args()
 graph = nx.MultiGraph()
-graph.add_node(1, pos=(116.59, 40.07))
-graph.add_node(2, pos=(116.595, 40.07))
+graph.add_node("1", pos=(116.59, 40.07))
+graph.add_node("2", pos=(116.595, 40.07))
 graph.add_edge(
-    1,
-    2,
+    "1",
+    "2",
     geometry=LineString([(116.59, 40.07), (116.595, 40.07)]),
     aeroway="parking_position",
     ref="A01",

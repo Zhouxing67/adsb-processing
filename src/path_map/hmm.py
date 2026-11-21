@@ -6,10 +6,12 @@ import logging
 from dataclasses import dataclass
 from functools import lru_cache
 from math import isfinite, isinf, log, pi
-from typing import Hashable, Protocol, Sequence
+from typing import Protocol, Sequence
 
 import networkx as nx
 from shapely.geometry import Point
+
+from airport_surface import NodeId
 
 from .candidates import Candidate, CandidateIndex
 from .path import DirectedEdge, EdgeId
@@ -50,8 +52,8 @@ class DirectedNetworkRouter:
             for edge, line in index.directed_lines.items()
             if edge[0] != edge[1] and line.length > ZERO_DISTANCE_TOLERANCE_M
         }
-        self.incoming: dict[Hashable, list[EdgeId]] = {}
-        self.outgoing: dict[Hashable, list[EdgeId]] = {}
+        self.incoming: dict[NodeId, list[EdgeId]] = {}
+        self.outgoing: dict[NodeId, list[EdgeId]] = {}
         self.graph = nx.DiGraph()
         self.graph.add_nodes_from(self.lengths)
         for edge in self.lengths:

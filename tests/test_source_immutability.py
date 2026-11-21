@@ -13,14 +13,14 @@ from airport_workbench.editor import EditorSession
 
 def source_graph() -> AirportGraph:
     graph = nx.MultiGraph()
-    graph.add_node(1, pos=(116.0, 40.0))
-    graph.add_node(2, pos=(116.1, 40.1))
-    graph.add_edge(1, 2, geometry=LineString([(116.0, 40.0), (116.1, 40.1)]))
+    graph.add_node("1", pos=(116.0, 40.0))
+    graph.add_node("2", pos=(116.1, 40.1))
+    graph.add_edge("1", "2", geometry=LineString([(116.0, 40.0), (116.1, 40.1)]))
     attributes = {"tags": {"names": ["A", "B"]}}
     return AirportGraph(
         graph,
         Proj("EPSG:32650"),
-        source_nodes={1: SourceNode(1, (116.0, 40.0), (1,), attributes)},
+        source_nodes={"1": SourceNode("1", (116.0, 40.0), ("1",), attributes)},
         source_edges={
             "way-1": SourceEdge(
                 "way-1",
@@ -34,7 +34,7 @@ def source_graph() -> AirportGraph:
 
 def test_source_attributes_are_recursively_immutable_and_defensively_copied() -> None:
     original = {"tags": {"names": ["A", "B"]}}
-    source = SourceNode(1, (116.0, 40.0), (1,), original)
+    source = SourceNode("1", (116.0, 40.0), ("1",), original)
     original["tags"]["names"].append("C")
 
     assert isinstance(source.attributes, MappingProxyType)
@@ -53,10 +53,10 @@ def test_graph_copies_and_editor_sessions_do_not_share_source_records() -> None:
     copied = graph.copy()
     session = EditorSession(graph)
 
-    assert copied.source_nodes[1] is not graph.source_nodes[1]
+    assert copied.source_nodes["1"] is not graph.source_nodes["1"]
     assert copied.source_edges["way-1"] is not graph.source_edges["way-1"]
-    assert session.airport_graph.source_nodes[1] is not graph.source_nodes[1]
+    assert session.airport_graph.source_nodes["1"] is not graph.source_nodes["1"]
     assert session.airport_graph.source_edges["way-1"] is not graph.source_edges["way-1"]
 
-    copied.source_nodes[1] = SourceNode(1, (0.0, 0.0), (1,))
-    assert graph.source_nodes[1].position == (116.0, 40.0)
+    copied.source_nodes["1"] = SourceNode("1", (0.0, 0.0), ("1",))
+    assert graph.source_nodes["1"].position == (116.0, 40.0)

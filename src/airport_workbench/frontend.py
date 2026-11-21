@@ -1,4 +1,5 @@
 """Static delivery boundary; domain/API code does not manage frontend assets."""
+
 from pathlib import Path
 
 from fastapi import FastAPI

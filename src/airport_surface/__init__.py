@@ -11,6 +11,7 @@ from .graph import (
     validate_edge_sources,
     validate_source_intervals,
 )
+from .identifiers import EdgeId, EdgeKey, NodeId, OsmId
 from .models import (
     AirportGraph,
     GraphMetadata,
@@ -25,6 +26,10 @@ __all__ = [
     "AirportGraph",
     "DEFAULT_GRAPH_PATH",
     "GraphMetadata",
+    "EdgeId",
+    "EdgeKey",
+    "NodeId",
+    "OsmId",
     "SourceEdge",
     "SourceNode",
     "SourceSegment",

@@ -24,7 +24,7 @@ from .models import (
 )
 
 DEFAULT_GRAPH_PATH = Path("data/graphs/zbaa_final.json")
-GRAPH_SCHEMA_VERSION = 1
+GRAPH_SCHEMA_VERSION = 2
 ENDPOINT_TOLERANCE_M = 1e-3
 
 
@@ -153,21 +153,14 @@ def geometry_from_source_segments(
 
 
 def apply_source_segments(data: dict[str, Any], segments: tuple[SourceSegment, ...]) -> None:
-    """Store a source chain and maintain legacy scalar fields for a single interval."""
+    """Store the sole authoritative source chain for an edge."""
     normalized = compact_source_segments(segments)
     data["source_segments"] = normalized
-    if len(normalized) == 1:
-        segment = normalized[0]
-        source = segment.source_id
-        data.update(
-            source_id=source,
-            source_start_m=segment.source_start_m,
-            source_end_m=segment.source_end_m,
-        )
-    else:
+    for name in ("source_id", "source_start_m", "source_end_m"):
+        data.pop(name, None)
+    if len(normalized) > 1:
         data["source_type"] = "composite"
-        for name in ("source_id", "source_start_m", "source_end_m", "osm_node_ids"):
-            data.pop(name, None)
+        data.pop("osm_node_ids", None)
 
 
 def validate_edge_endpoints(
@@ -348,9 +341,12 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
 
     source_path = Path(path)
     document = json.loads(source_path.read_text(encoding="utf-8"))
-    schema_version = document.get("schema_version", GRAPH_SCHEMA_VERSION)
+    schema_version = document.get("schema_version")
     if schema_version != GRAPH_SCHEMA_VERSION:
-        raise ValueError(f"Unsupported airport graph schema version: {schema_version!r}")
+        raise ValueError(
+            f"Unsupported airport graph schema version: {schema_version!r}; "
+            f"expected {GRAPH_SCHEMA_VERSION}"
+        )
     declared_graph_id = document.get("graph_id")
     if declared_graph_id is not None:
         actual_graph_id = _document_graph_id(document)

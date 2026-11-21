@@ -46,16 +46,23 @@ def match_batch(
         except MapMatchingError as error:
             reason = str(error)
             yield MatchOutcome(
-                key, count, perf_counter() - started,
-                reason=reason, failure_type=error.code.value, error_kind="matching",
+                key,
+                count,
+                perf_counter() - started,
+                reason=reason,
+                failure_type=error.code.value,
+                error_kind="matching",
             )
         except Exception as error:
             if not capture_system_errors:
                 raise
             yield MatchOutcome(
-                key, count, perf_counter() - started,
+                key,
+                count,
+                perf_counter() - started,
                 reason=f"系统异常（非正常匹配失败）：{type(error).__name__}: {error}",
-                failure_type="system", error_kind="system",
+                failure_type="system",
+                error_kind="system",
             )
         else:
             yield MatchOutcome(key, count, perf_counter() - started, path=path)
