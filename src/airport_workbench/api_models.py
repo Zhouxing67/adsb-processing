@@ -3,9 +3,149 @@
 from __future__ import annotations
 
 from enum import StrEnum
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, Field, JsonValue
+
+from .identifiers import EdgeIdentity, NodeIdField
+
+
+class ApiModel(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+
+class PointGeometry(ApiModel):
+    type: Literal["Point"] = "Point"
+    coordinates: tuple[float, float]
+
+
+class LineStringGeometry(ApiModel):
+    type: Literal["LineString"] = "LineString"
+    coordinates: list[tuple[float, float]]
+
+
+class NodeProperties(ApiModel):
+    id: NodeIdField
+    node_id: NodeIdField
+    node_type: str
+    longitude: float
+    latitude: float
+    degree: int
+    component: int
+    topology_role: Literal["isolated", "dangling", "connected"]
+    neighbours: str
+    attributes: str
+    editable_attributes: dict[str, JsonValue]
+    manual: bool
+    color: str
+    radius: float
+
+
+class EdgeProperties(ApiModel):
+    id: EdgeIdentity
+    edge_id: str
+    u: NodeIdField
+    v: NodeIdField
+    u_id: NodeIdField
+    v_id: NodeIdField
+    key: int = Field(ge=0)
+    validation_color: str
+    geometry_length_m: float
+    source_type: str | None = None
+    osm_node_ids: str
+    source_segments: str
+    aeroway: str | None = None
+    name: str | None = None
+    ref: str | None = None
+    attributes: str
+    editable_attributes: dict[str, JsonValue]
+
+
+class NodeFeature(ApiModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: PointGeometry
+    properties: NodeProperties
+
+
+class EdgeFeature(ApiModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: LineStringGeometry
+    properties: EdgeProperties
+
+
+class NodeFeatureCollection(ApiModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[NodeFeature]
+
+
+class EdgeFeatureCollection(ApiModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[EdgeFeature]
+
+
+class GeoJsonFeature(ApiModel):
+    type: Literal["Feature"] = "Feature"
+    geometry: PointGeometry | LineStringGeometry
+    properties: dict[str, JsonValue]
+
+
+class GeoJsonFeatureCollection(ApiModel):
+    type: Literal["FeatureCollection"] = "FeatureCollection"
+    features: list[GeoJsonFeature]
+
+
+class TopologyComponent(ApiModel):
+    index: int
+    size: int
+    node_ids: list[NodeIdField]
+
+
+class ParallelEdgeGroup(ApiModel):
+    u: NodeIdField
+    v: NodeIdField
+    edge_ids: list[EdgeIdentity]
+
+
+class TopologySummary(ApiModel):
+    component_count: int
+    largest_component: int
+    isolated_count: int
+    dangling_count: int
+    parallel_pair_count: int
+    isolated_nodes: list[NodeIdField]
+    dangling_nodes: list[NodeIdField]
+    components: list[TopologyComponent]
+    parallel_groups: list[ParallelEdgeGroup]
+
+
+class WorkbenchCapabilities(ApiModel):
+    can_edit_graph: bool
+    has_flights: bool
+    can_match: bool
+
+
+class WorkbenchStateResponse(ApiModel):
+    nodes: NodeFeatureCollection
+    edges: EdgeFeatureCollection
+    flights: list[GeoJsonFeatureCollection]
+    paths: list[GeoJsonFeatureCollection]
+    node_count: int
+    edge_count: int
+    flight_count: int
+    path_count: int
+    topology: TopologySummary
+    can_undo: bool
+    can_finish: bool
+    revision: int
+    topology_revision: int
+    save_path: str
+    flight_mode: bool
+    capabilities: WorkbenchCapabilities
+
+
+class GraphCommandResponse(ApiModel):
+    message: str
+    revision: int
 
 
 class ApiErrorCode(StrEnum):

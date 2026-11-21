@@ -35,6 +35,8 @@ from .api_models import (
     ERROR_RESPONSES,
     ApiErrorCode,
     ErrorResponse,
+    GraphCommandResponse,
+    WorkbenchStateResponse,
     error_detail,
     normalize_error_detail,
 )
@@ -440,7 +442,7 @@ def create_app(
         return await call_next(request)
 
     @app.get("/api/state")
-    def state() -> dict[str, Any]:
+    def state() -> WorkbenchStateResponse:
         value = browser.state(not flight_mode and on_finish is not None, save_path)
         value["flight_mode"] = flight_mode
         value["capabilities"] = {
@@ -454,7 +456,7 @@ def create_app(
             value["path_count"] = sum(
                 result.status == "success" for result in flight_workbench.results.values()
             )
-        return value
+        return WorkbenchStateResponse.model_validate(value)
 
     @flight_routes.get("/api/flights")
     def flights_catalogue(
@@ -576,7 +578,7 @@ def create_app(
         return flight_workbench.task_status(task_id)
 
     @graph_routes.post("/api/draw-connection")
-    def draw_connection(item: DrawConnectionRequest) -> dict[str, Any]:
+    def draw_connection(item: DrawConnectionRequest) -> GraphCommandResponse:
         try:
             result = session.draw_connection(
                 item.start,
@@ -588,7 +590,10 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": "已添加人工连接，可撤销；点击保存持久化", "revision": result.revision}
+        return GraphCommandResponse(
+            message="已添加人工连接，可撤销；点击保存持久化",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/restore-options")
     def restore_options(item: RestoreRequest) -> dict[str, Any]:
@@ -614,7 +619,7 @@ def create_app(
         }
 
     @graph_routes.post("/api/restore-confirm")
-    def restore_confirm(item: RestoreRequest) -> dict[str, Any]:
+    def restore_confirm(item: RestoreRequest) -> GraphCommandResponse:
         if item.candidate_id is None:
             raise HTTPException(400, "必须选择一个来源路径")
         try:
@@ -626,10 +631,10 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已从原始来源路径恢复派生边，key={result.value!r}",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已从原始来源路径恢复派生边，key={result.value!r}",
+            revision=result.revision,
+        )
 
     @graph_routes.get("/api/merge-candidates")
     def merge_candidates() -> dict[str, Any]:
@@ -655,7 +660,7 @@ def create_app(
         return value
 
     @graph_routes.post("/api/merge-nodes-confirm")
-    def merge_nodes_confirm(item: MergeNodesRequest) -> dict[str, Any]:
+    def merge_nodes_confirm(item: MergeNodesRequest) -> GraphCommandResponse:
         try:
             result = session.merge_nodes(
                 item.node_ids,
@@ -664,10 +669,10 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已合并节点，规范节点为 {result.value!r}",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已合并节点，规范节点为 {result.value!r}",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/delete-edge-preview")
     def delete_edge_preview(item: EdgeRequest) -> dict[str, Any]:
@@ -677,13 +682,13 @@ def create_app(
         return {**result.value, "revision": result.revision}
 
     @graph_routes.post("/api/delete-edge-confirm")
-    def delete_edge_confirm(item: EdgeRequest) -> dict[str, Any]:
+    def delete_edge_confirm(item: EdgeRequest) -> GraphCommandResponse:
         edge = item.edge.as_tuple()
         result = session.remove_derived_edge(*edge, expected_revision=item.expected_revision)
-        return {
-            "message": f"已删除派生边 {edge!r}，SourceEdge 保持不变",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已删除派生边 {edge!r}，SourceEdge 保持不变",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/delete-node-preview")
     def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
@@ -694,7 +699,7 @@ def create_app(
         return {**result.value, "revision": result.revision}
 
     @graph_routes.post("/api/delete-node-confirm")
-    def delete_node_confirm(item: NodeDeletionRequest) -> dict[str, Any]:
+    def delete_node_confirm(item: NodeDeletionRequest) -> GraphCommandResponse:
         try:
             result = session.remove_node_with_pairs(
                 item.node,
@@ -704,10 +709,10 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已按所选来源策略删除节点 {item.node!r}",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已按所选来源策略删除节点 {item.node!r}",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/split-source-preview")
     def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
@@ -727,7 +732,7 @@ def create_app(
         return value
 
     @graph_routes.post("/api/split-source-confirm")
-    def split_source_confirm(item: SourceSplitRequest) -> dict[str, Any]:
+    def split_source_confirm(item: SourceSplitRequest) -> GraphCommandResponse:
         try:
             node = session.split_source_edge(
                 *item.edge.as_tuple(),
@@ -738,10 +743,10 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已在 SourceEdge 上使用节点 {node.value!r} 切分",
-            "revision": node.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已在 SourceEdge 上使用节点 {node.value!r} 切分",
+            revision=node.revision,
+        )
 
     @graph_routes.post("/api/manual-snap-preview")
     def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
@@ -755,7 +760,7 @@ def create_app(
         return {**to_json_value(result.value), "revision": result.revision}
 
     @graph_routes.post("/api/manual-snap-confirm")
-    def manual_snap_confirm(item: ManualSnapRequest) -> dict[str, Any]:
+    def manual_snap_confirm(item: ManualSnapRequest) -> GraphCommandResponse:
         edge = item.edge.as_tuple()
         try:
             result = session.manual_snap_node_to_edge(
@@ -763,59 +768,61 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {
-            "message": f"已将节点 {item.node!r} 人工接入目标边",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已将节点 {item.node!r} 人工接入目标边",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/update-node")
-    def update_node(item: UpdatedNodeAttributes) -> dict[str, Any]:
+    def update_node(item: UpdatedNodeAttributes) -> GraphCommandResponse:
         result = session.update_node_attributes(
             item.node, item.attributes, expected_revision=item.expected_revision
         )
-        return {
-            "message": f"已更新节点 {item.node!r} 的属性",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已更新节点 {item.node!r} 的属性",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/update-edge")
-    def update_edge(item: UpdatedEdgeAttributes) -> dict[str, Any]:
+    def update_edge(item: UpdatedEdgeAttributes) -> GraphCommandResponse:
         edge = item.edge.as_tuple()
         result = session.update_edge_attributes(
             *edge, item.attributes, expected_revision=item.expected_revision
         )
-        return {"message": f"已更新边 {edge!r} 的属性", "revision": result.revision}
+        return GraphCommandResponse(
+            message=f"已更新边 {edge!r} 的属性", revision=result.revision
+        )
 
     @graph_routes.post("/api/save")
-    def save(item: VersionedRequest) -> dict[str, Any]:
+    def save(item: VersionedRequest) -> GraphCommandResponse:
         result = session.save(save_path, expected_revision=item.expected_revision)
         output = result.value
-        return {
-            "message": (
+        return GraphCommandResponse(
+            message=(
                 f"已保存 {output} · {session.graph.number_of_nodes()} 节点 · "
                 f"{session.graph.number_of_edges()} 边"
             ),
-            "revision": result.revision,
-        }
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/undo")
-    def undo(item: VersionedRequest) -> dict[str, Any]:
+    def undo(item: VersionedRequest) -> GraphCommandResponse:
         try:
             result = session.undo(expected_revision=item.expected_revision)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {"message": "已撤销上一步操作", "revision": result.revision}
+        return GraphCommandResponse(message="已撤销上一步操作", revision=result.revision)
 
     @graph_routes.post("/api/finish")
-    def finish(item: VersionedRequest) -> dict[str, Any]:
+    def finish(item: VersionedRequest) -> GraphCommandResponse:
         if on_finish is None:
             raise HTTPException(400, "当前为独立编辑模式")
         result = session.finish(save_path, on_finish, expected_revision=item.expected_revision)
         output = result.value
-        return {
-            "message": f"已保存 {output}，编辑完成，正在返回 AirportGraph",
-            "revision": result.revision,
-        }
+        return GraphCommandResponse(
+            message=f"已保存 {output}，编辑完成，正在返回 AirportGraph",
+            revision=result.revision,
+        )
 
     app.include_router(flight_routes if flight_mode else graph_routes)
 

@@ -1,6 +1,195 @@
 {
   "components": {
     "schemas": {
+      "EdgeFeature": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/EdgeProperties"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry",
+          "properties"
+        ],
+        "title": "EdgeFeature",
+        "type": "object"
+      },
+      "EdgeFeatureCollection": {
+        "additionalProperties": false,
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeFeature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "title": "EdgeFeatureCollection",
+        "type": "object"
+      },
+      "EdgeIdentity": {
+        "additionalProperties": false,
+        "description": "The stable identity of one MultiGraph edge.",
+        "properties": {
+          "key": {
+            "$ref": "#/components/schemas/EdgeKeyField"
+          },
+          "u": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "v": {
+            "$ref": "#/components/schemas/NodeIdField"
+          }
+        },
+        "required": [
+          "u",
+          "v",
+          "key"
+        ],
+        "title": "EdgeIdentity",
+        "type": "object"
+      },
+      "EdgeKeyField": {
+        "minimum": 0.0,
+        "type": "integer"
+      },
+      "EdgeProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "aeroway": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Aeroway"
+          },
+          "attributes": {
+            "title": "Attributes",
+            "type": "string"
+          },
+          "edge_id": {
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "editable_attributes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Editable Attributes",
+            "type": "object"
+          },
+          "geometry_length_m": {
+            "title": "Geometry Length M",
+            "type": "number"
+          },
+          "id": {
+            "$ref": "#/components/schemas/EdgeIdentity"
+          },
+          "key": {
+            "minimum": 0.0,
+            "title": "Key",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "osm_node_ids": {
+            "title": "Osm Node Ids",
+            "type": "string"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "source_segments": {
+            "title": "Source Segments",
+            "type": "string"
+          },
+          "source_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Source Type"
+          },
+          "u": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "u_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "v": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "v_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "validation_color": {
+            "title": "Validation Color",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "edge_id",
+          "u",
+          "v",
+          "u_id",
+          "v_id",
+          "key",
+          "validation_color",
+          "geometry_length_m",
+          "osm_node_ids",
+          "source_segments",
+          "attributes",
+          "editable_attributes"
+        ],
+        "title": "EdgeProperties",
+        "type": "object"
+      },
       "ErrorDetail": {
         "additionalProperties": false,
         "properties": {
@@ -40,7 +229,98 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "GeoJsonFeature": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/PointGeometry"
+              },
+              {
+                "$ref": "#/components/schemas/LineStringGeometry"
+              }
+            ],
+            "title": "Geometry"
+          },
+          "properties": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Properties",
+            "type": "object"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry",
+          "properties"
+        ],
+        "title": "GeoJsonFeature",
+        "type": "object"
+      },
+      "GeoJsonFeatureCollection": {
+        "additionalProperties": false,
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/GeoJsonFeature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "title": "GeoJsonFeatureCollection",
+        "type": "object"
+      },
       "JsonValue": {},
+      "LineStringGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinates": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "LineString",
+            "default": "LineString",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "LineStringGeometry",
+        "type": "object"
+      },
       "MatchFlightsRequest": {
         "properties": {
           "flight_keys": {
@@ -57,6 +337,289 @@
           }
         },
         "title": "MatchFlightsRequest",
+        "type": "object"
+      },
+      "NodeFeature": {
+        "additionalProperties": false,
+        "properties": {
+          "geometry": {
+            "$ref": "#/components/schemas/PointGeometry"
+          },
+          "properties": {
+            "$ref": "#/components/schemas/NodeProperties"
+          },
+          "type": {
+            "const": "Feature",
+            "default": "Feature",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "geometry",
+          "properties"
+        ],
+        "title": "NodeFeature",
+        "type": "object"
+      },
+      "NodeFeatureCollection": {
+        "additionalProperties": false,
+        "properties": {
+          "features": {
+            "items": {
+              "$ref": "#/components/schemas/NodeFeature"
+            },
+            "title": "Features",
+            "type": "array"
+          },
+          "type": {
+            "const": "FeatureCollection",
+            "default": "FeatureCollection",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "features"
+        ],
+        "title": "NodeFeatureCollection",
+        "type": "object"
+      },
+      "NodeIdField": {
+        "pattern": "^-?[1-9][0-9]*$",
+        "type": "string"
+      },
+      "NodeProperties": {
+        "additionalProperties": false,
+        "properties": {
+          "attributes": {
+            "title": "Attributes",
+            "type": "string"
+          },
+          "color": {
+            "title": "Color",
+            "type": "string"
+          },
+          "component": {
+            "title": "Component",
+            "type": "integer"
+          },
+          "degree": {
+            "title": "Degree",
+            "type": "integer"
+          },
+          "editable_attributes": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Editable Attributes",
+            "type": "object"
+          },
+          "id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "latitude": {
+            "title": "Latitude",
+            "type": "number"
+          },
+          "longitude": {
+            "title": "Longitude",
+            "type": "number"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "boolean"
+          },
+          "neighbours": {
+            "title": "Neighbours",
+            "type": "string"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "node_type": {
+            "title": "Node Type",
+            "type": "string"
+          },
+          "radius": {
+            "title": "Radius",
+            "type": "number"
+          },
+          "topology_role": {
+            "enum": [
+              "isolated",
+              "dangling",
+              "connected"
+            ],
+            "title": "Topology Role",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "node_id",
+          "node_type",
+          "longitude",
+          "latitude",
+          "degree",
+          "component",
+          "topology_role",
+          "neighbours",
+          "attributes",
+          "editable_attributes",
+          "manual",
+          "color",
+          "radius"
+        ],
+        "title": "NodeProperties",
+        "type": "object"
+      },
+      "ParallelEdgeGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "edge_ids": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeIdentity"
+            },
+            "title": "Edge Ids",
+            "type": "array"
+          },
+          "u": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "v": {
+            "$ref": "#/components/schemas/NodeIdField"
+          }
+        },
+        "required": [
+          "u",
+          "v",
+          "edge_ids"
+        ],
+        "title": "ParallelEdgeGroup",
+        "type": "object"
+      },
+      "PointGeometry": {
+        "additionalProperties": false,
+        "properties": {
+          "coordinates": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Coordinates",
+            "type": "array"
+          },
+          "type": {
+            "const": "Point",
+            "default": "Point",
+            "title": "Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "coordinates"
+        ],
+        "title": "PointGeometry",
+        "type": "object"
+      },
+      "TopologyComponent": {
+        "additionalProperties": false,
+        "properties": {
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "node_ids": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Node Ids",
+            "type": "array"
+          },
+          "size": {
+            "title": "Size",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "index",
+          "size",
+          "node_ids"
+        ],
+        "title": "TopologyComponent",
+        "type": "object"
+      },
+      "TopologySummary": {
+        "additionalProperties": false,
+        "properties": {
+          "component_count": {
+            "title": "Component Count",
+            "type": "integer"
+          },
+          "components": {
+            "items": {
+              "$ref": "#/components/schemas/TopologyComponent"
+            },
+            "title": "Components",
+            "type": "array"
+          },
+          "dangling_count": {
+            "title": "Dangling Count",
+            "type": "integer"
+          },
+          "dangling_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Dangling Nodes",
+            "type": "array"
+          },
+          "isolated_count": {
+            "title": "Isolated Count",
+            "type": "integer"
+          },
+          "isolated_nodes": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Isolated Nodes",
+            "type": "array"
+          },
+          "largest_component": {
+            "title": "Largest Component",
+            "type": "integer"
+          },
+          "parallel_groups": {
+            "items": {
+              "$ref": "#/components/schemas/ParallelEdgeGroup"
+            },
+            "title": "Parallel Groups",
+            "type": "array"
+          },
+          "parallel_pair_count": {
+            "title": "Parallel Pair Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "component_count",
+          "largest_component",
+          "isolated_count",
+          "dangling_count",
+          "parallel_pair_count",
+          "isolated_nodes",
+          "dangling_nodes",
+          "components",
+          "parallel_groups"
+        ],
+        "title": "TopologySummary",
         "type": "object"
       },
       "UpdateStandRequest": {
@@ -77,6 +640,121 @@
           "stand_position"
         ],
         "title": "UpdateStandRequest",
+        "type": "object"
+      },
+      "WorkbenchCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "can_edit_graph": {
+            "title": "Can Edit Graph",
+            "type": "boolean"
+          },
+          "can_match": {
+            "title": "Can Match",
+            "type": "boolean"
+          },
+          "has_flights": {
+            "title": "Has Flights",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "can_edit_graph",
+          "has_flights",
+          "can_match"
+        ],
+        "title": "WorkbenchCapabilities",
+        "type": "object"
+      },
+      "WorkbenchStateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "can_finish": {
+            "title": "Can Finish",
+            "type": "boolean"
+          },
+          "can_undo": {
+            "title": "Can Undo",
+            "type": "boolean"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/WorkbenchCapabilities"
+          },
+          "edge_count": {
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "edges": {
+            "$ref": "#/components/schemas/EdgeFeatureCollection"
+          },
+          "flight_count": {
+            "title": "Flight Count",
+            "type": "integer"
+          },
+          "flight_mode": {
+            "title": "Flight Mode",
+            "type": "boolean"
+          },
+          "flights": {
+            "items": {
+              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
+            },
+            "title": "Flights",
+            "type": "array"
+          },
+          "node_count": {
+            "title": "Node Count",
+            "type": "integer"
+          },
+          "nodes": {
+            "$ref": "#/components/schemas/NodeFeatureCollection"
+          },
+          "path_count": {
+            "title": "Path Count",
+            "type": "integer"
+          },
+          "paths": {
+            "items": {
+              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
+            },
+            "title": "Paths",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "save_path": {
+            "title": "Save Path",
+            "type": "string"
+          },
+          "topology": {
+            "$ref": "#/components/schemas/TopologySummary"
+          },
+          "topology_revision": {
+            "title": "Topology Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "nodes",
+          "edges",
+          "flights",
+          "paths",
+          "node_count",
+          "edge_count",
+          "flight_count",
+          "path_count",
+          "topology",
+          "can_undo",
+          "can_finish",
+          "revision",
+          "topology_revision",
+          "save_path",
+          "flight_mode",
+          "capabilities"
+        ],
+        "title": "WorkbenchStateResponse",
         "type": "object"
       }
     }
@@ -754,9 +1432,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response State Api State Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/WorkbenchStateResponse"
                 }
               }
             },

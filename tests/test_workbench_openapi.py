@@ -16,3 +16,33 @@ def test_workbench_modes_export_only_their_available_routes() -> None:
     assert "/api/draw-connection" not in flight_paths
     assert "/api/flights" in flight_paths
     assert "/api/flights" not in graph_paths
+
+
+def test_state_endpoint_has_a_named_response_contract() -> None:
+    documents = workbench_openapi_documents()
+    for document in documents.values():
+        response = document["paths"]["/api/state"]["get"]["responses"]["200"]
+        schema = response["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/WorkbenchStateResponse"}
+
+
+def test_graph_command_endpoints_share_a_named_response_contract() -> None:
+    document = workbench_openapi_documents()["graph.json"]
+    command_paths = {
+        "/api/draw-connection",
+        "/api/restore-confirm",
+        "/api/merge-nodes-confirm",
+        "/api/delete-edge-confirm",
+        "/api/delete-node-confirm",
+        "/api/split-source-confirm",
+        "/api/manual-snap-confirm",
+        "/api/update-node",
+        "/api/update-edge",
+        "/api/save",
+        "/api/undo",
+        "/api/finish",
+    }
+    for path in command_paths:
+        response = document["paths"][path]["post"]["responses"]["200"]
+        schema = response["content"]["application/json"]["schema"]
+        assert schema == {"$ref": "#/components/schemas/GraphCommandResponse"}

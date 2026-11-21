@@ -75,5 +75,5 @@ def test_read_only_viewer_hides_editing_state_and_rejects_writes(flight_samples)
         route for route in app.routes if getattr(route, "path", None) == "/api/state"
     )
 
-    assert state_route.endpoint()["capabilities"]["can_edit_graph"] is False
+    assert state_route.endpoint().capabilities.can_edit_graph is False
     assert app.user_middleware

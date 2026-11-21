@@ -367,6 +367,28 @@ export interface components {
             ref?: string | null;
             start: components["schemas"]["NodeIdField"];
         };
+        /** EdgeFeature */
+        EdgeFeature: {
+            geometry: components["schemas"]["LineStringGeometry"];
+            properties: components["schemas"]["EdgeProperties"];
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
+        };
+        /** EdgeFeatureCollection */
+        EdgeFeatureCollection: {
+            /** Features */
+            features: components["schemas"]["EdgeFeature"][];
+            /**
+             * Type
+             * @default FeatureCollection
+             * @constant
+             */
+            type: "FeatureCollection";
+        };
         /**
          * EdgeIdentity
          * @description The stable identity of one MultiGraph edge.
@@ -377,6 +399,40 @@ export interface components {
             v: components["schemas"]["NodeIdField"];
         };
         EdgeKeyField: number;
+        /** EdgeProperties */
+        EdgeProperties: {
+            /** Aeroway */
+            aeroway?: string | null;
+            /** Attributes */
+            attributes: string;
+            /** Edge Id */
+            edge_id: string;
+            /** Editable Attributes */
+            editable_attributes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Geometry Length M */
+            geometry_length_m: number;
+            id: components["schemas"]["EdgeIdentity"];
+            /** Key */
+            key: number;
+            /** Name */
+            name?: string | null;
+            /** Osm Node Ids */
+            osm_node_ids: string;
+            /** Ref */
+            ref?: string | null;
+            /** Source Segments */
+            source_segments: string;
+            /** Source Type */
+            source_type?: string | null;
+            u: components["schemas"]["NodeIdField"];
+            u_id: components["schemas"]["NodeIdField"];
+            v: components["schemas"]["NodeIdField"];
+            v_id: components["schemas"]["NodeIdField"];
+            /** Validation Color */
+            validation_color: string;
+        };
         /** EdgeRequest */
         EdgeRequest: {
             edge: components["schemas"]["EdgeIdentity"];
@@ -398,7 +454,54 @@ export interface components {
         ErrorResponse: {
             detail: components["schemas"]["ErrorDetail"];
         };
+        /** GeoJsonFeature */
+        GeoJsonFeature: {
+            /** Geometry */
+            geometry: components["schemas"]["PointGeometry"] | components["schemas"]["LineStringGeometry"];
+            /** Properties */
+            properties: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
+        };
+        /** GeoJsonFeatureCollection */
+        GeoJsonFeatureCollection: {
+            /** Features */
+            features: components["schemas"]["GeoJsonFeature"][];
+            /**
+             * Type
+             * @default FeatureCollection
+             * @constant
+             */
+            type: "FeatureCollection";
+        };
+        /** GraphCommandResponse */
+        GraphCommandResponse: {
+            /** Message */
+            message: string;
+            /** Revision */
+            revision: number;
+        };
         JsonValue: unknown;
+        /** LineStringGeometry */
+        LineStringGeometry: {
+            /** Coordinates */
+            coordinates: [
+                number,
+                number
+            ][];
+            /**
+             * Type
+             * @default LineString
+             * @constant
+             */
+            type: "LineString";
+        };
         /** ManualSnapRequest */
         ManualSnapRequest: {
             edge: components["schemas"]["EdgeIdentity"];
@@ -427,7 +530,84 @@ export interface components {
             /** Pair Ids */
             pair_ids?: string[];
         };
+        /** NodeFeature */
+        NodeFeature: {
+            geometry: components["schemas"]["PointGeometry"];
+            properties: components["schemas"]["NodeProperties"];
+            /**
+             * Type
+             * @default Feature
+             * @constant
+             */
+            type: "Feature";
+        };
+        /** NodeFeatureCollection */
+        NodeFeatureCollection: {
+            /** Features */
+            features: components["schemas"]["NodeFeature"][];
+            /**
+             * Type
+             * @default FeatureCollection
+             * @constant
+             */
+            type: "FeatureCollection";
+        };
         NodeIdField: string;
+        /** NodeProperties */
+        NodeProperties: {
+            /** Attributes */
+            attributes: string;
+            /** Color */
+            color: string;
+            /** Component */
+            component: number;
+            /** Degree */
+            degree: number;
+            /** Editable Attributes */
+            editable_attributes: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            id: components["schemas"]["NodeIdField"];
+            /** Latitude */
+            latitude: number;
+            /** Longitude */
+            longitude: number;
+            /** Manual */
+            manual: boolean;
+            /** Neighbours */
+            neighbours: string;
+            node_id: components["schemas"]["NodeIdField"];
+            /** Node Type */
+            node_type: string;
+            /** Radius */
+            radius: number;
+            /**
+             * Topology Role
+             * @enum {string}
+             */
+            topology_role: "isolated" | "dangling" | "connected";
+        };
+        /** ParallelEdgeGroup */
+        ParallelEdgeGroup: {
+            /** Edge Ids */
+            edge_ids: components["schemas"]["EdgeIdentity"][];
+            u: components["schemas"]["NodeIdField"];
+            v: components["schemas"]["NodeIdField"];
+        };
+        /** PointGeometry */
+        PointGeometry: {
+            /** Coordinates */
+            coordinates: [
+                number,
+                number
+            ];
+            /**
+             * Type
+             * @default Point
+             * @constant
+             */
+            type: "Point";
+        };
         /** RestoreRequest */
         RestoreRequest: {
             /** Candidate Id */
@@ -447,6 +627,36 @@ export interface components {
             /** Longitude */
             longitude: number;
             osm_node_id?: components["schemas"]["NodeIdField"] | null;
+        };
+        /** TopologyComponent */
+        TopologyComponent: {
+            /** Index */
+            index: number;
+            /** Node Ids */
+            node_ids: components["schemas"]["NodeIdField"][];
+            /** Size */
+            size: number;
+        };
+        /** TopologySummary */
+        TopologySummary: {
+            /** Component Count */
+            component_count: number;
+            /** Components */
+            components: components["schemas"]["TopologyComponent"][];
+            /** Dangling Count */
+            dangling_count: number;
+            /** Dangling Nodes */
+            dangling_nodes: components["schemas"]["NodeIdField"][];
+            /** Isolated Count */
+            isolated_count: number;
+            /** Isolated Nodes */
+            isolated_nodes: components["schemas"]["NodeIdField"][];
+            /** Largest Component */
+            largest_component: number;
+            /** Parallel Groups */
+            parallel_groups: components["schemas"]["ParallelEdgeGroup"][];
+            /** Parallel Pair Count */
+            parallel_pair_count: number;
         };
         /** UpdatedEdgeAttributes */
         UpdatedEdgeAttributes: {
@@ -472,6 +682,46 @@ export interface components {
         VersionedRequest: {
             /** Expected Revision */
             expected_revision: number;
+        };
+        /** WorkbenchCapabilities */
+        WorkbenchCapabilities: {
+            /** Can Edit Graph */
+            can_edit_graph: boolean;
+            /** Can Match */
+            can_match: boolean;
+            /** Has Flights */
+            has_flights: boolean;
+        };
+        /** WorkbenchStateResponse */
+        WorkbenchStateResponse: {
+            /** Can Finish */
+            can_finish: boolean;
+            /** Can Undo */
+            can_undo: boolean;
+            capabilities: components["schemas"]["WorkbenchCapabilities"];
+            /** Edge Count */
+            edge_count: number;
+            edges: components["schemas"]["EdgeFeatureCollection"];
+            /** Flight Count */
+            flight_count: number;
+            /** Flight Mode */
+            flight_mode: boolean;
+            /** Flights */
+            flights: components["schemas"]["GeoJsonFeatureCollection"][];
+            /** Node Count */
+            node_count: number;
+            nodes: components["schemas"]["NodeFeatureCollection"];
+            /** Path Count */
+            path_count: number;
+            /** Paths */
+            paths: components["schemas"]["GeoJsonFeatureCollection"][];
+            /** Revision */
+            revision: number;
+            /** Save Path */
+            save_path: string;
+            topology: components["schemas"]["TopologySummary"];
+            /** Topology Revision */
+            topology_revision: number;
         };
     };
     responses: never;
@@ -501,9 +751,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -589,9 +837,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -677,9 +923,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -721,9 +965,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -765,9 +1007,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -893,9 +1133,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -981,9 +1219,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1069,9 +1305,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1113,9 +1347,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1197,9 +1429,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkbenchStateResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1241,9 +1471,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1285,9 +1513,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1329,9 +1555,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */
