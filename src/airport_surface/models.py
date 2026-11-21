@@ -256,26 +256,8 @@ class AirportGraph:
         return AirportGraph(
             deepcopy(self.graph),
             self.projection,
-            source_nodes={
-                node_id: SourceNode(
-                    source.node_id,
-                    source.position,
-                    source.osm_node_ids,
-                    source.attributes,
-                )
-                for node_id, source in self.source_nodes.items()
-            },
-            source_edges={
-                source_id: SourceEdge(
-                    source.source_id,
-                    source.geometry,
-                    source.source_type,
-                    source.osm_way_id,
-                    source.osm_node_ids,
-                    source.attributes,
-                )
-                for source_id, source in self.source_edges.items()
-            },
+            source_nodes=self.source_nodes,
+            source_edges=self.source_edges,
             node_aliases=self.node_aliases,
             metadata=self.metadata,
         )

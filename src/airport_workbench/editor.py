@@ -30,11 +30,11 @@ from airport_surface.graph import (
     geometry_from_source_segments,
     reverse_source_segments,
     save_graph,
-    source_registry,
     validate_edge_endpoints,
     validate_edge_sources,
 )
 from airport_surface.source_chain import split_source_chain
+from airport_surface.traffic_builder import _cumulative_distances
 
 MANUAL_SOURCE_TOLERANCE_M = 0.5
 MERGE_CANDIDATE_TOLERANCE_M = 0.5
@@ -64,10 +64,10 @@ class CommandResult(Generic[T]):
     revision: int
 
 
-def versioned_edit(
+def checked_operation(
     operation: Callable[P, T],
 ) -> Callable[P, CommandResult[T]]:
-    """Run one public mutation under the session lock and revision check."""
+    """Run one public operation under the session lock and revision check."""
 
     @wraps(operation)
     def wrapped(
@@ -82,10 +82,6 @@ def versioned_edit(
             return CommandResult(value, self.revision)
 
     return wrapped  # type: ignore[return-value]
-
-
-# Alias for read-only preview operations executed under checked revision
-versioned_preview = versioned_edit
 
 
 class EditorSession:
@@ -140,43 +136,41 @@ class EditorSession:
     @contextmanager
     def _edit(self, *, topology_change: bool = True) -> Any:
         """Make one graph edit atomic and record it only after success."""
-        with self.lock:
-            backup = self.airport_graph.copy()
-            source_path_backup = self._source_path_graph
-            try:
-                yield
-                self._refresh()
-            except Exception:
-                self.airport_graph = backup
-                self._source_path_graph = source_path_backup
-                raise
-            self._history.append((backup, topology_change))
-            self.revision += 1
-            if topology_change:
-                self.topology_revision += 1
-            if len(self._history) > 50:
-                self._history.pop(0)
+        backup = self.airport_graph.copy()
+        source_path_backup = self._source_path_graph
+        try:
+            yield
+            self._refresh()
+        except Exception:
+            self.airport_graph = backup
+            self._source_path_graph = source_path_backup
+            raise
+        self._history.append((backup, topology_change))
+        self.revision += 1
+        if topology_change:
+            self.topology_revision += 1
+        if len(self._history) > 50:
+            self._history.pop(0)
 
-    @versioned_edit
+    @checked_operation
     def undo(self) -> None:
-        with self.lock:
-            if not self._history:
-                raise ValueError("没有可以撤销的操作")
-            current_graph = self.airport_graph
-            current_source_path_graph = self._source_path_graph
-            restored_graph, topology_change = self._history[-1]
-            try:
-                self.airport_graph = restored_graph
-                restored_source_path_graph = self._build_source_path_graph()
-            except Exception:
-                self.airport_graph = current_graph
-                self._source_path_graph = current_source_path_graph
-                raise
-            self._history.pop()
-            self._source_path_graph = restored_source_path_graph
-            self.revision += 1
-            if topology_change:
-                self.topology_revision += 1
+        if not self._history:
+            raise ValueError("没有可以撤销的操作")
+        current_graph = self.airport_graph
+        current_source_path_graph = self._source_path_graph
+        restored_graph, topology_change = self._history[-1]
+        try:
+            self.airport_graph = restored_graph
+            restored_source_path_graph = self._build_source_path_graph()
+        except Exception:
+            self.airport_graph = current_graph
+            self._source_path_graph = current_source_path_graph
+            raise
+        self._history.pop()
+        self._source_path_graph = restored_source_path_graph
+        self.revision += 1
+        if topology_change:
+            self.topology_revision += 1
 
     def save(self, path: str | FilePath, *, expected_revision: int) -> CommandResult[FilePath]:
         """Validate and save exactly the graph version acknowledged by the caller."""
@@ -215,14 +209,7 @@ class EditorSession:
             candidate -= 1
         return str(candidate)
 
-    @versioned_edit
-    def add_node(self, longitude: float, latitude: float, **attributes: Any) -> Any:
-        with self._edit():
-            node = self._new_node_id()
-            self.graph.add_node(node, pos=(longitude, latitude), source="manual", **attributes)
-        return node
-
-    @versioned_edit
+    @checked_operation
     def draw_connection(
         self,
         u: Any,
@@ -283,46 +270,7 @@ class EditorSession:
             validate_edge_sources(self.airport_graph, edge_ids=[(u, v, key)])
         return key
 
-    @versioned_edit
-    def add_edge(self, u: Any, v: Any, **attributes: Any) -> Any:
-        self.require_node(u)
-        self.require_node(v)
-        with self._edit():
-            geometry = LineString([self.graph.nodes[u]["pos"][:2], self.graph.nodes[v]["pos"][:2]])
-            data = {
-                "geometry": geometry,
-                "first": u,
-                "last": v,
-                "aeroway": attributes.pop("aeroway", "taxiway"),
-                "parking_position": attributes.pop("parking_position", None),
-                "ref": attributes.pop("ref", None),
-                "name": attributes.pop("name", None),
-                "source_type": "manual",
-                **attributes,
-            }
-            key = self.graph.add_edge(u, v, **data)
-            registry = source_registry(self.airport_graph)
-            source_id = f"manual-{u}-{v}-{key}"
-            suffix = 2
-            while source_id in registry:
-                source_id = f"manual-{u}-{v}-{key}-{suffix}"
-                suffix += 1
-            source = SourceEdge(
-                source_id,
-                geometry,
-                "manual",
-                attributes={name: value for name, value in data.items() if name != "geometry"},
-            )
-            registry[source_id] = source
-            data.update(
-                source_segments=(
-                    SourceSegment(source_id, 0.0, self.airport_graph.length(geometry)),
-                )
-            )
-            self.graph.edges[u, v, key].update(data)
-        return key
-
-    @versioned_edit
+    @checked_operation
     def remove_derived_edge(self, u: Any, v: Any, key: Any) -> dict[str, Any]:
         """Remove only one derived topology edge; its SourceEdge is untouched."""
         u, v, key = self.require_edge(u, v, key)
@@ -344,7 +292,7 @@ class EditorSession:
             self.graph.remove_edge(u, v, key)
         return preview
 
-    @versioned_preview
+    @checked_operation
     def derived_edge_removal_preview(self, u: Any, v: Any, key: Any) -> dict[str, Any]:
         u, v, key = self.require_edge(u, v, key)
         data = self.graph.edges[u, v, key]
@@ -463,11 +411,11 @@ class EditorSession:
             return []
         return candidates
 
-    @versioned_preview
+    @checked_operation
     def connection_candidates(self, u: Any, v: Any) -> list[dict[str, Any]]:
         return self._connection_candidates(u, v)
 
-    @versioned_edit
+    @checked_operation
     def restore_source_connection(self, u: Any, v: Any, candidate_id: str) -> Any:
         self.require_node(u)
         self.require_node(v)
@@ -652,13 +600,13 @@ class EditorSession:
             "source_edges_unchanged": True,
         }
 
-    @versioned_preview
+    @checked_operation
     def merge_nodes_preview(
         self, node_ids: Sequence[Any], canonical_node: Any | None = None
     ) -> dict[str, Any]:
         return self._merge_nodes_preview(node_ids, canonical_node)
 
-    @versioned_edit
+    @checked_operation
     def merge_nodes(self, node_ids: Sequence[Any], canonical_node: Any | None = None) -> Any:
         preview = self._merge_nodes_preview(node_ids, canonical_node)
         members = tuple(preview["node_ids"])
@@ -807,7 +755,7 @@ class EditorSession:
         right_segments = self._segments_between(right, node)
         return compact_source_segments((*left_segments, *right_segments))
 
-    @versioned_preview
+    @checked_operation
     def node_deletion_plan(self, node: Any) -> dict[str, Any]:
         self.require_node(node)
         records = self._incident_records(node)
@@ -871,7 +819,7 @@ class EditorSession:
             ],
         }
 
-    @versioned_edit
+    @checked_operation
     def remove_node_with_pairs(
         self, node: Any, pair_ids: Sequence[str], discard_unpaired: bool = False
     ) -> None:
@@ -958,7 +906,7 @@ class EditorSession:
             validate_edge_endpoints(self.airport_graph, edge_ids=added_edges)
             validate_edge_sources(self.airport_graph, edge_ids=added_edges)
 
-    @versioned_edit
+    @checked_operation
     def update_node_attributes(self, node: Any, attributes: dict[str, Any]) -> None:
         self.require_node(node)
         attributes = deepcopy(attributes)
@@ -968,7 +916,7 @@ class EditorSession:
             self.graph.nodes[node].clear()
             self.graph.nodes[node].update(pos=position, **attributes)
 
-    @versioned_edit
+    @checked_operation
     def update_edge_attributes(self, u: Any, v: Any, key: Any, attributes: dict[str, Any]) -> None:
         u, v, key = self.require_edge(u, v, key)
         attributes = deepcopy(attributes)
@@ -1016,18 +964,17 @@ class EditorSession:
                 )
             )
             segment_candidates.append((piece.distance(click), segment_index, segment, piece))
-        _distance, segment_index, segment, _piece = min(segment_candidates)
+        _distance, segment_index, segment, piece = min(segment_candidates)
         source_id = segment.source_id
         source = self.airport_graph.get_source_edge(source_id)
         projected_source = self.airport_graph.project_shape(source.geometry)
-        station = projected_source.project(click)
         start_m, end_m = segment.source_start_m, segment.source_end_m
-        station = max(start_m, min(end_m, station))
+        station = max(start_m, min(end_m, start_m + piece.project(click)))
+        source_stations = _cumulative_distances(self.airport_graph, source.geometry)
         candidates = []
-        for index, (osm_node_id, coordinate) in enumerate(
-            zip(source.osm_node_ids, projected_source.coords)
+        for index, (osm_node_id, coordinate, node_station) in enumerate(
+            zip(source.osm_node_ids, projected_source.coords, source_stations)
         ):
-            node_station = projected_source.project(Point(coordinate))
             if not start_m - 1e-3 <= node_station <= end_m + 1e-3:
                 continue
             distance = Point(coordinate).distance(click)
@@ -1056,7 +1003,7 @@ class EditorSession:
             "manual_station_m": station,
         }
 
-    @versioned_preview
+    @checked_operation
     def source_split_preview(
         self, u: Any, v: Any, key: Any, longitude: float, latitude: float
     ) -> dict[str, Any]:
@@ -1096,7 +1043,7 @@ class EditorSession:
             "source_edge_unchanged": True,
         }
 
-    @versioned_preview
+    @checked_operation
     def manual_snap_preview(self, node: Any, u: Any, v: Any, key: Any) -> dict[str, Any]:
         return self._manual_snap_preview(node, u, v, key)
 
@@ -1147,7 +1094,7 @@ class EditorSession:
         right_key = self.graph.add_edge(node, last, **right_data)
         return [(first, node, left_key), (node, last, right_key)]
 
-    @versioned_edit
+    @checked_operation
     def manual_snap_node_to_edge(self, node: Any, u: Any, v: Any, key: Any) -> None:
         self.require_node(node)
         u, v, key = self.require_edge(u, v, key)
@@ -1186,7 +1133,7 @@ class EditorSession:
             validate_edge_endpoints(self.airport_graph, edge_ids=changed_edges)
             validate_edge_sources(self.airport_graph, edge_ids=changed_edges)
 
-    @versioned_edit
+    @checked_operation
     def split_source_edge(
         self,
         u: Any,
@@ -1269,10 +1216,9 @@ class EditorSession:
     ) -> tuple[Any, ...]:
         """Return the original OSM nodes covered by one source interval."""
         source = self.airport_graph.get_source_edge(source_id)
-        projected = self.airport_graph.project_shape(source.geometry)
+        stations = _cumulative_distances(self.airport_graph, source.geometry)
         result = []
-        for node_id, coordinate in zip(source.osm_node_ids, projected.coords):
-            station = projected.project(Point(coordinate))
+        for node_id, station in zip(source.osm_node_ids, stations):
             if start_m - 1e-3 <= station <= end_m + 1e-3:
                 result.append(node_id)
         return tuple(result)

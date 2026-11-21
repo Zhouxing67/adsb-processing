@@ -48,15 +48,15 @@ def test_source_attributes_are_recursively_immutable_and_defensively_copied() ->
     assert source.attributes["tags"]["names"] == ("A", "B")
 
 
-def test_graph_copies_and_editor_sessions_do_not_share_source_records() -> None:
+def test_graph_copies_share_immutable_records_but_not_registries() -> None:
     graph = source_graph()
     copied = graph.copy()
     session = EditorSession(graph)
 
-    assert copied.source_nodes["1"] is not graph.source_nodes["1"]
-    assert copied.source_edges["way-1"] is not graph.source_edges["way-1"]
-    assert session.airport_graph.source_nodes["1"] is not graph.source_nodes["1"]
-    assert session.airport_graph.source_edges["way-1"] is not graph.source_edges["way-1"]
+    assert copied.source_nodes["1"] is graph.source_nodes["1"]
+    assert copied.source_edges["way-1"] is graph.source_edges["way-1"]
+    assert session.airport_graph.source_nodes["1"] is graph.source_nodes["1"]
+    assert session.airport_graph.source_edges["way-1"] is graph.source_edges["way-1"]
 
     copied.source_nodes["1"] = SourceNode("1", (0.0, 0.0), ("1",))
     assert graph.source_nodes["1"].position == (116.0, 40.0)

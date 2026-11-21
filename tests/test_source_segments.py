@@ -464,6 +464,47 @@ def test_composite_edge_can_be_split_again_at_an_original_osm_node():
     validate_edge_sources(session.airport_graph)
 
 
+def test_retraced_source_uses_ordered_vertex_stations_and_selected_piece():
+    source = source_edge("retraced", ("1", "2", "3"), ((0, 0), (10, 0), (0, 0)))
+    graph = nx.MultiGraph()
+    graph.add_node("2", pos=position(10, 0), source_type="osm")
+    graph.add_node("3", pos=position(0, 0), source_type="osm")
+    add_derived_edge(
+        graph,
+        source,
+        "2",
+        "3",
+        10,
+        20,
+        LineString(source.geometry.coords[1:]),
+    )
+    airport = AirportGraph(
+        graph,
+        PROJECTION,
+        source_nodes={
+            node: SourceNode(node, coordinate, (node,))
+            for node, coordinate in (
+                ("1", position(0, 0)),
+                ("2", position(10, 0)),
+                ("3", position(0, 0)),
+            )
+        },
+        source_edges={source.source_id: source},
+    )
+    session = EditorSession(airport)
+
+    preview = session.source_split_preview(
+        "2", "3", 0, *position(5, 0), expected_revision=0
+    ).value
+
+    assert preview["manual_station_m"] == pytest.approx(15)
+    assert {item["osm_node_id"]: item["source_station_m"] for item in preview["candidates"]} == {
+        "2": pytest.approx(10),
+        "3": pytest.approx(20),
+    }
+    assert session._source_nodes_in_interval("retraced", 19, 21) == ("3",)
+
+
 def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification():
     graph = crossing_graph()
     graph.graph.remove_edge("4", "2", 0)

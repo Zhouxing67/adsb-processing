@@ -43,30 +43,6 @@ def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
     return AirportGraph(graph, projection), to_wgs84
 
 
-@pytest.mark.parametrize("reverse", [False, True])
-@pytest.mark.parametrize("sharp_turn", [False, True])
-def test_path_legality_checks_od_and_turns_in_both_directions(reverse, sharp_turn):
-    airport_graph, to_wgs84 = straight_airport_graph()
-    graph = airport_graph.graph
-    graph.edges["1", "2", 0]["aeroway"] = "parking_position"
-    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
-    if sharp_turn:
-        graph.nodes["3"]["pos"] = to_wgs84.transform(450_002, 4_428_001)
-        graph.edges["2", "3", 1]["geometry"] = LineString(
-            [graph.nodes["2"]["pos"], graph.nodes["3"]["pos"]]
-        )
-    graph.add_edge("3", "4", key="CD", aeroway="runway")
-    airport_graph.rebuild_runway_interfaces()
-    edges = [("1", "2", 0), ("2", "3", 1)]
-    if reverse:
-        edges = [(v, u, key) for u, v, key in reversed(edges)]
-
-    assert Path.is_legal(Path(airport_graph, edges)) is (not sharp_turn)
-    assert not Path(airport_graph, edges[:1]).is_legal()
-    assert not Path(airport_graph, edges[1:]).is_legal()
-    assert not Path(airport_graph, []).is_legal()
-
-
 def straight_od_graph() -> tuple[AirportGraph, Transformer]:
     airport_graph, transform = straight_airport_graph()
     graph = airport_graph.graph
@@ -187,7 +163,6 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
     if detour:
         path = matcher.map_flight(flight)
         assert path.edge_ids == tuple(expected)
-        assert path.is_legal()
     else:
         with pytest.raises(MapMatchingError, match="No turn-constrained path"):
             matcher.map_flight(flight)
@@ -388,7 +363,7 @@ def test_candidate_search_respects_max_candidates_after_distance_sorting():
     assert candidates[0].edge_id == ("1", "2", 0)
 
 
-def test_self_loop_candidate_check_is_preserved():
+def test_self_loop_candidates_are_ignored():
     airport_graph, _ = straight_airport_graph()
     matcher = robust_matcher(airport_graph)
     matcher.index = type(
@@ -397,8 +372,7 @@ def test_self_loop_candidate_check_is_preserved():
         {"candidates": lambda self, *_args: [Candidate(0, ("1", "1", 2), 0, Point(0, 0), 0, 0)]},
     )()
 
-    with pytest.raises(MapMatchingError, match="self-loop"):
-        matcher._candidates(0, Point(0, 0))
+    assert matcher._candidates(0, Point(0, 0)) == []
 
 
 def test_all_observations_without_candidates_still_fail():

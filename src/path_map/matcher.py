@@ -37,7 +37,6 @@ class MapMatchingFailure(StrEnum):
     NO_CANDIDATES = "no_candidates"
     NO_LEGAL_PATH = "no_legal_path"
     NO_MOVEMENT = "no_movement"
-    UNSUPPORTED_TOPOLOGY = "unsupported_topology"
 
 
 class MapMatchingError(ValueError):
@@ -299,13 +298,11 @@ class Matcher:
             self.config.candidate_radius,
             self.config.max_candidates,
         )
-        if any(candidate.edge_id[0] == candidate.edge_id[1] for candidate in candidates):
-            raise MapMatchingError(
-                MapMatchingFailure.UNSUPPORTED_TOPOLOGY,
-                "Map matching candidates on self-loop edges are not supported",
-                context={"topology": "self_loop"},
-            )
-        return candidates
+        return [
+            candidate
+            for candidate in candidates
+            if candidate.edge_id[0] != candidate.edge_id[1]
+        ]
 
 
 def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:

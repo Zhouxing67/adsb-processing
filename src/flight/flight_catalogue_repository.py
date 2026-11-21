@@ -36,9 +36,42 @@ class FlightCatalogueRepository:
             for direction, (table, column) in STAND_COLUMNS.items():
                 if movement and movement != direction:
                     continue
+                placeholders, parameters = self._database.bind(
+                    connection,
+                    min_points,
+                    max_points,
+                    query.lower(),
+                    not stands,
+                    list(stands),
+                    start_date,
+                    end_date,
+                    display_timezone,
+                    BEIJING,
+                )
+                (
+                    minimum,
+                    maximum,
+                    search,
+                    all_stands,
+                    stand_values,
+                    first_date,
+                    last_date,
+                    zone,
+                    input_zone,
+                ) = placeholders
                 rows = connection.execute(
                     f"""
-                    WITH flights AS (
+                    WITH parameters AS (
+                        SELECT {minimum} AS minimum_points,
+                               {maximum} AS maximum_points,
+                               {search} AS search_text,
+                               {all_stands} AS include_all_stands,
+                               {stand_values} AS stand_values,
+                               {first_date} AS first_date,
+                               {last_date} AS last_date,
+                               {zone} AS display_zone,
+                               {input_zone} AS input_zone
+                    ), flights AS (
                         SELECT flight_id, MIN("NUMBER") AS number,
                                COUNT(DISTINCT "NUMBER") AS number_count,
                                MIN(timestamp) AS started, MAX(timestamp) AS ended,
@@ -49,31 +82,22 @@ class FlightCatalogueRepository:
                         WHERE flight_id IS NOT NULL AND trim(flight_id) <> ''
                         GROUP BY flight_id
                     )
-                    SELECT * FROM flights
-                    WHERE points >= $minimum AND ($maximum IS NULL OR points <= $maximum)
-                      AND ($query = '' OR contains(lower(flight_id), $query)
-                           OR (number_count = 1 AND contains(lower(number), $query)))
-                      AND ($all_stands OR (stand_count <= 1
-                           AND coalesce(stand, '') = ANY($stands::VARCHAR[])))
-                      AND ($start_date IS NULL OR
-                           CAST(timezone($zone, timezone($input_zone, started)) AS DATE)
-                           >= $start_date)
-                      AND ($end_date IS NULL OR
-                           CAST(timezone($zone, timezone($input_zone, started)) AS DATE)
-                           <= $end_date)
+                    SELECT flights.* FROM flights CROSS JOIN parameters
+                    WHERE points >= minimum_points
+                      AND (maximum_points IS NULL OR points <= maximum_points)
+                      AND (search_text = '' OR contains(lower(flight_id), search_text)
+                           OR (number_count = 1 AND contains(lower(number), search_text)))
+                      AND (include_all_stands OR (stand_count <= 1
+                           AND coalesce(stand, '') = ANY(stand_values::VARCHAR[])))
+                      AND (first_date IS NULL OR
+                           CAST(timezone(display_zone, timezone(input_zone, started)) AS DATE)
+                           >= first_date)
+                      AND (last_date IS NULL OR
+                           CAST(timezone(display_zone, timezone(input_zone, started)) AS DATE)
+                           <= last_date)
                     ORDER BY flight_id
                     """,
-                    {
-                        "minimum": min_points,
-                        "maximum": max_points,
-                        "query": query.lower(),
-                        "all_stands": not stands,
-                        "stands": list(stands),
-                        "start_date": start_date,
-                        "end_date": end_date,
-                        "zone": display_timezone,
-                        "input_zone": BEIJING,
-                    },
+                    parameters,
                 ).fetchall()
                 for identifier, number, numbers, start, end, points, stand, count in rows:
                     if start is None or end is None:

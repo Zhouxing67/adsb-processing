@@ -84,40 +84,6 @@ class Path(Sequence[DirectedEdge]):
             if left.to_ != right.from_:
                 raise ValueError(f"Discontinuous path between {left!r} and {right!r}")
 
-    def is_legal(
-        self,
-        *,
-        max_turn_angle_deg: float = 150.0,
-        tangent_sample_m: float = 10.0,
-    ) -> bool:
-        """Check both endpoint types and every adjacent pair of directed edges."""
-        from .transition_constraints import LocalTurnConstraint
-
-        if not self._edges:
-            return False
-        first, last = self._edges[0], self._edges[-1]
-        edges = self.airport_graph.graph.edges
-        runway_interfaces = self.airport_graph.runway_interfaces
-        departures = (
-            edges[first.id].get("aeroway") == "parking_position" and last.to_ in runway_interfaces
-        )
-        arrivals = (
-            first.from_ in runway_interfaces and edges[last.id].get("aeroway") == "parking_position"
-        )
-        if not (departures or arrivals):
-            return False
-
-        lines = {
-            edge.id: self.airport_graph.project_shape(self.oriented_geometry(edge))
-            for edge in dict.fromkeys(self._edges)
-        }
-        constraint = LocalTurnConstraint(
-            lines,
-            max_angle_deg=max_turn_angle_deg,
-            tangent_sample_m=tangent_sample_m,
-        )
-        return constraint.accepts(self._edges)
-
     def oriented_geometry(self, edge: DirectedEdge) -> LineString:
         """返回坐标顺序与 ``edge.from_ -> edge.to_`` 遍历方向一致的边几何。"""
         graph = self.airport_graph.graph

@@ -28,10 +28,6 @@ GRAPH_SCHEMA_VERSION = 2
 ENDPOINT_TOLERANCE_M = 1e-3
 
 
-def source_registry(airport_graph: AirportGraph) -> dict[str, SourceEdge]:
-    return airport_graph.source_edges
-
-
 def geometry_from_source_interval(
     airport_graph: AirportGraph,
     source_id: str,

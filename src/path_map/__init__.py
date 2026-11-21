@@ -8,7 +8,7 @@ from .matcher import (
     Matcher,
 )
 from .path import DirectedEdge, Path, PathGraphMismatch, PathRecord
-from .transition_constraints import LocalTurnConstraint, TransitionConstraint
+from .transition_constraints import LocalTurnConstraint
 
 __all__ = [
     "BatchStats",
@@ -23,5 +23,4 @@ __all__ = [
     "Path",
     "PathGraphMismatch",
     "PathRecord",
-    "TransitionConstraint",
 ]

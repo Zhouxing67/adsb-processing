@@ -50,7 +50,7 @@ def test_invalid_drawing_is_atomic(end, points):
 
 def test_revision_conflict():
     editor = session()
-    editor.add_node(0, 1, expected_revision=0)
+    editor.update_node_attributes("1", {"name": "changed"}, expected_revision=0)
     with pytest.raises(RevisionConflict):
         editor.draw_connection("1", "2", [], expected_revision=0)
     assert not editor.airport_graph.source_edges
