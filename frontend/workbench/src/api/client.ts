@@ -1,35 +1,20 @@
 import type { FlightCatalogue, FlightDetail, FlightGeometry, MatchStatus, WorkbenchState } from './types';
 import type { components as GraphApi } from './generated/graph';
+import type { paths as GraphPaths } from './generated/graph';
 import type { components as FlightApi } from './generated/flight';
 import type { operations as FlightOperations } from './generated/flight';
 
 export type ApiErrorDetail = GraphApi['schemas']['ErrorDetail'];
-type GraphSchemas = GraphApi['schemas'];
-
-interface GraphPostContracts {
-  '/api/draw-connection': { request: GraphSchemas['DrawConnectionRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/restore-options': { request: GraphSchemas['RestoreRequest']; response: GraphSchemas['RestoreOptionsResponse'] };
-  '/api/restore-confirm': { request: GraphSchemas['RestoreRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/merge-nodes-preview': { request: GraphSchemas['MergeNodesRequest']; response: GraphSchemas['MergeNodesPreviewResponse'] };
-  '/api/merge-nodes-confirm': { request: GraphSchemas['MergeNodesRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/delete-edge-preview': { request: GraphSchemas['EdgeRequest']; response: GraphSchemas['DeleteEdgePreviewResponse'] };
-  '/api/delete-edge-confirm': { request: GraphSchemas['EdgeRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/delete-node-preview': { request: GraphSchemas['NodeDeletionRequest']; response: GraphSchemas['DeleteNodePreviewResponse'] };
-  '/api/delete-node-confirm': { request: GraphSchemas['NodeDeletionRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/split-source-preview': { request: GraphSchemas['SourceSplitRequest']; response: GraphSchemas['SplitSourcePreviewResponse'] };
-  '/api/split-source-confirm': { request: GraphSchemas['SourceSplitRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/manual-snap-preview': { request: GraphSchemas['ManualSnapRequest']; response: GraphSchemas['ManualSnapPreviewResponse'] };
-  '/api/manual-snap-confirm': { request: GraphSchemas['ManualSnapRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/update-node': { request: GraphSchemas['UpdatedNodeAttributes']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/update-edge': { request: GraphSchemas['UpdatedEdgeAttributes']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/save': { request: GraphSchemas['VersionedRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/undo': { request: GraphSchemas['VersionedRequest']; response: GraphSchemas['GraphCommandResponse'] };
-  '/api/finish': { request: GraphSchemas['VersionedRequest']; response: GraphSchemas['GraphCommandResponse'] };
-}
-
-export type GraphPostPath = keyof GraphPostContracts;
-export type GraphPostRequest<P extends GraphPostPath> = GraphPostContracts[P]['request'];
-export type GraphPostResponse<P extends GraphPostPath> = GraphPostContracts[P]['response'];
+type PostOperation<P extends keyof GraphPaths> = GraphPaths[P] extends { post: infer Operation } ? Operation : never;
+export type GraphPostPath = {
+  [P in keyof GraphPaths]: PostOperation<P> extends never ? never : P;
+}[keyof GraphPaths];
+export type GraphPostRequest<P extends GraphPostPath> = PostOperation<P> extends {
+  requestBody: { content: { 'application/json': infer Body } };
+} ? Body : never;
+export type GraphPostResponse<P extends GraphPostPath> = PostOperation<P> extends {
+  responses: { 200: { content: { 'application/json': infer Body } } };
+} ? Body : never;
 export type GraphPostInput<P extends GraphPostPath> = Omit<GraphPostRequest<P>, 'expected_revision'> & {
   expected_revision?: number;
 };

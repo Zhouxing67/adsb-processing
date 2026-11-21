@@ -229,14 +229,6 @@
             ],
             "title": "Aeroway"
           },
-          "attributes": {
-            "title": "Attributes",
-            "type": "string"
-          },
-          "edge_id": {
-            "title": "Edge Id",
-            "type": "string"
-          },
           "editable_attributes": {
             "additionalProperties": {
               "$ref": "#/components/schemas/JsonValue"
@@ -267,10 +259,6 @@
             ],
             "title": "Name"
           },
-          "osm_node_ids": {
-            "title": "Osm Node Ids",
-            "type": "string"
-          },
           "ref": {
             "anyOf": [
               {
@@ -281,10 +269,6 @@
               }
             ],
             "title": "Ref"
-          },
-          "source_segments": {
-            "title": "Source Segments",
-            "type": "string"
           },
           "source_type": {
             "anyOf": [
@@ -300,13 +284,7 @@
           "u": {
             "$ref": "#/components/schemas/NodeIdField"
           },
-          "u_id": {
-            "$ref": "#/components/schemas/NodeIdField"
-          },
           "v": {
-            "$ref": "#/components/schemas/NodeIdField"
-          },
-          "v_id": {
             "$ref": "#/components/schemas/NodeIdField"
           },
           "validation_color": {
@@ -316,17 +294,11 @@
         },
         "required": [
           "id",
-          "edge_id",
           "u",
           "v",
-          "u_id",
-          "v_id",
           "key",
           "validation_color",
           "geometry_length_m",
-          "osm_node_ids",
-          "source_segments",
-          "attributes",
           "editable_attributes"
         ],
         "title": "EdgeProperties",
@@ -926,10 +898,6 @@
       "NodeProperties": {
         "additionalProperties": false,
         "properties": {
-          "attributes": {
-            "title": "Attributes",
-            "type": "string"
-          },
           "color": {
             "title": "Color",
             "type": "string"
@@ -968,9 +936,6 @@
             "title": "Neighbours",
             "type": "string"
           },
-          "node_id": {
-            "$ref": "#/components/schemas/NodeIdField"
-          },
           "node_type": {
             "title": "Node Type",
             "type": "string"
@@ -991,7 +956,6 @@
         },
         "required": [
           "id",
-          "node_id",
           "node_type",
           "longitude",
           "latitude",
@@ -999,7 +963,6 @@
           "component",
           "topology_role",
           "neighbours",
-          "attributes",
           "editable_attributes",
           "manual",
           "color",

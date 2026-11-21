@@ -7,7 +7,7 @@ const colors = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#B77900', '#56B4E9'
 function escapeHtml(value: unknown) { return String(value ?? '—').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
 function featurePopup(feature: GeoJSON.Feature) {
   const properties = feature.properties ?? {}, node = feature.geometry.type === 'Point';
-  const identity = node ? properties.node_id : properties.edge_id;
+  const identity = node ? properties.id : `${properties.id.u}—${properties.id.v} · ${properties.id.key}`;
   const details = [properties.aeroway, properties.ref, properties.name].filter(value => value !== null && value !== undefined && value !== '');
   return `<div class="feature-popup"><strong>${node ? '节点' : '边'} · ${escapeHtml(identity)}</strong>${details.map(value => `<span>${escapeHtml(value)}</span>`).join('')}</div>`;
 }

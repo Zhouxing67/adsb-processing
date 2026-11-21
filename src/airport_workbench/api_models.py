@@ -27,7 +27,6 @@ class LineStringGeometry(ApiModel):
 
 class NodeProperties(ApiModel):
     id: NodeIdField
-    node_id: NodeIdField
     node_type: str
     longitude: float
     latitude: float
@@ -35,7 +34,6 @@ class NodeProperties(ApiModel):
     component: int
     topology_role: Literal["isolated", "dangling", "connected"]
     neighbours: str
-    attributes: str
     editable_attributes: dict[str, JsonValue]
     manual: bool
     color: str
@@ -44,21 +42,15 @@ class NodeProperties(ApiModel):
 
 class EdgeProperties(ApiModel):
     id: EdgeIdentity
-    edge_id: str
     u: NodeIdField
     v: NodeIdField
-    u_id: NodeIdField
-    v_id: NodeIdField
     key: int = Field(ge=0)
     validation_color: str
     geometry_length_m: float
     source_type: str | None = None
-    osm_node_ids: str
-    source_segments: str
     aeroway: str | None = None
     name: str | None = None
     ref: str | None = None
-    attributes: str
     editable_attributes: dict[str, JsonValue]
 
 

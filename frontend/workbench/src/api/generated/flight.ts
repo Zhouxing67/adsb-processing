@@ -164,10 +164,6 @@ export interface components {
         EdgeProperties: {
             /** Aeroway */
             aeroway?: string | null;
-            /** Attributes */
-            attributes: string;
-            /** Edge Id */
-            edge_id: string;
             /** Editable Attributes */
             editable_attributes: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -179,18 +175,12 @@ export interface components {
             key: number;
             /** Name */
             name?: string | null;
-            /** Osm Node Ids */
-            osm_node_ids: string;
             /** Ref */
             ref?: string | null;
-            /** Source Segments */
-            source_segments: string;
             /** Source Type */
             source_type?: string | null;
             u: components["schemas"]["NodeIdField"];
-            u_id: components["schemas"]["NodeIdField"];
             v: components["schemas"]["NodeIdField"];
-            v_id: components["schemas"]["NodeIdField"];
             /** Validation Color */
             validation_color: string;
         };
@@ -520,8 +510,6 @@ export interface components {
         NodeIdField: string;
         /** NodeProperties */
         NodeProperties: {
-            /** Attributes */
-            attributes: string;
             /** Color */
             color: string;
             /** Component */
@@ -541,7 +529,6 @@ export interface components {
             manual: boolean;
             /** Neighbours */
             neighbours: string;
-            node_id: components["schemas"]["NodeIdField"];
             /** Node Type */
             node_type: string;
             /** Radius */

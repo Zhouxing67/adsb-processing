@@ -16,7 +16,6 @@ from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from airport_surface import edge_source_segments
 from airport_surface.graph import DEFAULT_GRAPH_PATH
 from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
@@ -199,7 +198,6 @@ class BrowserState:
                     "geometry": {"type": "Point", "coordinates": [longitude, latitude]},
                     "properties": {
                         "id": node,
-                        "node_id": node,
                         "node_type": (
                             "runway_interface"
                             if node in getattr(self.session.airport_graph, "runway_interfaces", {})
@@ -217,9 +215,6 @@ class BrowserState:
                             else "connected"
                         ),
                         "neighbours": ", ".join(graph.neighbors(node)),
-                        "attributes": repr(
-                            {key: value for key, value in data.items() if key != "pos"}
-                        ),
                         "editable_attributes": to_json_value(
                             {key: value for key, value in data.items() if key != "pos"}
                         ),
@@ -242,23 +237,15 @@ class BrowserState:
                     "geometry": mapping(geometry),
                     "properties": {
                         "id": {"u": u, "v": v, "key": key},
-                        "edge_id": repr((u, v, key)),
                         "u": u,
                         "v": v,
-                        "u_id": u,
-                        "v_id": v,
                         "key": key,
                         "validation_color": edge_colors[(u, v, key)],
                         "geometry_length_m": round(self.session.airport_graph.length(geometry), 2),
                         "source_type": data.get("source_type"),
-                        "osm_node_ids": repr(data.get("osm_node_ids", ())),
-                        "source_segments": repr(edge_source_segments(data)),
                         "aeroway": data.get("aeroway"),
                         "name": data.get("name"),
                         "ref": data.get("ref"),
-                        "attributes": repr(
-                            {name: value for name, value in data.items() if name != "geometry"}
-                        ),
                         "editable_attributes": to_json_value(
                             {
                                 name: value

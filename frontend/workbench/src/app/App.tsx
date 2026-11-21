@@ -21,6 +21,7 @@ const toolMessages: Record<EditorTool, string> = {
   merge: '合并节点 · 依次选择两个节点', snap: '人工吸附 · 先选择节点，再选择目标边', delete: '删除 / 简化 · 点击节点或边',
 };
 function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, NodeProperties> { return feature.geometry.type === 'Point'; }
+function edgeLabel(id: { u: string; v: string; key: number }) { return `${id.u}—${id.v} · ${id.key}`; }
 
 interface LayerSettings { base: 'none' | 'osm' | 'satellite'; edges: boolean; parking: boolean; nodes: boolean }
 
@@ -58,7 +59,7 @@ function TopologyPanel({ splitValidation, onSplitValidation }: { splitValidation
   const wb = useWorkbench(), topology = wb.state?.topology;
   const [reviewIndex, setReviewIndex] = useState(-1);
   const nodes = useMemo(() => [...(wb.state?.nodes.features ?? [])].sort((a, b) => a.properties.id.localeCompare(b.properties.id)), [wb.state?.topology_revision]);
-  const showReview = (index: number) => { const feature = nodes[index]; if (!feature) return; setReviewIndex(index); wb.dispatch({ type: 'selected', value: feature }); wb.dispatch({ type: 'status', value: index === nodes.length - 1 ? '已到最后一个节点；这不表示全部复核通过' : `遍历位置 ${index + 1} / ${nodes.length} · 节点 ${feature.properties.node_id}` }); };
+  const showReview = (index: number) => { const feature = nodes[index]; if (!feature) return; setReviewIndex(index); wb.dispatch({ type: 'selected', value: feature }); wb.dispatch({ type: 'status', value: index === nodes.length - 1 ? '已到最后一个节点；这不表示全部复核通过' : `遍历位置 ${index + 1} / ${nodes.length} · 节点 ${feature.properties.id}` }); };
   if (!wb.topologyOpen || !topology) return null;
   const metrics = [['连通分量', topology.component_count], ['最大分量', topology.largest_component], ['孤立节点', topology.isolated_count], ['悬挂节点', topology.dangling_count], ['平行边组', topology.parallel_pair_count]];
   return <aside className="topology-panel panel">
@@ -70,7 +71,7 @@ function TopologyPanel({ splitValidation, onSplitValidation }: { splitValidation
       <h3>悬挂节点</h3><p>{topology.dangling_nodes.slice(0, 20).join('、') || '无'}</p>
       <h3>分量</h3>{topology.components.slice(0, 20).map(component => <button className="secondary-button" key={component.index} onClick={() => { const node = wb.state?.nodes.features.find(item => component.node_ids.includes(item.properties.id)); if (node) wb.dispatch({ type: 'selected', value: node }); }}>分量 {component.index} · {component.size} 节点</button>)}
     </div>
-    <section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.node_id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section>
+    <section className="node-review"><h3>逐点检查</h3><p className="field-note">{reviewIndex >= 0 ? `遍历位置 ${reviewIndex + 1} / ${nodes.length} · 节点 ${nodes[reviewIndex]?.properties.id}` : '尚未开始'}</p><div className="node-review-actions"><button disabled={!nodes.length} onClick={() => showReview(0)}>开始</button><button disabled={reviewIndex <= 0} onClick={() => showReview(reviewIndex - 1)}>上一个</button><button disabled={reviewIndex < 0 || reviewIndex >= nodes.length - 1} onClick={() => showReview(reviewIndex + 1)}>下一个</button><button disabled={reviewIndex < 0} onClick={() => { setReviewIndex(-1); wb.dispatch({ type: 'selected', value: null }); }}>结束</button></div></section>
   </aside>;
 }
 
@@ -78,7 +79,7 @@ function SearchPanel() {
   const wb = useWorkbench(); const [query, setQuery] = useState(''), [stand, setStand] = useState(''), [edgeU, setEdgeU] = useState(''), [edgeV, setEdgeV] = useState('');
   if (!wb.searchOpen || !wb.state) return null;
   const select = (feature: SelectedFeature | undefined, label: string) => { if (feature) wb.dispatch({ type: 'selected', value: feature }); else wb.dispatch({ type: 'status', value: `未找到 ${label}` }); };
-  const search = () => { const needle = query.trim().toLocaleLowerCase(); select(wb.state!.nodes.features.find(item => item.properties.node_id.toLocaleLowerCase().includes(needle)) ?? wb.state!.edges.features.find(item => item.properties.edge_id.toLocaleLowerCase().includes(needle)), query); };
+  const search = () => { const needle = query.trim().toLocaleLowerCase(); select(wb.state!.nodes.features.find(item => item.properties.id.toLocaleLowerCase().includes(needle)) ?? wb.state!.edges.features.find(item => edgeLabel(item.properties.id).toLocaleLowerCase().includes(needle)), query); };
   const searchStand = () => select(wb.state!.edges.features.find(item => String(item.properties.ref ?? '').toLocaleLowerCase() === stand.trim().toLocaleLowerCase()), `机位 ${stand}`);
   const searchEdge = () => { const pair = [edgeU.trim(), edgeV.trim()].sort().join('|'); select(wb.state!.edges.features.find(item => [item.properties.u, item.properties.v].map(String).sort().join('|') === pair), `边 ${edgeU}—${edgeV}`); };
   return <section className="search-panel panel"><div className="panel-heading"><div><small>快速定位</small><h2>搜索图要素</h2></div><button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: false })}>×</button></div><label>节点或边 ID<div className="input-action"><input value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter') search(); }} placeholder="节点 ID 或完整边 ID" /><button onClick={search}>选中</button></div></label><label>机位编号<div className="input-action"><input value={stand} onChange={event => setStand(event.target.value)} placeholder="例如 A01" /><button onClick={searchStand}>定位机位</button></div></label><label>边的两个端点<div className="edge-inputs"><input value={edgeU} onChange={event => setEdgeU(event.target.value)} placeholder="端点 A" /><span>—</span><input value={edgeV} onChange={event => setEdgeV(event.target.value)} placeholder="端点 B" /><button onClick={searchEdge}>选中边</button></div></label></section>;
@@ -96,7 +97,7 @@ function FeatureDetails() {
     await wb.runGraphCommand(node ? '/api/update-node' : '/api/update-edge', body);
     wb.dispatch({ type: 'selected', value: null });
   };
-  return <aside className="details panel"><button className="panel-close" onClick={() => wb.dispatch({ type: 'selected', value: null })}>×</button><div className="details-content"><small>{node ? '节点' : '边'}</small><h2>{node ? feature.properties.node_id : feature.properties.edge_id}</h2><dl>{Object.entries(feature.properties).filter(([key]) => !['editable_attributes', 'id'].includes(key)).slice(0, 12).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value ?? '—')}</dd></div>)}</dl>{wb.state?.capabilities.can_edit_graph && <div className="property-form"><label>aeroway<input value={aeroway} onChange={event => setAeroway(event.target.value)} /></label><label>name<input value={name} onChange={event => setName(event.target.value)} /></label><label>ref<input value={ref} onChange={event => setRef(event.target.value)} /></label><button className="primary-button" onClick={() => void save()}>保存属性</button></div>}</div></aside>;
+  return <aside className="details panel"><button className="panel-close" onClick={() => wb.dispatch({ type: 'selected', value: null })}>×</button><div className="details-content"><small>{node ? '节点' : '边'}</small><h2>{node ? feature.properties.id : edgeLabel(feature.properties.id)}</h2><dl>{Object.entries(feature.properties).filter(([key]) => !['editable_attributes', 'id'].includes(key)).slice(0, 12).map(([key, value]) => <div key={key}><dt>{key}</dt><dd>{String(value ?? '—')}</dd></div>)}</dl>{wb.state?.capabilities.can_edit_graph && <div className="property-form"><label>aeroway<input value={aeroway} onChange={event => setAeroway(event.target.value)} /></label><label>name<input value={name} onChange={event => setName(event.target.value)} /></label><label>ref<input value={ref} onChange={event => setRef(event.target.value)} /></label><button className="primary-button" onClick={() => void save()}>保存属性</button></div>}</div></aside>;
 }
 
 function ObservationView({ detail }: { detail: FlightDetail | null }) {

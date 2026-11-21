@@ -51,7 +51,7 @@ def test_topology_details_locate_components_parallel_edges_and_isolated_nodes() 
     assert isolated["properties"]["node_type"] == "unclassified"
     assert isolated["properties"]["id"] == "3"
     edge = state["edges"]["features"][0]["properties"]
-    assert {edge["u_id"], edge["v_id"]} == {"1", "2"}
+    assert {edge["u"], edge["v"]} == {"1", "2"}
 
 
 def test_validation_colors_differ_for_incident_edges() -> None:
