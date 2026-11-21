@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Sequence
+from typing import Any
 
 from shapely.geometry import LineString, Point, mapping
 
@@ -70,11 +70,3 @@ def path_geojson(path: Path, index: int = 0, *, flight_key: str | None = None) -
             }
         )
     return {"type": "FeatureCollection", "features": features}
-
-
-def serialize_flights(flights: Sequence[Flight]) -> list[dict[str, Any]]:
-    return [flight_geojson(flight, index) for index, flight in enumerate(flights)]
-
-
-def serialize_paths(paths: Sequence[Path]) -> list[dict[str, Any]]:
-    return [path_geojson(path, index) for index, path in enumerate(paths)]

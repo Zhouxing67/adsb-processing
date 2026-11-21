@@ -128,12 +128,9 @@ class WorkbenchCapabilities(ApiModel):
 class WorkbenchStateResponse(ApiModel):
     nodes: NodeFeatureCollection
     edges: EdgeFeatureCollection
-    flights: list[GeoJsonFeatureCollection]
-    paths: list[GeoJsonFeatureCollection]
     node_count: int
     edge_count: int
     flight_count: int
-    path_count: int
     topology: TopologySummary
     can_undo: bool
     can_finish: bool

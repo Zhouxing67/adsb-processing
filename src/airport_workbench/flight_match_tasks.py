@@ -14,18 +14,6 @@ from flight import Flight
 from path_map import BatchStats, MatchConfig, Matcher, MatchOutcome, Path, match_batch
 
 
-def _graph_identity(airport_graph: AirportGraph) -> str:
-    """Return a content identity, including for small graph doubles used by embedders."""
-    try:
-        return graph_id(airport_graph)
-    except AttributeError:
-        graph = getattr(airport_graph, "graph", None)
-        if graph is None:
-            return hashlib.sha256(type(airport_graph).__qualname__.encode()).hexdigest()
-        content = (list(graph.nodes(data=True)), list(graph.edges(keys=True, data=True)))
-        return hashlib.sha256(repr(content).encode()).hexdigest()
-
-
 @dataclass(slots=True)
 class MatchResultItem:
     flight_key: str
@@ -66,30 +54,23 @@ class MatchTask:
 
 
 class FlightMatchTasks:
-    """Own match results, graph revisions and the serial matching worker."""
+    """Own match results and the serial matching worker for one immutable graph."""
 
     def __init__(
         self,
         flight_keys: Iterable[str],
         load_flight: Callable[[str], Flight],
         *,
-        graph_provider: Callable[[], AirportGraph],
-        revision_provider: Callable[[], Any] | None,
-        graph_lock: Any,
+        airport_graph: AirportGraph,
         lock: Any,
         config: MatchConfig,
         paths: Mapping[str, Path],
     ) -> None:
         self.load_flight = load_flight
-        self.graph_provider = graph_provider
-        self.revision_provider = revision_provider or (
-            lambda: _graph_identity(self.graph_provider())
-        )
-        self.graph_lock = graph_lock
         self.lock = lock
         self.match_config = config
-        self._revision = self.revision_provider()
-        self.graph_id = _graph_identity(self.graph_provider())
+        self.graph_id = graph_id(airport_graph)
+        self.matcher = Matcher(airport_graph, self.match_config)
         self._closing = False
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flight-match")
         self.tasks: dict[str, MatchTask] = {}
@@ -117,40 +98,15 @@ class FlightMatchTasks:
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
 
-    def sync_graph(self) -> str:
-        """Invalidate results whenever the mutable graph content changes."""
-        with self.graph_lock:
-            revision = self.revision_provider()
-            if revision == self._revision:
-                return self.graph_id
-            current = _graph_identity(self.graph_provider())
-        with self.lock:
-            if current == self.graph_id:
-                self._revision = revision
-                return current
-            self._revision = revision
-            self.graph_id = current
-            for result in self.results.values():
-                if result.status != "unmatched":
-                    result.status = "stale"
-                    result.path = None
-                    result.error = "机场图已变更；结果基于旧图快照，需重新匹配"
-                    result.error_kind = "stale_graph"
-                    result.failure_type = "stale_graph"
-                    result.updated_at = self._now()
-                    self._snapshot_task_result(
-                        result.flight_key, result.task_id, only_if_active=True
-                    )
-            return current
-
     def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
         keys = list(dict.fromkeys(flight_keys))
         if not keys:
             raise ValueError("至少选择一条航班")
         if any(key not in self.results for key in keys):
             raise KeyError("未知 flight_key")
-        snapshot_id = self.sync_graph()
-        task_id = hashlib.sha256(f"{snapshot_id}:{keys}:{self._now()}".encode()).hexdigest()[:20]
+        task_id = hashlib.sha256(
+            f"{self.graph_id}:{keys}:{self._now()}".encode()
+        ).hexdigest()[:20]
         config = asdict(self.match_config)
         pending = []
         skipped: list[dict[str, str]] = []
@@ -165,13 +121,13 @@ class FlightMatchTasks:
                 cache_hit = (
                     not force
                     and result.status == "success"
-                    and result.graph_id == snapshot_id
+                    and result.graph_id == self.graph_id
                     and result.config == config
                 )
                 if cache_hit:
                     skipped.append({"flight_key": key, "reason": "current_success"})
                     continue
-                result.graph_id = snapshot_id
+                result.graph_id = self.graph_id
                 result.config = config
                 result.status = "queued"
                 result.path = None
@@ -189,7 +145,7 @@ class FlightMatchTasks:
                 {key: self.results[key].public() for key in pending},
             )
             if pending:
-                self.executor.submit(self._run, task_id, snapshot_id, tuple(pending))
+                self.executor.submit(self._run, task_id, tuple(pending))
         return {
             "task_id": task_id,
             "requested_count": len(keys),
@@ -201,7 +157,6 @@ class FlightMatchTasks:
 
     def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
         """Return compact progress without catalogue rows or geometry."""
-        self.sync_graph()
         wanted = set(task_ids or ())
         with self.lock:
             tasks = [
@@ -225,49 +180,33 @@ class FlightMatchTasks:
                 )
         return {"graph_id": self.graph_id, "tasks": payload, "progress": total_stats.progress()}
 
-    def _run(self, task_id: str, snapshot_id: str, keys: tuple[str, ...]) -> None:
-        # The matcher is built for this graph version once per submitted batch.
-        try:
-            with self.graph_lock, self.lock:
-                if self._closing:
-                    return
-                if self.sync_graph() != snapshot_id:
-                    self.sync_graph()
-                    return
-                matcher = Matcher(self.graph_provider().copy(), self.match_config)
-        except Exception as error:  # infrastructure/initialisation failure, not a normal mismatch
-            self._fail_pending(keys, task_id, f"匹配器异常：{type(error).__name__}: {error}")
-            return
-        inputs = self._batch_inputs(task_id, snapshot_id, keys)
-        for outcome in match_batch(matcher, inputs, capture_system_errors=True):
-            self._complete(task_id, snapshot_id, outcome)
+    def _run(self, task_id: str, keys: tuple[str, ...]) -> None:
+        inputs = self._batch_inputs(task_id, keys)
+        for outcome in match_batch(self.matcher, inputs, capture_system_errors=True):
+            self._complete(task_id, outcome)
 
     def _batch_inputs(
         self,
         task_id: str,
-        snapshot_id: str,
         keys: tuple[str, ...],
     ) -> Iterable[tuple[str, Callable[[], Flight]]]:
         for key in keys:
-            with self.graph_lock, self.lock:
+            with self.lock:
                 if self._closing:
                     return
                 result = self.results[key]
-                if result.task_id != task_id or self.sync_graph() != snapshot_id:
+                if result.task_id != task_id:
                     continue
                 result.status = "matching"
                 result.updated_at = self._now()
                 self._snapshot_task_result(key, task_id)
             yield key, partial(self.load_flight, key)
 
-    def _complete(self, task_id: str, snapshot_id: str, outcome: MatchOutcome) -> None:
+    def _complete(self, task_id: str, outcome: MatchOutcome) -> None:
         key = outcome.key
-        with self.graph_lock, self.lock:
+        with self.lock:
             result = self.results[key]
             if result.task_id != task_id:
-                return
-            if self.sync_graph() != snapshot_id:
-                self.sync_graph()
                 return
             result.status = outcome.status
             result.path = outcome.path
@@ -290,14 +229,10 @@ class FlightMatchTasks:
                     result.updated_at = self._now()
                     self._snapshot_task_result(key, task_id)
 
-    def _snapshot_task_result(
-        self, key: str, task_id: str | None, *, only_if_active: bool = False
-    ) -> None:
+    def _snapshot_task_result(self, key: str, task_id: str | None) -> None:
         """Copy the latest flight result into its owning task's immutable history."""
         if task_id is None:
             return
         task = self.tasks.get(task_id)
         if task is not None and key in task.results:
-            if only_if_active and task.results[key]["status"] not in {"queued", "matching"}:
-                return
             task.results[key] = self.results[key].public()

@@ -388,64 +388,6 @@
         "title": "ErrorResponse",
         "type": "object"
       },
-      "GeoJsonFeature": {
-        "additionalProperties": false,
-        "properties": {
-          "geometry": {
-            "anyOf": [
-              {
-                "$ref": "#/components/schemas/PointGeometry"
-              },
-              {
-                "$ref": "#/components/schemas/LineStringGeometry"
-              }
-            ],
-            "title": "Geometry"
-          },
-          "properties": {
-            "additionalProperties": {
-              "$ref": "#/components/schemas/JsonValue"
-            },
-            "title": "Properties",
-            "type": "object"
-          },
-          "type": {
-            "const": "Feature",
-            "default": "Feature",
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "geometry",
-          "properties"
-        ],
-        "title": "GeoJsonFeature",
-        "type": "object"
-      },
-      "GeoJsonFeatureCollection": {
-        "additionalProperties": false,
-        "properties": {
-          "features": {
-            "items": {
-              "$ref": "#/components/schemas/GeoJsonFeature"
-            },
-            "title": "Features",
-            "type": "array"
-          },
-          "type": {
-            "const": "FeatureCollection",
-            "default": "FeatureCollection",
-            "title": "Type",
-            "type": "string"
-          }
-        },
-        "required": [
-          "features"
-        ],
-        "title": "GeoJsonFeatureCollection",
-        "type": "object"
-      },
       "GraphCommandResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1637,30 +1579,12 @@
             "title": "Flight Mode",
             "type": "boolean"
           },
-          "flights": {
-            "items": {
-              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
-            },
-            "title": "Flights",
-            "type": "array"
-          },
           "node_count": {
             "title": "Node Count",
             "type": "integer"
           },
           "nodes": {
             "$ref": "#/components/schemas/NodeFeatureCollection"
-          },
-          "path_count": {
-            "title": "Path Count",
-            "type": "integer"
-          },
-          "paths": {
-            "items": {
-              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
-            },
-            "title": "Paths",
-            "type": "array"
           },
           "revision": {
             "title": "Revision",
@@ -1681,12 +1605,9 @@
         "required": [
           "nodes",
           "edges",
-          "flights",
-          "paths",
           "node_count",
           "edge_count",
           "flight_count",
-          "path_count",
           "topology",
           "can_undo",
           "can_finish",

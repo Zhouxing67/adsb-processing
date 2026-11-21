@@ -1089,11 +1089,6 @@ body.read-only:not(.flight-mode):has(#details:not(.hidden):not(.property-popup))
   color: #176b87;
 }
 
-.flight-status.stale {
-  background: #fff2da;
-  color: #8a5700;
-}
-
 .flight-row-meta {
   display: flex;
 }

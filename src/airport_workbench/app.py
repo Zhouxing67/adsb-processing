@@ -2,17 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
-import threading
-import time
-import webbrowser
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Mapping, Sequence
 
 import networkx as nx
-import uvicorn
 from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
@@ -22,10 +17,7 @@ from shapely.geometry import LineString, mapping
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from airport_surface import edge_source_segments
-from airport_surface.graph import (
-    DEFAULT_GRAPH_PATH,
-    load_graph,
-)
+from airport_surface.graph import DEFAULT_GRAPH_PATH
 from flight import Flight
 from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
@@ -57,7 +49,6 @@ from .api_models import (
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import CataloguePageOutOfRange, FlightFilter, FlightWorkbench
 from .identifiers import EdgeIdentity, NodeIdField
-from .serializers import serialize_flights, serialize_paths
 
 if TYPE_CHECKING:
     from path_map import Path
@@ -172,15 +163,8 @@ def _flight_filter(item: FlightFilterRequest) -> FlightFilter:
 
 
 class BrowserState:
-    def __init__(
-        self,
-        session: EditorSession,
-        flights: Sequence[Flight] = (),
-        paths: Sequence[Path] = (),
-    ) -> None:
+    def __init__(self, session: EditorSession) -> None:
         self.session = session
-        self.flights = tuple(flights)
-        self.paths = tuple(paths)
 
     def state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
         with self.session.lock:
@@ -292,12 +276,9 @@ class BrowserState:
         return {
             "nodes": {"type": "FeatureCollection", "features": node_features},
             "edges": {"type": "FeatureCollection", "features": edge_features},
-            "flights": serialize_flights(self.flights),
-            "paths": serialize_paths(self.paths),
             "node_count": graph.number_of_nodes(),
             "edge_count": graph.number_of_edges(),
-            "flight_count": len(self.flights),
-            "path_count": len(self.paths),
+            "flight_count": 0,
             "topology": {
                 "component_count": len(components),
                 "largest_component": max((len(item) for item in components), default=0),
@@ -363,9 +344,6 @@ def create_app(
             match_config=match_config,
             input_time_semantics=input_time_semantics,
             display_timezone=display_timezone,
-            graph_lock=session.lock,
-            graph_provider=lambda: session.airport_graph,
-            revision_provider=lambda: getattr(session, "revision", 0),
         )
         if not flight_workbench.items:
             flight_workbench.close()
@@ -462,11 +440,7 @@ def create_app(
             "can_match": flight_mode,
         }
         if flight_workbench is not None:
-            flight_workbench.sync_graph()
             value["flight_count"] = len(flight_workbench.items)
-            value["path_count"] = sum(
-                result.status == "success" for result in flight_workbench.results.values()
-            )
         return WorkbenchStateResponse.model_validate(value)
 
     @flight_routes.get("/api/flights")
@@ -820,19 +794,3 @@ def create_app(
 
     mount_frontend(app)
     return app
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser(description="Start the airport workbench.")
-    parser.add_argument("--graph", type=FilePath, default=DEFAULT_GRAPH_PATH)
-    parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8765)
-    parser.add_argument("--no-browser", action="store_true")
-    args = parser.parse_args()
-
-    graph = load_graph(args.graph)
-    session = EditorSession(graph)
-    if not args.no_browser:
-        url = f"http://{args.host}:{args.port}/?session={time.time_ns()}"
-        threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    uvicorn.run(create_app(session, args.graph), host=args.host, port=args.port)

@@ -638,15 +638,9 @@ export interface components {
             flight_count: number;
             /** Flight Mode */
             flight_mode: boolean;
-            /** Flights */
-            flights: components["schemas"]["GeoJsonFeatureCollection"][];
             /** Node Count */
             node_count: number;
             nodes: components["schemas"]["NodeFeatureCollection"];
-            /** Path Count */
-            path_count: number;
-            /** Paths */
-            paths: components["schemas"]["GeoJsonFeatureCollection"][];
             /** Revision */
             revision: number;
             /** Save Path */

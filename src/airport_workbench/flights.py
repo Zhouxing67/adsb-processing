@@ -7,7 +7,7 @@ import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
 from math import ceil
-from typing import Any, Callable, Iterable, Mapping, Sequence
+from typing import Any, Iterable, Mapping, Sequence
 from zoneinfo import ZoneInfo
 
 from airport_surface import AirportGraph
@@ -20,7 +20,7 @@ from utils.json_value import to_json_value
 from .flight_match_tasks import FlightMatchTasks, MatchResultItem
 from .serializers import flight_geojson, path_geojson
 
-MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed", "stale"}
+MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed"}
 MAX_MAP_FLIGHTS = 10
 BUSINESS_FIELD_NAMES = {
     "flight_id",
@@ -143,9 +143,6 @@ class FlightWorkbench:
         input_time_semantics: str = "UTC",
         display_timezone: str = "UTC",
         flight_database: FlightDatabase | None = None,
-        graph_lock: Any | None = None,
-        graph_provider: Callable[[], AirportGraph] | None = None,
-        revision_provider: Callable[[], Any] | None = None,
     ) -> None:
         self.airport_graph = airport_graph
         self.match_config = match_config or MatchConfig()
@@ -211,9 +208,7 @@ class FlightWorkbench:
         self.match_tasks = FlightMatchTasks(
             self.items,
             self._flight,
-            graph_provider=graph_provider or (lambda: self.airport_graph),
-            revision_provider=revision_provider,
-            graph_lock=graph_lock or self.lock,
+            airport_graph=self.airport_graph,
             lock=self.lock,
             config=self.match_config,
             paths=paths_by_flight_key or {},
@@ -226,9 +221,6 @@ class FlightWorkbench:
 
     def close(self) -> None:
         self.match_tasks.close()
-
-    def sync_graph(self) -> str:
-        return self.match_tasks.sync_graph()
 
     def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
         return self.match_tasks.submit(flight_keys, force=force)
@@ -259,7 +251,6 @@ class FlightWorkbench:
         page: int = 1,
         page_size: int = 20,
     ) -> dict[str, Any]:
-        self.sync_graph()
         if page < 1 or page_size < 1 or page_size > 100:
             raise ValueError("page must be >= 1 and page_size must be between 1 and 100")
         filters = filters.validate(
@@ -315,7 +306,6 @@ class FlightWorkbench:
         filters: FlightFilter = FlightFilter(),
     ) -> dict[str, Any]:
         """Return the fixed key set matching the currently committed filters."""
-        self.sync_graph()
         filters = filters.validate(
             self.dataset_max_points,
             supports_validation=self.flight_database is not None,
@@ -403,10 +393,9 @@ class FlightWorkbench:
 
     def geometry(self, flight_key: str) -> dict[str, Any]:
         flight = self._flight(flight_key)
-        current_graph_id = self.sync_graph()
         with self.lock:
             result = self.results[flight_key]
-            valid = result.status == "success" and result.graph_id == current_graph_id
+            valid = result.status == "success" and result.graph_id == self.match_tasks.graph_id
             path = result.path if valid else None
             return {
                 "flight_key": flight_key,

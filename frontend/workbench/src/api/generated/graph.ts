@@ -481,32 +481,6 @@ export interface components {
         ErrorResponse: {
             detail: components["schemas"]["ErrorDetail"];
         };
-        /** GeoJsonFeature */
-        GeoJsonFeature: {
-            /** Geometry */
-            geometry: components["schemas"]["PointGeometry"] | components["schemas"]["LineStringGeometry"];
-            /** Properties */
-            properties: {
-                [key: string]: components["schemas"]["JsonValue"];
-            };
-            /**
-             * Type
-             * @default Feature
-             * @constant
-             */
-            type: "Feature";
-        };
-        /** GeoJsonFeatureCollection */
-        GeoJsonFeatureCollection: {
-            /** Features */
-            features: components["schemas"]["GeoJsonFeature"][];
-            /**
-             * Type
-             * @default FeatureCollection
-             * @constant
-             */
-            type: "FeatureCollection";
-        };
         /** GraphCommandResponse */
         GraphCommandResponse: {
             /** Message */
@@ -926,15 +900,9 @@ export interface components {
             flight_count: number;
             /** Flight Mode */
             flight_mode: boolean;
-            /** Flights */
-            flights: components["schemas"]["GeoJsonFeatureCollection"][];
             /** Node Count */
             node_count: number;
             nodes: components["schemas"]["NodeFeatureCollection"];
-            /** Path Count */
-            path_count: number;
-            /** Paths */
-            paths: components["schemas"]["GeoJsonFeatureCollection"][];
             /** Revision */
             revision: number;
             /** Save Path */

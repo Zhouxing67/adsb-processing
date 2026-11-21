@@ -81,7 +81,7 @@ class BatchStats:
     ) -> None:
         self.counts[status] += 1
         self.matching_seconds += elapsed_seconds
-        if status in {"failed", "stale"}:
+        if status == "failed":
             self.failures[failure_type or status] += 1
 
     def merge(self, other: BatchStats) -> None:
@@ -91,7 +91,7 @@ class BatchStats:
 
     def summary(self) -> dict:
         matched = self.counts["success"]
-        failed = self.counts["failed"] + self.counts["stale"]
+        failed = self.counts["failed"]
         completed = matched + failed
         return {
             "total_flights": self.counts.total(),

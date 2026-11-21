@@ -1,6 +1,6 @@
 """Compatibility entry point for :mod:`airport_workbench`."""
 
-from airport_workbench.app import main
+from airport_workbench.server import main
 
 if __name__ == "__main__":
     main()

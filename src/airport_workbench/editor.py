@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import threading
-import time
-import webbrowser
 from contextlib import contextmanager
 from copy import deepcopy
 from dataclasses import dataclass
@@ -13,7 +10,7 @@ from itertools import combinations
 from math import acos, degrees, isfinite
 from pathlib import Path as FilePath
 from threading import RLock
-from typing import TYPE_CHECKING, Any, Callable, Generic, Mapping, ParamSpec, Sequence, TypeVar
+from typing import Any, Callable, Generic, ParamSpec, Sequence, TypeVar
 
 import networkx as nx
 from shapely.geometry import LineString, Point, mapping
@@ -27,7 +24,6 @@ from airport_surface import (
     mutable_source_attributes,
 )
 from airport_surface.graph import (
-    DEFAULT_GRAPH_PATH,
     apply_source_segments,
     compact_source_segments,
     geometry_from_source_interval,
@@ -39,11 +35,6 @@ from airport_surface.graph import (
     validate_edge_sources,
 )
 from airport_surface.source_chain import split_source_chain
-from flight import Flight
-from flight.flight_repository import FlightDatabase
-
-if TYPE_CHECKING:
-    from path_map import Path
 
 MANUAL_SOURCE_TOLERANCE_M = 0.5
 MERGE_CANDIDATE_TOLERANCE_M = 0.5
@@ -1285,85 +1276,3 @@ class EditorSession:
             if start_m - 1e-3 <= station <= end_m + 1e-3:
                 result.append(node_id)
         return tuple(result)
-
-
-def _serve_workbench(
-    airport_graph: AirportGraph,
-    *,
-    flights: Sequence[Flight] = (),
-    paths_by_flight_key: Mapping[str, Path] | None = None,
-    save_path: str | FilePath = DEFAULT_GRAPH_PATH,
-    host: str = "127.0.0.1",
-    port: int = 8765,
-    open_browser: bool = True,
-    match_config: Any | None = None,
-    flight_sources: Sequence[str] | None = None,
-    movement_types: Sequence[str] | None = None,
-    input_time_semantics: str = "UTC",
-    display_timezone: str = "UTC",
-    flight_database: FlightDatabase | None = None,
-) -> AirportGraph:
-    """Serve the shared workbench UI with graph-editing or flight capabilities."""
-    import uvicorn
-
-    from .app import create_app
-
-    session = EditorSession(airport_graph)
-    server: uvicorn.Server
-
-    def finish() -> None:
-        threading.Timer(0.2, setattr, args=(server, "should_exit", True)).start()
-
-    app = create_app(
-        session,
-        FilePath(save_path),
-        on_finish=finish,
-        flights=flights,
-        paths_by_flight_key=paths_by_flight_key,
-        match_config=match_config,
-        flight_sources=flight_sources,
-        movement_types=movement_types,
-        input_time_semantics=input_time_semantics,
-        display_timezone=display_timezone,
-        flight_database=flight_database,
-    )
-    server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
-    if open_browser:
-        url = f"http://{host}:{port}/?session={time.time_ns()}"
-        threading.Timer(1.0, webbrowser.open, args=(url,)).start()
-    server.run()
-    return session.airport_graph
-
-
-def open_workbench(
-    airport_graph: AirportGraph,
-    *,
-    flights: Sequence[Flight] = (),
-    paths_by_flight_key: Mapping[str, Path] | None = None,
-    save_path: str | FilePath = DEFAULT_GRAPH_PATH,
-    host: str = "127.0.0.1",
-    port: int = 8765,
-    open_browser: bool = True,
-    match_config: Any | None = None,
-    flight_sources: Sequence[str] | None = None,
-    movement_types: Sequence[str] | None = None,
-    input_time_semantics: str = "UTC",
-    display_timezone: str = "UTC",
-    flight_database: FlightDatabase | None = None,
-) -> AirportGraph:
-    """Open the editable workbench and block until it is stopped or finished."""
-    return _serve_workbench(
-        airport_graph,
-        flights=flights,
-        paths_by_flight_key=paths_by_flight_key,
-        save_path=save_path,
-        host=host,
-        port=port,
-        open_browser=open_browser,
-        match_config=match_config,
-        flight_sources=flight_sources,
-        movement_types=movement_types,
-        input_time_semantics=input_time_semantics,
-        display_timezone=display_timezone,
-        flight_database=flight_database,
-    )

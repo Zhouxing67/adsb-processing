@@ -1467,30 +1467,12 @@
             "title": "Flight Mode",
             "type": "boolean"
           },
-          "flights": {
-            "items": {
-              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
-            },
-            "title": "Flights",
-            "type": "array"
-          },
           "node_count": {
             "title": "Node Count",
             "type": "integer"
           },
           "nodes": {
             "$ref": "#/components/schemas/NodeFeatureCollection"
-          },
-          "path_count": {
-            "title": "Path Count",
-            "type": "integer"
-          },
-          "paths": {
-            "items": {
-              "$ref": "#/components/schemas/GeoJsonFeatureCollection"
-            },
-            "title": "Paths",
-            "type": "array"
           },
           "revision": {
             "title": "Revision",
@@ -1511,12 +1493,9 @@
         "required": [
           "nodes",
           "edges",
-          "flights",
-          "paths",
           "node_count",
           "edge_count",
           "flight_count",
-          "path_count",
           "topology",
           "can_undo",
           "can_finish",
