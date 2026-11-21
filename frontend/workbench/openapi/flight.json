@@ -229,6 +229,404 @@
         "title": "ErrorResponse",
         "type": "object"
       },
+      "FlightCatalogueItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "can_edit_stand": {
+            "title": "Can Edit Stand",
+            "type": "boolean"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "string"
+          },
+          "flight_id": {
+            "title": "Flight Id",
+            "type": "string"
+          },
+          "flight_key": {
+            "title": "Flight Key",
+            "type": "string"
+          },
+          "flight_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flight Number"
+          },
+          "inconsistent_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inconsistent Fields",
+            "type": "array"
+          },
+          "match": {
+            "$ref": "#/components/schemas/MatchResultResponse"
+          },
+          "movement_type": {
+            "title": "Movement Type",
+            "type": "string"
+          },
+          "point_count": {
+            "title": "Point Count",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "stand_position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stand Position"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_key",
+          "source",
+          "flight_id",
+          "flight_number",
+          "movement_type",
+          "start_time",
+          "end_time",
+          "point_count",
+          "inconsistent_fields",
+          "stand_position",
+          "can_edit_stand",
+          "match"
+        ],
+        "title": "FlightCatalogueItemResponse",
+        "type": "object"
+      },
+      "FlightCatalogueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "dataset_max_points": {
+            "title": "Dataset Max Points",
+            "type": "integer"
+          },
+          "graph_id": {
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/FlightCatalogueItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "max_map_flights": {
+            "title": "Max Map Flights",
+            "type": "integer"
+          },
+          "max_points": {
+            "title": "Max Points",
+            "type": "integer"
+          },
+          "min_points": {
+            "title": "Min Points",
+            "type": "integer"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "stand_options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stand Options",
+            "type": "array"
+          },
+          "supports_validation_filter": {
+            "title": "Supports Validation Filter",
+            "type": "boolean"
+          },
+          "time": {
+            "$ref": "#/components/schemas/TimeDisplayResponse"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "stand_options",
+          "supports_validation_filter",
+          "total",
+          "total_pages",
+          "page",
+          "page_size",
+          "dataset_max_points",
+          "min_points",
+          "max_points",
+          "max_map_flights",
+          "graph_id",
+          "time"
+        ],
+        "title": "FlightCatalogueResponse",
+        "type": "object"
+      },
+      "FlightDetailResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "all_fields": {
+            "title": "All Fields",
+            "type": "boolean"
+          },
+          "fields": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Fields",
+            "type": "object"
+          },
+          "inconsistent_fields": {
+            "additionalProperties": {
+              "items": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "array"
+            },
+            "title": "Inconsistent Fields",
+            "type": "object"
+          },
+          "match": {
+            "$ref": "#/components/schemas/MatchResultResponse"
+          },
+          "observation_columns": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Observation Columns",
+            "type": "array"
+          },
+          "observation_page": {
+            "title": "Observation Page",
+            "type": "integer"
+          },
+          "observation_page_size": {
+            "title": "Observation Page Size",
+            "type": "integer"
+          },
+          "observation_pages": {
+            "title": "Observation Pages",
+            "type": "integer"
+          },
+          "observation_total": {
+            "title": "Observation Total",
+            "type": "integer"
+          },
+          "observations": {
+            "items": {
+              "additionalProperties": {
+                "$ref": "#/components/schemas/JsonValue"
+              },
+              "type": "object"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/FlightSummaryResponse"
+          }
+        },
+        "required": [
+          "summary",
+          "fields",
+          "inconsistent_fields",
+          "observations",
+          "observation_columns",
+          "observation_page",
+          "observation_pages",
+          "observation_total",
+          "observation_page_size",
+          "all_fields",
+          "match"
+        ],
+        "title": "FlightDetailResponse",
+        "type": "object"
+      },
+      "FlightGeometryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "flight": {
+            "$ref": "#/components/schemas/GeoJsonFeatureCollection"
+          },
+          "flight_key": {
+            "title": "Flight Key",
+            "type": "string"
+          },
+          "match": {
+            "$ref": "#/components/schemas/MatchResultResponse"
+          },
+          "path": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/GeoJsonFeatureCollection"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "flight_key",
+          "flight",
+          "path",
+          "match"
+        ],
+        "title": "FlightGeometryResponse",
+        "type": "object"
+      },
+      "FlightSelectionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "flight_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flight Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "flight_keys",
+          "count"
+        ],
+        "title": "FlightSelectionResponse",
+        "type": "object"
+      },
+      "FlightSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "can_edit_stand": {
+            "title": "Can Edit Stand",
+            "type": "boolean"
+          },
+          "end_time": {
+            "title": "End Time",
+            "type": "string"
+          },
+          "flight_id": {
+            "title": "Flight Id",
+            "type": "string"
+          },
+          "flight_key": {
+            "title": "Flight Key",
+            "type": "string"
+          },
+          "flight_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "integer"
+              },
+              {
+                "type": "number"
+              },
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flight Number"
+          },
+          "inconsistent_fields": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Inconsistent Fields",
+            "type": "array"
+          },
+          "movement_type": {
+            "title": "Movement Type",
+            "type": "string"
+          },
+          "point_count": {
+            "title": "Point Count",
+            "type": "integer"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "stand_position": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stand Position"
+          },
+          "start_time": {
+            "title": "Start Time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_key",
+          "source",
+          "flight_id",
+          "flight_number",
+          "movement_type",
+          "start_time",
+          "end_time",
+          "point_count",
+          "inconsistent_fields",
+          "stand_position",
+          "can_edit_stand"
+        ],
+        "title": "FlightSummaryResponse",
+        "type": "object"
+      },
       "GeoJsonFeature": {
         "additionalProperties": false,
         "properties": {
@@ -337,6 +735,361 @@
           }
         },
         "title": "MatchFlightsRequest",
+        "type": "object"
+      },
+      "MatchProgressResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "running": {
+            "title": "Running",
+            "type": "integer"
+          },
+          "success": {
+            "title": "Success",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MatchSummaryResponse"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "waiting": {
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "waiting",
+          "running",
+          "success",
+          "failed",
+          "complete",
+          "summary"
+        ],
+        "title": "MatchProgressResponse",
+        "type": "object"
+      },
+      "MatchResultResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Config",
+            "type": "object"
+          },
+          "elapsed_seconds": {
+            "title": "Elapsed Seconds",
+            "type": "number"
+          },
+          "error": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error"
+          },
+          "error_kind": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Kind"
+          },
+          "failure_type": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Failure Type"
+          },
+          "flight_key": {
+            "title": "Flight Key",
+            "type": "string"
+          },
+          "graph_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Graph Id"
+          },
+          "has_path": {
+            "title": "Has Path",
+            "type": "boolean"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "task_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Task Id"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "flight_key",
+          "graph_id",
+          "config",
+          "status",
+          "error",
+          "error_kind",
+          "failure_type",
+          "elapsed_seconds",
+          "task_id",
+          "updated_at",
+          "has_path"
+        ],
+        "title": "MatchResultResponse",
+        "type": "object"
+      },
+      "MatchSkippedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "flight_key": {
+            "title": "Flight Key",
+            "type": "string"
+          },
+          "reason": {
+            "title": "Reason",
+            "type": "string"
+          }
+        },
+        "required": [
+          "flight_key",
+          "reason"
+        ],
+        "title": "MatchSkippedResponse",
+        "type": "object"
+      },
+      "MatchStatusResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "graph_id": {
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "progress": {
+            "$ref": "#/components/schemas/MatchProgressResponse"
+          },
+          "tasks": {
+            "items": {
+              "$ref": "#/components/schemas/MatchTaskResponse"
+            },
+            "title": "Tasks",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graph_id",
+          "tasks",
+          "progress"
+        ],
+        "title": "MatchStatusResponse",
+        "type": "object"
+      },
+      "MatchSubmissionResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "queued": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Queued",
+            "type": "array"
+          },
+          "queued_count": {
+            "title": "Queued Count",
+            "type": "integer"
+          },
+          "requested_count": {
+            "title": "Requested Count",
+            "type": "integer"
+          },
+          "skipped": {
+            "items": {
+              "$ref": "#/components/schemas/MatchSkippedResponse"
+            },
+            "title": "Skipped",
+            "type": "array"
+          },
+          "skipped_count": {
+            "title": "Skipped Count",
+            "type": "integer"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "task_id",
+          "requested_count",
+          "queued",
+          "queued_count",
+          "skipped",
+          "skipped_count"
+        ],
+        "title": "MatchSubmissionResponse",
+        "type": "object"
+      },
+      "MatchSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "failed_flights": {
+            "title": "Failed Flights",
+            "type": "integer"
+          },
+          "failure_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Failure Counts",
+            "type": "object"
+          },
+          "matched_flights": {
+            "title": "Matched Flights",
+            "type": "integer"
+          },
+          "matching_seconds": {
+            "title": "Matching Seconds",
+            "type": "number"
+          },
+          "success_rate": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Success Rate"
+          },
+          "total_flights": {
+            "title": "Total Flights",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total_flights",
+          "matched_flights",
+          "failed_flights",
+          "success_rate",
+          "failure_counts",
+          "matching_seconds"
+        ],
+        "title": "MatchSummaryResponse",
+        "type": "object"
+      },
+      "MatchTaskResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "flight_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flight Keys",
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/MatchResultResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "running": {
+            "title": "Running",
+            "type": "integer"
+          },
+          "success": {
+            "title": "Success",
+            "type": "integer"
+          },
+          "summary": {
+            "$ref": "#/components/schemas/MatchSummaryResponse"
+          },
+          "task_id": {
+            "title": "Task Id",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "waiting": {
+            "title": "Waiting",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "waiting",
+          "running",
+          "success",
+          "failed",
+          "complete",
+          "summary",
+          "task_id",
+          "flight_keys",
+          "items"
+        ],
+        "title": "MatchTaskResponse",
         "type": "object"
       },
       "NodeFeature": {
@@ -527,6 +1280,25 @@
           "coordinates"
         ],
         "title": "PointGeometry",
+        "type": "object"
+      },
+      "TimeDisplayResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "display_timezone": {
+            "title": "Display Timezone",
+            "type": "string"
+          },
+          "input_semantics": {
+            "title": "Input Semantics",
+            "type": "string"
+          }
+        },
+        "required": [
+          "input_semantics",
+          "display_timezone"
+        ],
+        "title": "TimeDisplayResponse",
         "type": "object"
       },
       "TopologyComponent": {
@@ -817,6 +1589,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "minimum": 0,
               "title": "Min Points",
               "type": "integer"
             }
@@ -828,6 +1601,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "minimum": 0,
                   "type": "integer"
                 },
                 {
@@ -842,18 +1616,11 @@
             "name": "stands",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Stands"
+              "items": {
+                "type": "string"
+              },
+              "title": "Stands",
+              "type": "array"
             }
           },
           {
@@ -906,9 +1673,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flight Selection Api Flight Selection Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlightSelectionResponse"
                 }
               }
             },
@@ -990,6 +1755,7 @@
             "required": false,
             "schema": {
               "default": 0,
+              "minimum": 0,
               "title": "Min Points",
               "type": "integer"
             }
@@ -1001,6 +1767,7 @@
             "schema": {
               "anyOf": [
                 {
+                  "minimum": 0,
                   "type": "integer"
                 },
                 {
@@ -1015,18 +1782,11 @@
             "name": "stands",
             "required": false,
             "schema": {
-              "anyOf": [
-                {
-                  "items": {
-                    "type": "string"
-                  },
-                  "type": "array"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Stands"
+              "items": {
+                "type": "string"
+              },
+              "title": "Stands",
+              "type": "array"
             }
           },
           {
@@ -1079,6 +1839,7 @@
             "required": false,
             "schema": {
               "default": 1,
+              "minimum": 1,
               "title": "Page",
               "type": "integer"
             }
@@ -1089,6 +1850,7 @@
             "required": false,
             "schema": {
               "default": 20,
+              "minimum": 1,
               "title": "Page Size",
               "type": "integer"
             }
@@ -1099,9 +1861,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flights Catalogue Api Flights Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlightCatalogueResponse"
                 }
               }
             },
@@ -1180,9 +1940,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flight Detail Api Flights  Flight Key  Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlightDetailResponse"
                 }
               }
             },
@@ -1231,9 +1989,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Flight Geometry Api Flights  Flight Key  Geometry Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/FlightGeometryResponse"
                 }
               }
             },
@@ -1344,9 +2100,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Match Status Api Matches Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MatchStatusResponse"
                 }
               }
             },
@@ -1392,9 +2146,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Match Flights Api Matches Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MatchSubmissionResponse"
                 }
               }
             },

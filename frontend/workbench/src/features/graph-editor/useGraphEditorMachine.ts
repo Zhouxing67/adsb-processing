@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useReducer } from 'react';
 import { api } from '../../api/client';
+import type { GraphPostInput, GraphPostPath } from '../../api/client';
 import type { EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
-import type { EdgeDeletePreview, GraphDialogState, MergeCandidates, MergePreview, NodeDeletePreview, RestorePreview, SnapPreview, SplitPreview } from './types';
+import type { GraphDialogState } from './types';
 
 type DrawPoint = [number, number];
 type IdleState = { phase: 'idle'; tool: EditorTool; selection: []; drawPoints: []; dialog: null; previewGeometry: null };
@@ -45,14 +46,14 @@ export function useGraphEditorMachine() {
   }, [wb]);
   const openDialog = useCallback((dialog: GraphDialogState) => send({ type: 'OPEN_DIALOG', dialog }), []);
   const previewMerge = useCallback(async (nodeIds: NodeId[], revision: number) => {
-    const preview = await wb.previewGraphCommand<MergePreview>('/api/merge-nodes-preview', { node_ids: nodeIds, expected_revision: revision });
+    const preview = await wb.previewGraphCommand('/api/merge-nodes-preview', { node_ids: nodeIds, canonical_node_id: null, expected_revision: revision });
     if (preview) openDialog({ kind: 'merge', preview });
   }, [wb, openDialog]);
   const openMergeCandidates = useCallback(async () => {
-    try { openDialog({ kind: 'merge-candidates', preview: await api.mergeCandidates<MergeCandidates>() }); }
+    try { openDialog({ kind: 'merge-candidates', preview: await api.mergeCandidates() }); }
     catch (error) { wb.dispatch({ type: 'error', value: error instanceof Error ? error.message : '候选节点读取失败' }); }
   }, [wb, openDialog]);
-  const confirmDialog = useCallback(async (path: string, body: Record<string, unknown>) => {
+  const confirmDialog = useCallback(async <P extends GraphPostPath,>(path: P, body: GraphPostInput<P>) => {
     if (await wb.runGraphCommand(path, body) !== null) reset();
   }, [wb, reset]);
 
@@ -61,10 +62,10 @@ export function useGraphEditorMachine() {
     if (!state?.capabilities.can_edit_graph || wb.tool === 'inspect') { wb.dispatch({ type: 'selected', value: feature }); return; }
     if (wb.tool === 'delete') {
       if (isNode(feature)) {
-        const preview = await wb.previewGraphCommand<NodeDeletePreview>('/api/delete-node-preview', { node: feature.properties.id });
+        const preview = await wb.previewGraphCommand('/api/delete-node-preview', { node: feature.properties.id, pair_ids: [], discard_unpaired: false });
         if (preview) openDialog({ kind: 'delete-node', preview, node: feature.properties.id });
       } else {
-        const preview = await wb.previewGraphCommand<EdgeDeletePreview>('/api/delete-edge-preview', { edge: feature.properties.id });
+        const preview = await wb.previewGraphCommand('/api/delete-edge-preview', { edge: feature.properties.id });
         if (preview) openDialog({ kind: 'delete-edge', preview, edge: feature.properties.id });
       }
       return;
@@ -86,10 +87,10 @@ export function useGraphEditorMachine() {
       if (!machine.selection.length) { send({ type: 'SELECT', selection: [feature] }); wb.dispatch({ type: 'status', value: '已选择起点，请选择终点' }); return; }
       const start = machine.selection[0] as GeoFeature<PointGeometry, NodeProperties>;
       if (wb.tool === 'draw') {
-        const result = await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: machine.drawPoints });
+        const result = await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: machine.drawPoints, aeroway: 'taxiway' });
         if (result !== null) reset();
       } else {
-        const preview = await wb.previewGraphCommand<RestorePreview>('/api/restore-options', { start: start.properties.id, end: feature.properties.id });
+        const preview = await wb.previewGraphCommand('/api/restore-options', { start: start.properties.id, end: feature.properties.id, candidate_id: null });
         if (preview?.candidates.length) openDialog({ kind: 'restore', preview, start: start.properties.id, end: feature.properties.id });
         else wb.dispatch({ type: 'status', value: '原始来源网络中没有可靠路径候选' });
       }
@@ -99,7 +100,7 @@ export function useGraphEditorMachine() {
       if (!machine.selection.length && isNode(feature)) { send({ type: 'SELECT', selection: [feature] }); wb.dispatch({ type: 'status', value: '请选择目标边' }); return; }
       if (machine.selection.length && !isNode(feature)) {
         const node = machine.selection[0] as GeoFeature<PointGeometry, NodeProperties>;
-        const preview = await wb.previewGraphCommand<SnapPreview>('/api/manual-snap-preview', { node: node.properties.id, edge: feature.properties.id });
+        const preview = await wb.previewGraphCommand('/api/manual-snap-preview', { node: node.properties.id, edge: feature.properties.id });
         if (preview) openDialog({ kind: 'snap', preview, node: node.properties.id, edge: feature.properties.id });
       }
     }
@@ -112,7 +113,7 @@ export function useGraphEditorMachine() {
     }
     if (wb.tool === 'split' && machine.phase === 'selecting' && machine.selection.length && !isNode(machine.selection[0])) {
       const edge = machine.selection[0] as GeoFeature<LineGeometry, EdgeProperties>;
-      const preview = await wb.previewGraphCommand<SplitPreview>('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude });
+      const preview = await wb.previewGraphCommand('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude, osm_node_id: null });
       if (preview) openDialog({ kind: 'split', preview, edge: edge.properties.id, longitude, latitude });
     }
   }, [machine, wb, openDialog]);

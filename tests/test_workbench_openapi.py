@@ -46,3 +46,36 @@ def test_graph_command_endpoints_share_a_named_response_contract() -> None:
         response = document["paths"][path]["post"]["responses"]["200"]
         schema = response["content"]["application/json"]["schema"]
         assert schema == {"$ref": "#/components/schemas/GraphCommandResponse"}
+
+
+def test_graph_preview_endpoints_have_named_response_contracts() -> None:
+    document = workbench_openapi_documents()["graph.json"]
+    endpoints = {
+        ("/api/restore-options", "post"): "RestoreOptionsResponse",
+        ("/api/merge-candidates", "get"): "MergeCandidatesResponse",
+        ("/api/merge-nodes-preview", "post"): "MergeNodesPreviewResponse",
+        ("/api/delete-edge-preview", "post"): "DeleteEdgePreviewResponse",
+        ("/api/delete-node-preview", "post"): "DeleteNodePreviewResponse",
+        ("/api/split-source-preview", "post"): "SplitSourcePreviewResponse",
+        ("/api/manual-snap-preview", "post"): "ManualSnapPreviewResponse",
+    }
+    for (path, method), model in endpoints.items():
+        response = document["paths"][path][method]["responses"]["200"]
+        schema = response["content"]["application/json"]["schema"]
+        assert schema == {"$ref": f"#/components/schemas/{model}"}
+
+
+def test_flight_endpoints_have_named_response_contracts() -> None:
+    document = workbench_openapi_documents()["flight.json"]
+    endpoints = {
+        ("/api/flights", "get"): "FlightCatalogueResponse",
+        ("/api/flights/{flight_key}", "get"): "FlightDetailResponse",
+        ("/api/flight-selection", "get"): "FlightSelectionResponse",
+        ("/api/flights/{flight_key}/geometry", "get"): "FlightGeometryResponse",
+        ("/api/matches", "post"): "MatchSubmissionResponse",
+        ("/api/matches", "get"): "MatchStatusResponse",
+    }
+    for (path, method), model in endpoints.items():
+        response = document["paths"][path][method]["responses"]["200"]
+        schema = response["content"]["application/json"]["schema"]
+        assert schema == {"$ref": f"#/components/schemas/{model}"}

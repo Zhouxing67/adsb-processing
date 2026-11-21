@@ -1,6 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
 import type { Dispatch, ReactNode } from 'react';
 import { ApiError, api } from '../api/client';
+import type { GraphPostInput, GraphPostPath, GraphPostRequest, GraphPostResponse } from '../api/client';
 import type { MapFlightEntry, SelectedFeature, WorkbenchState } from '../api/types';
 
 export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'delete';
@@ -67,8 +68,8 @@ function reducer(state: UiState, action: Action): UiState {
 interface ContextValue extends UiState {
   dispatch: Dispatch<Action>;
   refresh(): Promise<WorkbenchState | null>;
-  runGraphCommand<T>(path: string, body?: Record<string, unknown>): Promise<T | null>;
-  previewGraphCommand<T>(path: string, body?: Record<string, unknown>): Promise<T | null>;
+  runGraphCommand<P extends GraphPostPath>(path: P, body?: GraphPostInput<P>): Promise<GraphPostResponse<P> | null>;
+  previewGraphCommand<P extends GraphPostPath>(path: P, body?: GraphPostInput<P>): Promise<GraphPostResponse<P> | null>;
 }
 const WorkbenchContext = createContext<ContextValue | null>(null);
 
@@ -88,11 +89,12 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
   }, []);
   useEffect(() => { void refresh(); }, [refresh]);
 
-  const graphRequest = useCallback(async <T,>(path: string, body: Record<string, unknown>, refreshAfter: boolean) => {
+  const graphRequest = useCallback(async <P extends GraphPostPath,>(path: P, body: GraphPostInput<P>, refreshAfter: boolean) => {
     if (!model.state) return null;
     dispatch({ type: 'busy', value: true });
     try {
-      const result = await api.graphCommand<T>(path, { expected_revision: model.state.revision, ...body });
+      const request = { expected_revision: model.state.revision, ...body } as GraphPostRequest<P>;
+      const result = await api.graphCommand(path, request);
       if (refreshAfter) await refresh();
       return result;
     } catch (error) {
@@ -104,8 +106,8 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
       return null;
     } finally { dispatch({ type: 'busy', value: false }); }
   }, [model.state, refresh]);
-  const runGraphCommand = useCallback(<T,>(path: string, body: Record<string, unknown> = {}) => graphRequest<T>(path, body, true), [graphRequest]);
-  const previewGraphCommand = useCallback(<T,>(path: string, body: Record<string, unknown> = {}) => graphRequest<T>(path, body, false), [graphRequest]);
+  const runGraphCommand = useCallback(<P extends GraphPostPath,>(path: P, body: GraphPostInput<P> = {} as GraphPostInput<P>) => graphRequest(path, body, true), [graphRequest]);
+  const previewGraphCommand = useCallback(<P extends GraphPostPath,>(path: P, body: GraphPostInput<P> = {} as GraphPostInput<P>) => graphRequest(path, body, false), [graphRequest]);
 
   const value = useMemo(() => ({ ...model, dispatch, refresh, runGraphCommand, previewGraphCommand }), [model, refresh, runGraphCommand, previewGraphCommand]);
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;

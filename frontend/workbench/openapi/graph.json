@@ -1,6 +1,93 @@
 {
   "components": {
     "schemas": {
+      "DeleteEdgePreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "edge": {
+            "title": "Edge",
+            "type": "string"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_preserved": {
+            "title": "Source Preserved",
+            "type": "boolean"
+          },
+          "source_segments": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSegmentResponse"
+            },
+            "title": "Source Segments",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "edge",
+          "endpoints",
+          "source_segments",
+          "source_preserved"
+        ],
+        "title": "DeleteEdgePreviewResponse",
+        "type": "object"
+      },
+      "DeleteNodePreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "degree": {
+            "title": "Degree",
+            "type": "integer"
+          },
+          "half_edges": {
+            "items": {
+              "$ref": "#/components/schemas/NodeHalfEdgeResponse"
+            },
+            "title": "Half Edges",
+            "type": "array"
+          },
+          "node": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "pair_candidates": {
+            "items": {
+              "$ref": "#/components/schemas/NodePairCandidateResponse"
+            },
+            "title": "Pair Candidates",
+            "type": "array"
+          },
+          "recommended_unpaired": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Recommended Unpaired",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "node",
+          "degree",
+          "half_edges",
+          "pair_candidates",
+          "recommended_unpaired"
+        ],
+        "title": "DeleteNodePreviewResponse",
+        "type": "object"
+      },
       "DrawConnectionRequest": {
         "properties": {
           "aeroway": {
@@ -412,6 +499,93 @@
         "title": "LineStringGeometry",
         "type": "object"
       },
+      "ManualSnapPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "connector_geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry"
+          },
+          "distance_m": {
+            "title": "Distance M",
+            "type": "number"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "string"
+          },
+          "node": {
+            "title": "Node",
+            "type": "string"
+          },
+          "original_position": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Original Position",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "segment_index": {
+            "title": "Segment Index",
+            "type": "integer"
+          },
+          "snapped_position": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Snapped Position",
+            "type": "array"
+          },
+          "source_edge_unchanged": {
+            "title": "Source Edge Unchanged",
+            "type": "boolean"
+          },
+          "target_geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry"
+          },
+          "target_source_id": {
+            "title": "Target Source Id",
+            "type": "string"
+          },
+          "target_station_m": {
+            "title": "Target Station M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "revision",
+          "node",
+          "edge",
+          "original_position",
+          "snapped_position",
+          "distance_m",
+          "target_source_id",
+          "target_station_m",
+          "segment_index",
+          "target_geometry",
+          "connector_geometry",
+          "source_edge_unchanged"
+        ],
+        "title": "ManualSnapPreviewResponse",
+        "type": "object"
+      },
       "ManualSnapRequest": {
         "properties": {
           "edge": {
@@ -431,6 +605,181 @@
           "edge"
         ],
         "title": "ManualSnapRequest",
+        "type": "object"
+      },
+      "MergeCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "max_distance_m": {
+            "title": "Max Distance M",
+            "type": "number"
+          },
+          "node_ids": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Node Ids",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MergeNodeResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "node_ids",
+          "max_distance_m",
+          "nodes"
+        ],
+        "title": "MergeCandidateResponse",
+        "type": "object"
+      },
+      "MergeCandidatesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/MergeCandidateResponse"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "candidates"
+        ],
+        "title": "MergeCandidatesResponse",
+        "type": "object"
+      },
+      "MergeNodeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "degree": {
+            "title": "Degree",
+            "type": "integer"
+          },
+          "is_graph_node": {
+            "title": "Is Graph Node",
+            "type": "boolean"
+          },
+          "manual": {
+            "title": "Manual",
+            "type": "boolean"
+          },
+          "node_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "position": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Position",
+            "type": "array"
+          },
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "node_id",
+          "position",
+          "is_graph_node",
+          "manual",
+          "degree"
+        ],
+        "title": "MergeNodeResponse",
+        "type": "object"
+      },
+      "MergeNodesPreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "affected_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Affected Edges",
+            "type": "array"
+          },
+          "canonical_node_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "max_distance_m": {
+            "title": "Max Distance M",
+            "type": "number"
+          },
+          "node_ids": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Node Ids",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/MergeNodeResponse"
+            },
+            "title": "Nodes",
+            "type": "array"
+          },
+          "removed_self_loop_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Removed Self Loop Edges",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "source_edges_unchanged": {
+            "title": "Source Edges Unchanged",
+            "type": "boolean"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Warnings",
+            "type": "array"
+          }
+        },
+        "required": [
+          "revision",
+          "node_ids",
+          "canonical_node_id",
+          "max_distance_m",
+          "nodes",
+          "affected_edges",
+          "removed_self_loop_edges",
+          "warnings",
+          "source_edges_unchanged"
+        ],
+        "title": "MergeNodesPreviewResponse",
         "type": "object"
       },
       "MergeNodesRequest": {
@@ -538,9 +887,99 @@
         "title": "NodeFeatureCollection",
         "type": "object"
       },
+      "NodeHalfEdgeResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "edge": {
+            "title": "Edge",
+            "type": "string"
+          },
+          "half_id": {
+            "title": "Half Id",
+            "type": "string"
+          },
+          "outer_node": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "half_id",
+          "edge",
+          "outer_node",
+          "source_ids"
+        ],
+        "title": "NodeHalfEdgeResponse",
+        "type": "object"
+      },
       "NodeIdField": {
         "pattern": "^-?[1-9][0-9]*$",
         "type": "string"
+      },
+      "NodePairCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "angle_degrees": {
+            "title": "Angle Degrees",
+            "type": "number"
+          },
+          "endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Endpoints",
+            "type": "array"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry"
+          },
+          "left": {
+            "title": "Left",
+            "type": "string"
+          },
+          "pair_id": {
+            "title": "Pair Id",
+            "type": "string"
+          },
+          "recommended": {
+            "title": "Recommended",
+            "type": "boolean"
+          },
+          "right": {
+            "title": "Right",
+            "type": "string"
+          },
+          "same_source": {
+            "title": "Same Source",
+            "type": "boolean"
+          },
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "pair_id",
+          "left",
+          "right",
+          "endpoints",
+          "source_ids",
+          "same_source",
+          "angle_degrees",
+          "geometry",
+          "recommended"
+        ],
+        "title": "NodePairCandidateResponse",
+        "type": "object"
       },
       "NodeProperties": {
         "additionalProperties": false,
@@ -682,6 +1121,99 @@
         "title": "PointGeometry",
         "type": "object"
       },
+      "RestoreCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_id": {
+            "title": "Candidate Id",
+            "type": "string"
+          },
+          "first": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "geometry": {
+            "$ref": "#/components/schemas/LineStringGeometry"
+          },
+          "last": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "length_m": {
+            "title": "Length M",
+            "type": "number"
+          },
+          "osm_way_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Osm Way Ids",
+            "type": "array"
+          },
+          "refs": {
+            "items": {
+              "$ref": "#/components/schemas/JsonValue"
+            },
+            "title": "Refs",
+            "type": "array"
+          },
+          "segments": {
+            "items": {
+              "$ref": "#/components/schemas/SourceSegmentResponse"
+            },
+            "title": "Segments",
+            "type": "array"
+          },
+          "source_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Source Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "candidate_id",
+          "source_ids",
+          "osm_way_ids",
+          "refs",
+          "length_m",
+          "first",
+          "last",
+          "segments",
+          "geometry"
+        ],
+        "title": "RestoreCandidateResponse",
+        "type": "object"
+      },
+      "RestoreOptionsResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/RestoreCandidateResponse"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "current_endpoints": {
+            "items": {
+              "$ref": "#/components/schemas/NodeIdField"
+            },
+            "title": "Current Endpoints",
+            "type": "array"
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "revision",
+          "current_endpoints",
+          "candidates"
+        ],
+        "title": "RestoreOptionsResponse",
+        "type": "object"
+      },
       "RestoreRequest": {
         "properties": {
           "candidate_id": {
@@ -712,6 +1244,35 @@
           "end"
         ],
         "title": "RestoreRequest",
+        "type": "object"
+      },
+      "SourceSegmentResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "reversed": {
+            "title": "Reversed",
+            "type": "boolean"
+          },
+          "source_end_m": {
+            "title": "Source End M",
+            "type": "number"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_start_m": {
+            "title": "Source Start M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "source_id",
+          "source_start_m",
+          "source_end_m",
+          "reversed"
+        ],
+        "title": "SourceSegmentResponse",
         "type": "object"
       },
       "SourceSplitRequest": {
@@ -749,6 +1310,126 @@
           "latitude"
         ],
         "title": "SourceSplitRequest",
+        "type": "object"
+      },
+      "SplitCandidateResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "distance_m": {
+            "title": "Distance M",
+            "type": "number"
+          },
+          "id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "osm_node_id": {
+            "$ref": "#/components/schemas/NodeIdField"
+          },
+          "position": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Position",
+            "type": "array"
+          },
+          "source_index": {
+            "title": "Source Index",
+            "type": "integer"
+          },
+          "source_station_m": {
+            "title": "Source Station M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "osm_node_id",
+          "id",
+          "source_index",
+          "distance_m",
+          "source_station_m",
+          "position"
+        ],
+        "title": "SplitCandidateResponse",
+        "type": "object"
+      },
+      "SplitSourcePreviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/SplitCandidateResponse"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "edge": {
+            "title": "Edge",
+            "type": "string"
+          },
+          "manual_position": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "number"
+              }
+            ],
+            "title": "Manual Position",
+            "type": "array"
+          },
+          "manual_station_m": {
+            "title": "Manual Station M",
+            "type": "number"
+          },
+          "recommended_node": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/NodeIdField"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "revision": {
+            "title": "Revision",
+            "type": "integer"
+          },
+          "segment_index": {
+            "title": "Segment Index",
+            "type": "integer"
+          },
+          "source_id": {
+            "title": "Source Id",
+            "type": "string"
+          },
+          "source_reversed": {
+            "title": "Source Reversed",
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "revision",
+          "source_id",
+          "segment_index",
+          "source_reversed",
+          "edge",
+          "candidates",
+          "recommended_node",
+          "manual_position",
+          "manual_station_m"
+        ],
+        "title": "SplitSourcePreviewResponse",
         "type": "object"
       },
       "TopologyComponent": {
@@ -1092,9 +1773,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Edge Preview Api Delete Edge Preview Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DeleteEdgePreviewResponse"
                 }
               }
             },
@@ -1190,9 +1869,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Delete Node Preview Api Delete Node Preview Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/DeleteNodePreviewResponse"
                 }
               }
             },
@@ -1384,9 +2061,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Manual Snap Preview Api Manual Snap Preview Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/ManualSnapPreviewResponse"
                 }
               }
             },
@@ -1424,9 +2099,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Merge Candidates Api Merge Candidates Get",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MergeCandidatesResponse"
                 }
               }
             },
@@ -1522,9 +2195,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Merge Nodes Preview Api Merge Nodes Preview Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/MergeNodesPreviewResponse"
                 }
               }
             },
@@ -1620,9 +2291,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Restore Options Api Restore Options Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/RestoreOptionsResponse"
                 }
               }
             },
@@ -1766,9 +2435,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": true,
-                  "title": "Response Split Source Preview Api Split Source Preview Post",
-                  "type": "object"
+                  "$ref": "#/components/schemas/SplitSourcePreviewResponse"
                 }
               }
             },

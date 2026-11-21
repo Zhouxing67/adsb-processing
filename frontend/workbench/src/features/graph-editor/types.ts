@@ -1,25 +1,13 @@
+import type { components as GraphApi } from '../../api/generated/graph';
 import type { EdgeIdentity, GeoFeature, LineGeometry, NodeId } from '../../api/types';
 
-export interface RestoreCandidate {
-  candidate_id: string; source_ids: string[]; osm_way_ids: string[];
-  length_m: number; geometry: LineGeometry;
-}
-export interface RestorePreview { revision: number; current_endpoints: string[]; candidates: RestoreCandidate[] }
-export interface MergeNode { id: NodeId; node_id: NodeId; manual: boolean; degree: number; source_ids: string[]; position?: [number, number] }
-export interface MergePreview {
-  revision: number; node_ids: NodeId[]; canonical_node_id: NodeId; nodes: MergeNode[];
-  max_distance_m: number; affected_edges: unknown[]; warnings: string[];
-}
-export interface MergeCandidates { revision: number; candidates: Array<{ node_ids: NodeId[]; max_distance_m: number; nodes: MergeNode[] }> }
-export interface EdgeDeletePreview { revision: number; edge: string; source_segments: Array<{ source_id: string; source_start_m: number; source_end_m: number; reversed: boolean }> }
-export interface NodeDeletePair { pair_id: string; left: string; right: string; endpoints: string[]; source_ids: string[]; same_source: boolean; angle_degrees: number; geometry: LineGeometry; recommended: boolean }
-export interface NodeDeletePreview {
-  revision: number; node: string; degree: number;
-  half_edges: Array<{ half_id: string; edge: string; outer_node: string; source_ids: string[] }>;
-  pair_candidates: NodeDeletePair[]; recommended_unpaired: string[];
-}
-export interface SplitPreview { revision: number; source_id: string; candidates: Array<{ id: NodeId; distance_m: number }>; recommended_node?: NodeId | null }
-export interface SnapPreview { revision: number; node: string; edge: string; distance_m: number; target_source_id: string; target_station_m: number; connector_geometry: LineGeometry }
+export type RestorePreview = GraphApi['schemas']['RestoreOptionsResponse'];
+export type MergePreview = GraphApi['schemas']['MergeNodesPreviewResponse'];
+export type MergeCandidates = GraphApi['schemas']['MergeCandidatesResponse'];
+export type EdgeDeletePreview = GraphApi['schemas']['DeleteEdgePreviewResponse'];
+export type NodeDeletePreview = GraphApi['schemas']['DeleteNodePreviewResponse'];
+export type SplitPreview = GraphApi['schemas']['SplitSourcePreviewResponse'];
+export type SnapPreview = GraphApi['schemas']['ManualSnapPreviewResponse'];
 
 export type GraphDialogState =
   | { kind: 'restore'; preview: RestorePreview; start: NodeId; end: NodeId }

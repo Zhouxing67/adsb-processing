@@ -209,6 +209,129 @@ export interface components {
         ErrorResponse: {
             detail: components["schemas"]["ErrorDetail"];
         };
+        /** FlightCatalogueItemResponse */
+        FlightCatalogueItemResponse: {
+            /** Can Edit Stand */
+            can_edit_stand: boolean;
+            /** End Time */
+            end_time: string;
+            /** Flight Id */
+            flight_id: string;
+            /** Flight Key */
+            flight_key: string;
+            /** Flight Number */
+            flight_number: string | number | boolean | null;
+            /** Inconsistent Fields */
+            inconsistent_fields: string[];
+            match: components["schemas"]["MatchResultResponse"];
+            /** Movement Type */
+            movement_type: string;
+            /** Point Count */
+            point_count: number;
+            /** Source */
+            source: string;
+            /** Stand Position */
+            stand_position: string | null;
+            /** Start Time */
+            start_time: string;
+        };
+        /** FlightCatalogueResponse */
+        FlightCatalogueResponse: {
+            /** Dataset Max Points */
+            dataset_max_points: number;
+            /** Graph Id */
+            graph_id: string;
+            /** Items */
+            items: components["schemas"]["FlightCatalogueItemResponse"][];
+            /** Max Map Flights */
+            max_map_flights: number;
+            /** Max Points */
+            max_points: number;
+            /** Min Points */
+            min_points: number;
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Stand Options */
+            stand_options: string[];
+            /** Supports Validation Filter */
+            supports_validation_filter: boolean;
+            time: components["schemas"]["TimeDisplayResponse"];
+            /** Total */
+            total: number;
+            /** Total Pages */
+            total_pages: number;
+        };
+        /** FlightDetailResponse */
+        FlightDetailResponse: {
+            /** All Fields */
+            all_fields: boolean;
+            /** Fields */
+            fields: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Inconsistent Fields */
+            inconsistent_fields: {
+                [key: string]: components["schemas"]["JsonValue"][];
+            };
+            match: components["schemas"]["MatchResultResponse"];
+            /** Observation Columns */
+            observation_columns: string[];
+            /** Observation Page */
+            observation_page: number;
+            /** Observation Page Size */
+            observation_page_size: number;
+            /** Observation Pages */
+            observation_pages: number;
+            /** Observation Total */
+            observation_total: number;
+            /** Observations */
+            observations: {
+                [key: string]: components["schemas"]["JsonValue"];
+            }[];
+            summary: components["schemas"]["FlightSummaryResponse"];
+        };
+        /** FlightGeometryResponse */
+        FlightGeometryResponse: {
+            flight: components["schemas"]["GeoJsonFeatureCollection"];
+            /** Flight Key */
+            flight_key: string;
+            match: components["schemas"]["MatchResultResponse"];
+            path: components["schemas"]["GeoJsonFeatureCollection"] | null;
+        };
+        /** FlightSelectionResponse */
+        FlightSelectionResponse: {
+            /** Count */
+            count: number;
+            /** Flight Keys */
+            flight_keys: string[];
+        };
+        /** FlightSummaryResponse */
+        FlightSummaryResponse: {
+            /** Can Edit Stand */
+            can_edit_stand: boolean;
+            /** End Time */
+            end_time: string;
+            /** Flight Id */
+            flight_id: string;
+            /** Flight Key */
+            flight_key: string;
+            /** Flight Number */
+            flight_number: string | number | boolean | null;
+            /** Inconsistent Fields */
+            inconsistent_fields: string[];
+            /** Movement Type */
+            movement_type: string;
+            /** Point Count */
+            point_count: number;
+            /** Source */
+            source: string;
+            /** Stand Position */
+            stand_position: string | null;
+            /** Start Time */
+            start_time: string;
+        };
         /** GeoJsonFeature */
         GeoJsonFeature: {
             /** Geometry */
@@ -259,6 +382,118 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /** MatchProgressResponse */
+        MatchProgressResponse: {
+            /** Complete */
+            complete: boolean;
+            /** Failed */
+            failed: number;
+            /** Running */
+            running: number;
+            /** Success */
+            success: number;
+            summary: components["schemas"]["MatchSummaryResponse"];
+            /** Total */
+            total: number;
+            /** Waiting */
+            waiting: number;
+        };
+        /** MatchResultResponse */
+        MatchResultResponse: {
+            /** Config */
+            config: {
+                [key: string]: components["schemas"]["JsonValue"];
+            };
+            /** Elapsed Seconds */
+            elapsed_seconds: number;
+            /** Error */
+            error: string | null;
+            /** Error Kind */
+            error_kind: string | null;
+            /** Failure Type */
+            failure_type: string | null;
+            /** Flight Key */
+            flight_key: string;
+            /** Graph Id */
+            graph_id: string | null;
+            /** Has Path */
+            has_path: boolean;
+            /** Status */
+            status: string;
+            /** Task Id */
+            task_id: string | null;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** MatchSkippedResponse */
+        MatchSkippedResponse: {
+            /** Flight Key */
+            flight_key: string;
+            /** Reason */
+            reason: string;
+        };
+        /** MatchStatusResponse */
+        MatchStatusResponse: {
+            /** Graph Id */
+            graph_id: string;
+            progress: components["schemas"]["MatchProgressResponse"];
+            /** Tasks */
+            tasks: components["schemas"]["MatchTaskResponse"][];
+        };
+        /** MatchSubmissionResponse */
+        MatchSubmissionResponse: {
+            /** Queued */
+            queued: string[];
+            /** Queued Count */
+            queued_count: number;
+            /** Requested Count */
+            requested_count: number;
+            /** Skipped */
+            skipped: components["schemas"]["MatchSkippedResponse"][];
+            /** Skipped Count */
+            skipped_count: number;
+            /** Task Id */
+            task_id: string;
+        };
+        /** MatchSummaryResponse */
+        MatchSummaryResponse: {
+            /** Failed Flights */
+            failed_flights: number;
+            /** Failure Counts */
+            failure_counts: {
+                [key: string]: number;
+            };
+            /** Matched Flights */
+            matched_flights: number;
+            /** Matching Seconds */
+            matching_seconds: number;
+            /** Success Rate */
+            success_rate: number | null;
+            /** Total Flights */
+            total_flights: number;
+        };
+        /** MatchTaskResponse */
+        MatchTaskResponse: {
+            /** Complete */
+            complete: boolean;
+            /** Failed */
+            failed: number;
+            /** Flight Keys */
+            flight_keys: string[];
+            /** Items */
+            items: components["schemas"]["MatchResultResponse"][];
+            /** Running */
+            running: number;
+            /** Success */
+            success: number;
+            summary: components["schemas"]["MatchSummaryResponse"];
+            /** Task Id */
+            task_id: string;
+            /** Total */
+            total: number;
+            /** Waiting */
+            waiting: number;
         };
         /** NodeFeature */
         NodeFeature: {
@@ -337,6 +572,13 @@ export interface components {
              * @constant
              */
             type: "Point";
+        };
+        /** TimeDisplayResponse */
+        TimeDisplayResponse: {
+            /** Display Timezone */
+            display_timezone: string;
+            /** Input Semantics */
+            input_semantics: string;
         };
         /** TopologyComponent */
         TopologyComponent: {
@@ -430,7 +672,7 @@ export interface operations {
                 match_status?: string | null;
                 min_points?: number;
                 max_points?: number | null;
-                stands?: string[] | null;
+                stands?: string[];
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
@@ -447,9 +689,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["FlightSelectionResponse"];
                 };
             };
             /** @description Request validation error */
@@ -480,7 +720,7 @@ export interface operations {
                 match_status?: string | null;
                 min_points?: number;
                 max_points?: number | null;
-                stands?: string[] | null;
+                stands?: string[];
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
@@ -499,9 +739,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["FlightCatalogueResponse"];
                 };
             };
             /** @description Request validation error */
@@ -545,9 +783,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["FlightDetailResponse"];
                 };
             };
             /** @description Request validation error */
@@ -587,9 +823,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["FlightGeometryResponse"];
                 };
             };
             /** @description Request validation error */
@@ -671,9 +905,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MatchStatusResponse"];
                 };
             };
             /** @description Request validation error */
@@ -715,9 +947,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MatchSubmissionResponse"];
                 };
             };
             /** @description Request validation error */

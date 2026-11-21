@@ -220,7 +220,12 @@ class FlightDatabase:
                 parameters,
             )
             observations = [
-                {**row, "timestamp": _utc(row["timestamp"]) if row["timestamp"] is not None else None}
+                {
+                    **row,
+                    "timestamp": _utc(row["timestamp"])
+                    if row["timestamp"] is not None
+                    else None,
+                }
                 for row in records.mappings()
             ]
             return columns, fields, inconsistent, observations, total

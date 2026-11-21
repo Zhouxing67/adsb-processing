@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type * as React from 'react';
 import { ApiError, api } from '../../api/client';
+import type { FlightCatalogueQuery } from '../../api/client';
 import type { FlightCatalogue, FlightDetail, FlightItem, MapFlightEntry, MatchStatus } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 
@@ -12,18 +13,20 @@ interface StoredDisplay { key: string; label: string; slot: number; trajectoryVi
 interface StoredState { filters?: Partial<Filters>; page?: number; matchSelection?: string[]; displayed?: StoredDisplay[] }
 const defaults: Filters = { query: '', movement: '', status: '', minimum: 0, maximum: null, stands: [], start: '', end: '', validation: false };
 function stored(): StoredState { try { return JSON.parse(sessionStorage.getItem(storageKey) || '{}'); } catch { return {}; } }
-function paramsFor(filters: Filters, page?: number) {
-  const params = new URLSearchParams({ min_points: String(filters.minimum) });
-  if (page !== undefined) { params.set('page', String(page)); params.set('page_size', '15'); }
-  if (filters.query) params.set('q', filters.query);
-  if (filters.movement) params.set('movement_type', filters.movement);
-  if (filters.status) params.set('match_status', filters.status);
-  if (filters.maximum !== null) params.set('max_points', String(filters.maximum));
-  filters.stands.forEach(stand => params.append('stands', stand));
-  if (filters.start) params.set('start_date', filters.start);
-  if (filters.end) params.set('end_date', filters.end);
-  if (filters.validation) params.set('validation_only', 'true');
-  return params;
+function paramsFor(filters: Filters, page?: number): FlightCatalogueQuery {
+  return {
+    q: filters.query || undefined,
+    movement_type: filters.movement || undefined,
+    match_status: filters.status || undefined,
+    min_points: filters.minimum,
+    max_points: filters.maximum,
+    stands: filters.stands,
+    start_date: filters.start || undefined,
+    end_date: filters.end || undefined,
+    validation_only: filters.validation || undefined,
+    page,
+    page_size: page === undefined ? undefined : 15,
+  };
 }
 
 export function FlightPanel({ onDetail, active = true }: { onDetail(detail: FlightDetail): void; active?: boolean }) {
@@ -64,7 +67,7 @@ export function FlightPanel({ onDetail, active = true }: { onDetail(detail: Flig
   useEffect(() => {
     if (restored.current) return; restored.current = true;
     void (async () => {
-      const valid = new Set((await api.filteredFlights(new URLSearchParams())).flight_keys);
+      const valid = new Set((await api.filteredFlights({})).flight_keys);
       wb.dispatch({ type: 'set-match-selection', keys: [...wb.matchSelection].filter(key => valid.has(key)) });
       for (const item of saved.displayed ?? []) if (valid.has(item.key)) {
         try { wb.dispatch({ type: 'map-flight', key: item.key, value: { geometry: await api.geometry(item.key), label: item.label, slot: item.slot, trajectoryVisible: item.trajectoryVisible, pathVisible: item.pathVisible } }); } catch { /* stale saved selection */ }

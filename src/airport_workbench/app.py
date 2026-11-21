@@ -8,7 +8,6 @@ import time
 import webbrowser
 from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import date
 from pathlib import Path as FilePath
 from typing import TYPE_CHECKING, Annotated, Any, Callable, Mapping, Sequence
 
@@ -34,8 +33,23 @@ from utils.json_value import to_json_value
 from .api_models import (
     ERROR_RESPONSES,
     ApiErrorCode,
+    DeleteEdgePreviewResponse,
+    DeleteNodePreviewResponse,
     ErrorResponse,
+    FlightCatalogueRequest,
+    FlightCatalogueResponse,
+    FlightDetailResponse,
+    FlightFilterRequest,
+    FlightGeometryResponse,
+    FlightSelectionResponse,
     GraphCommandResponse,
+    ManualSnapPreviewResponse,
+    MatchStatusResponse,
+    MatchSubmissionResponse,
+    MergeCandidatesResponse,
+    MergeNodesPreviewResponse,
+    RestoreOptionsResponse,
+    SplitSourcePreviewResponse,
     WorkbenchStateResponse,
     error_detail,
     normalize_error_detail,
@@ -460,32 +474,23 @@ def create_app(
 
     @flight_routes.get("/api/flights")
     def flights_catalogue(
-        q: str = "",
-        movement_type: str | None = None,
-        match_status: str | None = None,
-        min_points: int = 0,
-        max_points: int | None = None,
-        stands: Annotated[list[str] | None, Query()] = None,
-        start_date: date | None = None,
-        end_date: date | None = None,
-        validation_only: bool = False,
-        page: int = 1,
-        page_size: int = 20,
-    ) -> dict[str, Any]:
+        filters: Annotated[FlightCatalogueRequest, Query()],
+    ) -> FlightCatalogueResponse:
         try:
-            return flight_workbench.catalogue(
-                query=q,
-                movement_type=movement_type,
-                status=match_status,
-                min_points=min_points,
-                max_points=max_points,
-                stands=stands or (),
-                start_date=start_date,
-                end_date=end_date,
-                validation_only=validation_only,
-                page=page,
-                page_size=page_size,
+            value = flight_workbench.catalogue(
+                query=filters.q,
+                movement_type=filters.movement_type,
+                status=filters.match_status,
+                min_points=filters.min_points,
+                max_points=filters.max_points,
+                stands=filters.stands,
+                start_date=filters.start_date,
+                end_date=filters.end_date,
+                validation_only=filters.validation_only,
+                page=filters.page,
+                page_size=filters.page_size,
             )
+            return FlightCatalogueResponse.model_validate(value)
         except CataloguePageOutOfRange as error:
             raise HTTPException(
                 400,
@@ -517,14 +522,15 @@ def create_app(
         observation_page: int = 1,
         observation_page_size: int = 100,
         all_fields: bool = False,
-    ) -> dict[str, Any]:
+    ) -> FlightDetailResponse:
         try:
-            return flight_workbench.detail(
+            value = flight_workbench.detail(
                 flight_key,
                 observation_page=observation_page,
                 observation_page_size=observation_page_size,
                 all_fields=all_fields,
             )
+            return FlightDetailResponse.model_validate(value)
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except (ValueError, CataloguePageOutOfRange) as error:
@@ -532,50 +538,47 @@ def create_app(
 
     @flight_routes.get("/api/flight-selection")
     def flight_selection(
-        q: str = "",
-        movement_type: str | None = None,
-        match_status: str | None = None,
-        min_points: int = 0,
-        max_points: int | None = None,
-        stands: Annotated[list[str] | None, Query()] = None,
-        start_date: date | None = None,
-        end_date: date | None = None,
-        validation_only: bool = False,
-    ) -> dict[str, Any]:
+        filters: Annotated[FlightFilterRequest, Query()],
+    ) -> FlightSelectionResponse:
         try:
-            return flight_workbench.filtered_keys(
-                query=q,
-                movement_type=movement_type,
-                status=match_status,
-                min_points=min_points,
-                max_points=max_points,
-                stands=stands or (),
-                start_date=start_date,
-                end_date=end_date,
-                validation_only=validation_only,
+            value = flight_workbench.filtered_keys(
+                query=filters.q,
+                movement_type=filters.movement_type,
+                status=filters.match_status,
+                min_points=filters.min_points,
+                max_points=filters.max_points,
+                stands=filters.stands,
+                start_date=filters.start_date,
+                end_date=filters.end_date,
+                validation_only=filters.validation_only,
             )
+            return FlightSelectionResponse.model_validate(value)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
     @flight_routes.get("/api/flights/{flight_key}/geometry")
-    def flight_geometry(flight_key: str) -> dict[str, Any]:
+    def flight_geometry(flight_key: str) -> FlightGeometryResponse:
         try:
-            return flight_workbench.geometry(flight_key)
+            return FlightGeometryResponse.model_validate(flight_workbench.geometry(flight_key))
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
 
     @flight_routes.post("/api/matches")
-    def match_flights(item: MatchFlightsRequest) -> dict[str, Any]:
+    def match_flights(item: MatchFlightsRequest) -> MatchSubmissionResponse:
         try:
-            return flight_workbench.submit(item.flight_keys, force=item.force)
+            return MatchSubmissionResponse.model_validate(
+                flight_workbench.submit(item.flight_keys, force=item.force)
+            )
         except KeyError as error:
             raise HTTPException(404, str(error)) from error
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
     @flight_routes.get("/api/matches")
-    def match_status(task_id: Annotated[list[str] | None, Query()] = None) -> dict[str, Any]:
-        return flight_workbench.task_status(task_id)
+    def match_status(
+        task_id: Annotated[list[str] | None, Query()] = None,
+    ) -> MatchStatusResponse:
+        return MatchStatusResponse.model_validate(flight_workbench.task_status(task_id))
 
     @graph_routes.post("/api/draw-connection")
     def draw_connection(item: DrawConnectionRequest) -> GraphCommandResponse:
@@ -596,27 +599,29 @@ def create_app(
         )
 
     @graph_routes.post("/api/restore-options")
-    def restore_options(item: RestoreRequest) -> dict[str, Any]:
+    def restore_options(item: RestoreRequest) -> RestoreOptionsResponse:
         if item.start == item.end:
             raise HTTPException(400, "起点和终点不能相同")
         result = session.connection_candidates(
             item.start, item.end, expected_revision=item.expected_revision
         )
-        return {
-            "revision": result.revision,
-            "current_endpoints": [item.start, item.end],
-            "candidates": [
-                {
-                    **{
-                        name: to_json_value(value)
-                        for name, value in candidate.items()
-                        if name != "geometry"
-                    },
-                    "geometry": mapping(candidate["geometry"]),
-                }
-                for candidate in result.value
-            ],
-        }
+        return RestoreOptionsResponse.model_validate(
+            {
+                "revision": result.revision,
+                "current_endpoints": [item.start, item.end],
+                "candidates": [
+                    {
+                        **{
+                            name: to_json_value(value)
+                            for name, value in candidate.items()
+                            if name != "geometry"
+                        },
+                        "geometry": mapping(candidate["geometry"]),
+                    }
+                    for candidate in result.value
+                ],
+            }
+        )
 
     @graph_routes.post("/api/restore-confirm")
     def restore_confirm(item: RestoreRequest) -> GraphCommandResponse:
@@ -637,16 +642,18 @@ def create_app(
         )
 
     @graph_routes.get("/api/merge-candidates")
-    def merge_candidates() -> dict[str, Any]:
+    def merge_candidates() -> MergeCandidatesResponse:
         with session.lock:
             candidates = session.merge_candidates()
-            return {
-                "revision": session.revision,
-                "candidates": to_json_value(candidates),
-            }
+            return MergeCandidatesResponse.model_validate(
+                {
+                    "revision": session.revision,
+                    "candidates": to_json_value(candidates),
+                }
+            )
 
     @graph_routes.post("/api/merge-nodes-preview")
-    def merge_nodes_preview(item: MergeNodesRequest) -> dict[str, Any]:
+    def merge_nodes_preview(item: MergeNodesRequest) -> MergeNodesPreviewResponse:
         try:
             result = session.merge_nodes_preview(
                 item.node_ids,
@@ -657,7 +664,7 @@ def create_app(
             raise HTTPException(400, str(error)) from error
         value = to_json_value(result.value)
         value["revision"] = result.revision
-        return value
+        return MergeNodesPreviewResponse.model_validate(value)
 
     @graph_routes.post("/api/merge-nodes-confirm")
     def merge_nodes_confirm(item: MergeNodesRequest) -> GraphCommandResponse:
@@ -675,11 +682,13 @@ def create_app(
         )
 
     @graph_routes.post("/api/delete-edge-preview")
-    def delete_edge_preview(item: EdgeRequest) -> dict[str, Any]:
+    def delete_edge_preview(item: EdgeRequest) -> DeleteEdgePreviewResponse:
         result = session.derived_edge_removal_preview(
             *item.edge.as_tuple(), expected_revision=item.expected_revision
         )
-        return {**result.value, "revision": result.revision}
+        return DeleteEdgePreviewResponse.model_validate(
+            {**result.value, "revision": result.revision}
+        )
 
     @graph_routes.post("/api/delete-edge-confirm")
     def delete_edge_confirm(item: EdgeRequest) -> GraphCommandResponse:
@@ -691,12 +700,14 @@ def create_app(
         )
 
     @graph_routes.post("/api/delete-node-preview")
-    def delete_node_preview(item: NodeDeletionRequest) -> dict[str, Any]:
+    def delete_node_preview(item: NodeDeletionRequest) -> DeleteNodePreviewResponse:
         try:
             result = session.node_deletion_plan(item.node, expected_revision=item.expected_revision)
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {**result.value, "revision": result.revision}
+        return DeleteNodePreviewResponse.model_validate(
+            {**result.value, "revision": result.revision}
+        )
 
     @graph_routes.post("/api/delete-node-confirm")
     def delete_node_confirm(item: NodeDeletionRequest) -> GraphCommandResponse:
@@ -715,7 +726,7 @@ def create_app(
         )
 
     @graph_routes.post("/api/split-source-preview")
-    def split_source_preview(item: SourceSplitRequest) -> dict[str, Any]:
+    def split_source_preview(item: SourceSplitRequest) -> SplitSourcePreviewResponse:
         try:
             result = session.source_split_preview(
                 *item.edge.as_tuple(),
@@ -729,7 +740,7 @@ def create_app(
         value["revision"] = result.revision
         for candidate in value["candidates"]:
             candidate["id"] = candidate.pop("canonical_node_id")
-        return value
+        return SplitSourcePreviewResponse.model_validate(value)
 
     @graph_routes.post("/api/split-source-confirm")
     def split_source_confirm(item: SourceSplitRequest) -> GraphCommandResponse:
@@ -749,7 +760,7 @@ def create_app(
         )
 
     @graph_routes.post("/api/manual-snap-preview")
-    def manual_snap_preview(item: ManualSnapRequest) -> dict[str, Any]:
+    def manual_snap_preview(item: ManualSnapRequest) -> ManualSnapPreviewResponse:
         edge = item.edge.as_tuple()
         try:
             result = session.manual_snap_preview(
@@ -757,7 +768,9 @@ def create_app(
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
-        return {**to_json_value(result.value), "revision": result.revision}
+        return ManualSnapPreviewResponse.model_validate(
+            {**to_json_value(result.value), "revision": result.revision}
+        )
 
     @graph_routes.post("/api/manual-snap-confirm")
     def manual_snap_confirm(item: ManualSnapRequest) -> GraphCommandResponse:
@@ -789,9 +802,7 @@ def create_app(
         result = session.update_edge_attributes(
             *edge, item.attributes, expected_revision=item.expected_revision
         )
-        return GraphCommandResponse(
-            message=f"已更新边 {edge!r} 的属性", revision=result.revision
-        )
+        return GraphCommandResponse(message=f"已更新边 {edge!r} 的属性", revision=result.revision)
 
     @graph_routes.post("/api/save")
     def save(item: VersionedRequest) -> GraphCommandResponse:

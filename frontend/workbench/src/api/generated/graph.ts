@@ -348,6 +348,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** DeleteEdgePreviewResponse */
+        DeleteEdgePreviewResponse: {
+            /** Edge */
+            edge: string;
+            /** Endpoints */
+            endpoints: components["schemas"]["NodeIdField"][];
+            /** Revision */
+            revision: number;
+            /** Source Preserved */
+            source_preserved: boolean;
+            /** Source Segments */
+            source_segments: components["schemas"]["SourceSegmentResponse"][];
+        };
+        /** DeleteNodePreviewResponse */
+        DeleteNodePreviewResponse: {
+            /** Degree */
+            degree: number;
+            /** Half Edges */
+            half_edges: components["schemas"]["NodeHalfEdgeResponse"][];
+            node: components["schemas"]["NodeIdField"];
+            /** Pair Candidates */
+            pair_candidates: components["schemas"]["NodePairCandidateResponse"][];
+            /** Recommended Unpaired */
+            recommended_unpaired: string[];
+            /** Revision */
+            revision: number;
+        };
         /** DrawConnectionRequest */
         DrawConnectionRequest: {
             /**
@@ -502,12 +529,98 @@ export interface components {
              */
             type: "LineString";
         };
+        /** ManualSnapPreviewResponse */
+        ManualSnapPreviewResponse: {
+            connector_geometry: components["schemas"]["LineStringGeometry"];
+            /** Distance M */
+            distance_m: number;
+            /** Edge */
+            edge: string;
+            /** Node */
+            node: string;
+            /** Original Position */
+            original_position: [
+                number,
+                number
+            ];
+            /** Revision */
+            revision: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Snapped Position */
+            snapped_position: [
+                number,
+                number
+            ];
+            /** Source Edge Unchanged */
+            source_edge_unchanged: boolean;
+            target_geometry: components["schemas"]["LineStringGeometry"];
+            /** Target Source Id */
+            target_source_id: string;
+            /** Target Station M */
+            target_station_m: number;
+        };
         /** ManualSnapRequest */
         ManualSnapRequest: {
             edge: components["schemas"]["EdgeIdentity"];
             /** Expected Revision */
             expected_revision: number;
             node: components["schemas"]["NodeIdField"];
+        };
+        /** MergeCandidateResponse */
+        MergeCandidateResponse: {
+            /** Candidate Id */
+            candidate_id: string;
+            /** Max Distance M */
+            max_distance_m: number;
+            /** Node Ids */
+            node_ids: components["schemas"]["NodeIdField"][];
+            /** Nodes */
+            nodes: components["schemas"]["MergeNodeResponse"][];
+        };
+        /** MergeCandidatesResponse */
+        MergeCandidatesResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["MergeCandidateResponse"][];
+            /** Revision */
+            revision: number;
+        };
+        /** MergeNodeResponse */
+        MergeNodeResponse: {
+            /** Degree */
+            degree: number;
+            /** Is Graph Node */
+            is_graph_node: boolean;
+            /** Manual */
+            manual: boolean;
+            node_id: components["schemas"]["NodeIdField"];
+            /** Position */
+            position: [
+                number,
+                number
+            ];
+            /** Source Ids */
+            source_ids?: string[];
+        };
+        /** MergeNodesPreviewResponse */
+        MergeNodesPreviewResponse: {
+            /** Affected Edges */
+            affected_edges: string[];
+            canonical_node_id: components["schemas"]["NodeIdField"];
+            /** Max Distance M */
+            max_distance_m: number;
+            /** Node Ids */
+            node_ids: components["schemas"]["NodeIdField"][];
+            /** Nodes */
+            nodes: components["schemas"]["MergeNodeResponse"][];
+            /** Removed Self Loop Edges */
+            removed_self_loop_edges: string[];
+            /** Revision */
+            revision: number;
+            /** Source Edges Unchanged */
+            source_edges_unchanged: boolean;
+            /** Warnings */
+            warnings: string[];
         };
         /** MergeNodesRequest */
         MergeNodesRequest: {
@@ -552,7 +665,37 @@ export interface components {
              */
             type: "FeatureCollection";
         };
+        /** NodeHalfEdgeResponse */
+        NodeHalfEdgeResponse: {
+            /** Edge */
+            edge: string;
+            /** Half Id */
+            half_id: string;
+            outer_node: components["schemas"]["NodeIdField"];
+            /** Source Ids */
+            source_ids: string[];
+        };
         NodeIdField: string;
+        /** NodePairCandidateResponse */
+        NodePairCandidateResponse: {
+            /** Angle Degrees */
+            angle_degrees: number;
+            /** Endpoints */
+            endpoints: components["schemas"]["NodeIdField"][];
+            geometry: components["schemas"]["LineStringGeometry"];
+            /** Left */
+            left: string;
+            /** Pair Id */
+            pair_id: string;
+            /** Recommended */
+            recommended: boolean;
+            /** Right */
+            right: string;
+            /** Same Source */
+            same_source: boolean;
+            /** Source Ids */
+            source_ids: string[];
+        };
         /** NodeProperties */
         NodeProperties: {
             /** Attributes */
@@ -608,6 +751,33 @@ export interface components {
              */
             type: "Point";
         };
+        /** RestoreCandidateResponse */
+        RestoreCandidateResponse: {
+            /** Candidate Id */
+            candidate_id: string;
+            first: components["schemas"]["NodeIdField"];
+            geometry: components["schemas"]["LineStringGeometry"];
+            last: components["schemas"]["NodeIdField"];
+            /** Length M */
+            length_m: number;
+            /** Osm Way Ids */
+            osm_way_ids: string[];
+            /** Refs */
+            refs: components["schemas"]["JsonValue"][];
+            /** Segments */
+            segments: components["schemas"]["SourceSegmentResponse"][];
+            /** Source Ids */
+            source_ids: string[];
+        };
+        /** RestoreOptionsResponse */
+        RestoreOptionsResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["RestoreCandidateResponse"][];
+            /** Current Endpoints */
+            current_endpoints: components["schemas"]["NodeIdField"][];
+            /** Revision */
+            revision: number;
+        };
         /** RestoreRequest */
         RestoreRequest: {
             /** Candidate Id */
@@ -616,6 +786,17 @@ export interface components {
             /** Expected Revision */
             expected_revision: number;
             start: components["schemas"]["NodeIdField"];
+        };
+        /** SourceSegmentResponse */
+        SourceSegmentResponse: {
+            /** Reversed */
+            reversed: boolean;
+            /** Source End M */
+            source_end_m: number;
+            /** Source Id */
+            source_id: string;
+            /** Source Start M */
+            source_start_m: number;
         };
         /** SourceSplitRequest */
         SourceSplitRequest: {
@@ -627,6 +808,45 @@ export interface components {
             /** Longitude */
             longitude: number;
             osm_node_id?: components["schemas"]["NodeIdField"] | null;
+        };
+        /** SplitCandidateResponse */
+        SplitCandidateResponse: {
+            /** Distance M */
+            distance_m: number;
+            id: components["schemas"]["NodeIdField"];
+            osm_node_id: components["schemas"]["NodeIdField"];
+            /** Position */
+            position: [
+                number,
+                number
+            ];
+            /** Source Index */
+            source_index: number;
+            /** Source Station M */
+            source_station_m: number;
+        };
+        /** SplitSourcePreviewResponse */
+        SplitSourcePreviewResponse: {
+            /** Candidates */
+            candidates: components["schemas"]["SplitCandidateResponse"][];
+            /** Edge */
+            edge: string;
+            /** Manual Position */
+            manual_position: [
+                number,
+                number
+            ];
+            /** Manual Station M */
+            manual_station_m: number;
+            recommended_node: components["schemas"]["NodeIdField"] | null;
+            /** Revision */
+            revision: number;
+            /** Segment Index */
+            segment_index: number;
+            /** Source Id */
+            source_id: string;
+            /** Source Reversed */
+            source_reversed: boolean;
         };
         /** TopologyComponent */
         TopologyComponent: {
@@ -793,9 +1013,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DeleteEdgePreviewResponse"];
                 };
             };
             /** @description Request validation error */
@@ -879,9 +1097,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["DeleteNodePreviewResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1049,9 +1265,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ManualSnapPreviewResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1089,9 +1303,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MergeCandidatesResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1175,9 +1387,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["MergeNodesPreviewResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1261,9 +1471,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["RestoreOptionsResponse"];
                 };
             };
             /** @description Request validation error */
@@ -1389,9 +1597,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["SplitSourcePreviewResponse"];
                 };
             };
             /** @description Request validation error */

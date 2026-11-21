@@ -26,7 +26,7 @@ interface LayerSettings { base: 'none' | 'osm' | 'satellite'; edges: boolean; pa
 
 function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: { editing: boolean; leftOpen: boolean; rightOpen: boolean; onLeft(): void; onRight(): void }) {
   const wb = useWorkbench(), state = wb.state;
-  const command = async (path: string) => { await wb.runGraphCommand(path); };
+  const command = async (path: '/api/undo' | '/api/save' | '/api/finish') => { await wb.runGraphCommand(path); };
   return <header className="topbar panel">
     <button className="rail-toggle" aria-label="切换左侧栏" aria-expanded={leftOpen} onClick={onLeft}>◫</button>
     <div className="brand-mark">AW</div><div className="brand-copy"><strong>Airport Workbench</strong><span>{state ? `${state.node_count} 节点 · ${state.edge_count} 边${state.flight_mode ? ` · ${state.flight_count} 航班` : ''}` : '载入中…'}</span></div>
