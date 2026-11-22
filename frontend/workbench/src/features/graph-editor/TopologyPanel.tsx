@@ -52,10 +52,10 @@ export function TopologyPanel({ splitValidation, onSplitValidation }: TopologyPa
 
   return (
     <aside className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted">
-      <div className="flex items-start justify-between gap-2 border-b border-border px-4 py-3.5">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
         <div>
-          <small className="block text-[11px] text-muted-foreground">网络健康检查</small>
-          <h2 className="m-0 text-[15px] font-semibold text-foreground">拓扑概览</h2>
+          <small className="block text-[11px] leading-tight text-muted-foreground">网络健康检查</small>
+          <h2 className="m-0 text-[15px] leading-tight font-semibold text-foreground">拓扑概览</h2>
         </div>
         <Button
           variant="ghost"

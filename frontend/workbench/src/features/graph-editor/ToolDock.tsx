@@ -30,10 +30,13 @@ export function ToolDock() {
 
   return (
     <nav
-      className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col gap-1 overflow-auto border-r border-border bg-muted px-3 py-4"
+      className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted"
       aria-label="编辑工具"
     >
-      <div className="px-2 pb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground">编辑工具</div>
+      <div className="flex h-14 shrink-0 items-center border-b border-border px-4">
+        <span className="text-[15px] font-semibold text-foreground">编辑工具</span>
+      </div>
+      <div className="flex flex-1 flex-col gap-1 overflow-auto p-3">
       {tools.map(tool => {
         const Icon = tool.icon;
         const active = wb.tool === tool.key;
@@ -62,6 +65,7 @@ export function ToolDock() {
           </button>
         );
       })}
+      </div>
     </nav>
   );
 }

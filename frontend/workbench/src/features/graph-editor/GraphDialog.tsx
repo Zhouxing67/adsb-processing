@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import type { GraphPostInput, GraphPostPath } from '@/api/client';
 import type { LineGeometry, NodeId } from '@/api/types';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
@@ -111,10 +112,10 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
   if (dialog.kind === 'merge-candidates') {
     return (
       <aside className="details relative flex h-full w-full flex-col bg-background">
-        <div className="flex items-start justify-between gap-2 border-b border-border p-4">
+        <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
           <div>
-            <h2 className="m-0 text-base font-semibold text-foreground">疑似重复图节点</h2>
-            <p className="mt-0.5 text-[11px] text-muted-foreground">候选距离 ≤ 0.5 m</p>
+            <h2 className="m-0 text-[15px] leading-tight font-semibold text-foreground">疑似重复图节点</h2>
+            <p className="mt-0.5 text-[11px] leading-tight text-muted-foreground">候选距离 ≤ 0.5 m</p>
           </div>
           <Button variant="ghost" size="icon-xs" aria-label="关闭" onClick={onClose}>
             <X className="h-4 w-4" />
@@ -145,23 +146,28 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
     );
   }
 
+  const dialogTitles: Record<Exclude<GraphDialogState['kind'], 'merge-candidates'>, string> = {
+    restore: '从 OSM 恢复连接',
+    merge: '合并节点预览',
+    'delete-edge': '删除派生边',
+    'delete-node': '半边配对',
+    split: '补充图分割点',
+    snap: '人工吸附预览',
+  };
+
   return (
     <aside className="details relative flex h-full w-full flex-col bg-background">
-      <Button
-        variant="ghost"
-        size="icon-xs"
-        className="absolute right-3 top-3 z-10"
-        aria-label="关闭"
-        onClick={onClose}
-      >
-        <X className="h-4 w-4" />
-      </Button>
+      <div className="flex h-14 shrink-0 items-center justify-between border-b border-border px-5">
+        <h2 className="m-0 text-[15px] font-semibold text-foreground">{dialogTitles[dialog.kind]}</h2>
+        <Button variant="ghost" size="icon-xs" aria-label="关闭" onClick={onClose}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
 
       <ScrollArea className="min-h-0 flex-1">
-        <div className="space-y-3 p-5 pr-8 text-[13px]">
+        <div className="space-y-3 p-5 text-[13px]">
           {dialog.kind === 'restore' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">从 OSM 恢复连接</h2>
               <p className="m-0 text-xs text-muted-foreground">{dialog.preview.current_endpoints.join(' — ')}</p>
               <RadioGroup
                 value={String(choice)}
@@ -194,7 +200,6 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
 
           {dialog.kind === 'merge' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">合并节点预览</h2>
               <dl className="m-0 divide-y divide-border/70 text-xs tabular-nums">
                 <div className="flex justify-between py-1.5">
                   <dt className="text-muted-foreground">最大距离</dt>
@@ -229,7 +234,6 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
 
           {dialog.kind === 'delete-edge' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">删除派生边</h2>
               <p className="m-0 break-words text-xs font-medium text-foreground">{dialog.preview.edge}</p>
               <div className="space-y-1 text-xs text-muted-foreground tabular-nums">
                 {dialog.preview.source_segments.map(segment => (
@@ -245,54 +249,79 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
 
           {dialog.kind === 'delete-node' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">半边配对</h2>
-              <p className="m-0 text-xs text-muted-foreground tabular-nums">
-                节点 {dialog.preview.node} · {dialog.preview.half_edges.length} 条关联半边
-              </p>
-              <div className="space-y-2">
-                {dialog.preview.pair_candidates.map(pair => (
-                  <label
-                    key={pair.pair_id}
-                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
-                    onMouseEnter={() => onPreview(pair.geometry)}
-                  >
-                    <Checkbox
-                      checked={pairs.has(pair.pair_id)}
-                      onCheckedChange={checked =>
-                        setPairs(value => {
-                          const next = new Set(value);
-                          if (checked === true) {
-                            dialog.preview.pair_candidates
-                              .filter(
-                                item =>
-                                  item.pair_id !== pair.pair_id &&
-                                  (item.left === pair.left ||
-                                    item.left === pair.right ||
-                                    item.right === pair.left ||
-                                    item.right === pair.right),
-                              )
-                              .forEach(item => next.delete(item.pair_id));
-                            next.add(pair.pair_id);
-                          } else {
-                            next.delete(pair.pair_id);
-                          }
-                          return next;
-                        })
-                      }
-                    />
-                    <span className="min-w-0 break-words">
-                      <strong className="font-medium text-foreground">{pair.endpoints.join(' ↔ ')}</strong>
-                      <br />
-                      <span className="text-muted-foreground">
-                        {pair.source_ids.join(' + ')} · 转角 {pair.angle_degrees}° · {pair.same_source ? '同源' : '跨来源'}
-                      </span>
-                    </span>
-                  </label>
-                ))}
+              <div className="flex items-center justify-between text-xs text-muted-foreground tabular-nums">
+                <span>
+                  节点 <strong className="font-medium text-foreground">{dialog.preview.node}</strong>
+                </span>
+                <span>{dialog.preview.half_edges.length} 条关联半边</span>
               </div>
-              <p className="m-0 text-[11px] text-muted-foreground">
-                已选择 {pairs.size} 组连接 · 未使用：{unpaired.join(', ') || '无'}
-              </p>
+              <div className="space-y-2">
+                {dialog.preview.pair_candidates.map(pair => {
+                  const checked = pairs.has(pair.pair_id);
+                  return (
+                    <label
+                      key={pair.pair_id}
+                      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-xs transition-colors ${
+                        checked
+                          ? 'border-primary/40 bg-background shadow-2xs'
+                          : 'border-border bg-muted/35 hover:bg-accent/50'
+                      }`}
+                      onMouseEnter={() => onPreview(pair.geometry)}
+                    >
+                      <Checkbox
+                        className="mt-0.5"
+                        checked={checked}
+                        onCheckedChange={next =>
+                          setPairs(value => {
+                            const updated = new Set(value);
+                            if (next === true) {
+                              dialog.preview.pair_candidates
+                                .filter(
+                                  item =>
+                                    item.pair_id !== pair.pair_id &&
+                                    (item.left === pair.left ||
+                                      item.left === pair.right ||
+                                      item.right === pair.left ||
+                                      item.right === pair.right),
+                                )
+                                .forEach(item => updated.delete(item.pair_id));
+                              updated.add(pair.pair_id);
+                            } else {
+                              updated.delete(pair.pair_id);
+                            }
+                            return updated;
+                          })
+                        }
+                      />
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <div className="flex items-center justify-between gap-2">
+                          <strong className="truncate text-[12px] font-semibold text-foreground tabular-nums">
+                            {pair.endpoints.join(' ↔ ')}
+                          </strong>
+                          <span className="shrink-0 text-[11px] font-medium text-foreground tabular-nums">
+                            {pair.angle_degrees}°
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground" title={pair.source_ids.join(' → ')}>
+                            {pair.source_ids.join(' → ')}
+                          </span>
+                          <Badge
+                            variant={pair.same_source ? 'secondary' : 'outline'}
+                            className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
+                          >
+                            {pair.same_source ? '同源' : '跨来源'}
+                          </Badge>
+                        </div>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+              <div className="flex items-center justify-between pt-1 text-[11px] text-muted-foreground tabular-nums">
+                <span>已选 {pairs.size} 组配对</span>
+                <span>未配对：{unpaired.length ? unpaired.join(', ') : '无'}</span>
+              </div>
               {unpaired.length > 0 && (
                 <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs">
                   <Checkbox checked={discard} onCheckedChange={checked => setDiscard(checked === true)} />
@@ -304,7 +333,6 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
 
           {dialog.kind === 'split' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">补充图分割点</h2>
               <p className="m-0 text-xs text-muted-foreground">命中来源：{dialog.preview.source_id}</p>
               {dialog.preview.candidates.length ? (
                 <RadioGroup value={String(choice)} onValueChange={value => setChoice(Number(value))} className="gap-2">
@@ -328,7 +356,6 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
 
           {dialog.kind === 'snap' && (
             <>
-              <h2 className="m-0 text-base font-semibold text-foreground">人工吸附预览</h2>
               <dl className="m-0 divide-y divide-border/70 text-xs tabular-nums">
                 <div className="flex justify-between py-1.5">
                   <dt className="text-muted-foreground">节点</dt>

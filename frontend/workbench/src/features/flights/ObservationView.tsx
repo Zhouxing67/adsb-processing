@@ -60,7 +60,7 @@ export function ObservationView({ detail, splitView }: ObservationViewProps) {
 
   return (
     <section className="main-view observations-view absolute inset-0 flex h-full w-full flex-col bg-background">
-      <header className="flex shrink-0 items-center gap-4 border-b border-border px-4 py-2.5">
+      <header className="flex h-14 shrink-0 items-center gap-4 border-b border-border px-4">
         <Button variant="outline" size="sm" onClick={() => wb.dispatch({ type: 'view', value: 'flights' })}>
           <ArrowLeft className="h-3.5 w-3.5" />
           航班列表

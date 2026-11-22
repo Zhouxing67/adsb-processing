@@ -23,11 +23,13 @@ export function Inspector({ state, layers, onLayers }: InspectorProps) {
   const derived = state.edges.features.length - parking;
 
   return (
-    <ScrollArea className="h-full w-full bg-background">
-      <aside className="space-y-5 p-5">
-        <div>
-          <h1 className="m-0 text-base font-semibold text-foreground">机场地面网络</h1>
-          <div className="mt-4 flex items-center gap-6 border-b border-border pb-4 tabular-nums">
+    <aside className="flex h-full min-h-0 w-full flex-col bg-background">
+      <div className="flex h-14 shrink-0 items-center border-b border-border px-5">
+        <h1 className="m-0 text-[15px] font-semibold text-foreground">机场地面网络</h1>
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-5 p-5">
+          <div className="flex items-center gap-6 border-b border-border pb-4 tabular-nums">
             <div className="grid gap-0.5">
               <strong className="text-xl font-medium text-foreground">{state.node_count}</strong>
               <span className="text-[11px] text-muted-foreground">节点</span>
@@ -43,7 +45,6 @@ export function Inspector({ state, layers, onLayers }: InspectorProps) {
               </div>
             )}
           </div>
-        </div>
 
         <section className="space-y-3 border-b border-border pb-5">
           <h3 className="m-0 text-xs font-semibold text-foreground">图层与底图</h3>
@@ -127,7 +128,8 @@ export function Inspector({ state, layers, onLayers }: InspectorProps) {
           <Crosshair className="h-5 w-5 opacity-50" />
           <h3 className="m-0 text-xs font-normal text-muted-foreground">选择一个图要素</h3>
         </section>
-      </aside>
-    </ScrollArea>
+        </div>
+      </ScrollArea>
+    </aside>
   );
 }

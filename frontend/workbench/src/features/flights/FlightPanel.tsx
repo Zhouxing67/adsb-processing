@@ -593,7 +593,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
         !active && 'hidden',
       )}
     >
-      <header className="flex shrink-0 items-baseline justify-between border-b border-border px-4 py-2.5">
+      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
         <h2 className="m-0 text-[15px] font-semibold text-foreground">航班</h2>
         <span className="text-[11px] text-muted-foreground tabular-nums">
           {catalogue ? `第 ${catalogue.page || 0} / ${catalogue.total_pages} 页（${catalogue.total} 条）` : ''}

@@ -111,25 +111,25 @@ export function FeatureDetails() {
   const customAeroway = aeroway && !aerowayTypes.includes(aeroway as Aeroway);
 
   return (
-    <ScrollArea className="details relative h-full w-full bg-background">
-      <aside className="relative p-5">
+    <aside className="details relative flex h-full min-h-0 w-full flex-col bg-background">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
+        <div className="min-w-0">
+          <small className="block text-[11px] leading-tight text-muted-foreground">图要素详情 · {node ? '节点' : '边'}</small>
+          <h2 className="m-0 truncate text-[15px] leading-tight font-semibold text-foreground" title={node ? feature.properties.id : edgeLabel(feature.properties.id)}>
+            {node ? feature.properties.id : edgeLabel(feature.properties.id)}
+          </h2>
+        </div>
         <Button
           variant="ghost"
           size="icon-xs"
-          className="absolute right-3 top-3"
           aria-label="关闭要素详情"
           onClick={() => wb.dispatch({ type: 'selected', value: null })}
         >
           <X className="h-4 w-4" />
         </Button>
-
-        <div className="pr-7 pb-4">
-          <small className="block text-[11px] text-muted-foreground">图要素详情 · {node ? '节点' : '边'}</small>
-          <h2 className="mt-0.5 break-words text-base font-semibold text-foreground">
-            {node ? feature.properties.id : edgeLabel(feature.properties.id)}
-          </h2>
-        </div>
-
+      </div>
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="px-5 py-2">
         {renderFields('基本信息', basicEntries)}
         {renderFields('拓扑信息', topologyEntries)}
         {renderFields('检查状态', inspectionEntries)}
@@ -185,7 +185,8 @@ export function FeatureDetails() {
             </Button>
           </section>
         )}
-      </aside>
-    </ScrollArea>
+        </div>
+      </ScrollArea>
+    </aside>
   );
 }

@@ -84,16 +84,16 @@ export function MapSelectionRail({ splitView, onDetail }: MapSelectionRailProps)
       ref={railRef}
       className="map-selection relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted"
     >
-      <div className="flex shrink-0 items-end justify-between gap-2 px-4 pt-5 pb-3">
+      <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
         <div>
-          <small className="block text-[11px] font-medium text-muted-foreground">地图内容</small>
-          <strong className="text-[15px] font-semibold text-foreground">地图展示</strong>
+          <small className="block text-[11px] leading-tight font-medium text-muted-foreground">地图内容</small>
+          <strong className="block text-[15px] leading-tight font-semibold text-foreground">地图展示</strong>
         </div>
         <span className="text-[11px] text-muted-foreground tabular-nums">{wb.mapFlights.size} 架航班</span>
       </div>
 
       <ScrollArea
-        className="min-h-0 shrink-0 border-t border-border bg-background/55"
+        className="min-h-0 shrink-0 bg-background/55"
         style={{ height: `${listHeightPct}%` }}
       >
         <div className="divide-y divide-border/60 px-2 py-1">
