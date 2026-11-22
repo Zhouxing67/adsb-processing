@@ -3,6 +3,8 @@
   --orange: #d85d16;
   --red: #c63e3e;
   --sidebar-width: 304px;
+  --left-sidebar-width: 304px;
+  --right-sidebar-width: 304px;
   --sidebar-min-width: 240px;
   --sidebar-max-width: 480px;
   --ink: #263244;
@@ -30,10 +32,7 @@
   --control-height: 32px;
   --workspace-tab-height: 38px;
   --control-gap: 8px;
-  --map-split-width: 50%;
   --brand-red: #e60012;
-  --property-popup-width: 300px;
-  --property-popup-height: 300px;
   --parking-edge: #dc6b32;
   --sheet-toolbar-gap: 8px;
   --sheet-control-height: 30px;

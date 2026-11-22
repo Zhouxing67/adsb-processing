@@ -306,6 +306,7 @@ class FlightWorkbench:
             path = result.path if valid else None
             return {
                 "flight_key": flight_key,
+                "flight_id": self.items[flight_key].flight_id,
                 "flight": flight_geojson(flight, flight_key=flight_key),
                 "path": path_geojson(path, flight_key=flight_key) if path else None,
                 "match": result.public(),

@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { propertyPatch, requireRevision } from '../src/domain/properties.ts';
 import { popupPosition } from '../src/domain/popup-layout.ts';
+import { segmentScreenAngleDegrees } from '../src/domain/geometry.ts';
 
 test('property edits allow only the three business fields', () => {
  assert.deepEqual(propertyPatch({ aeroway: 'parking_position', name: ' A ', ref: '01', source_id: 'overwrite' }), {aeroway:'parking_position',name:'A',ref:'01'});
@@ -20,4 +21,10 @@ test('popup positions prefer above, flip below, and never mutate map state', () 
  assert.deepEqual(point,{x:450,y:500});
  const narrow=popupPosition({x:450,y:350},{x:900,y:500},size);
  assert(narrow.x>=8);assert(Number.isFinite(narrow.y));
+});
+test('segment screen angle rotates arrow toward actual travel direction', () => {
+ assert.equal(Math.round(segmentScreenAngleDegrees([116.5, 40.0], [116.6, 40.0])), 0);
+ assert.equal(Math.round(segmentScreenAngleDegrees([116.5, 40.0], [116.5, 40.1])), -90);
+ assert.equal(Math.round(segmentScreenAngleDegrees([116.5, 40.0], [116.5, 39.9])), 90);
+ assert.equal(Math.abs(Math.round(segmentScreenAngleDegrees([116.5, 40.0], [116.4, 40.0]))), 180);
 });

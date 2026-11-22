@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useReducer } from 'react';
+import { useCallback, useEffect, useReducer, useState } from 'react';
 import { api } from '../../api/client';
 import type { GraphPostInput, GraphPostPath } from '../../api/client';
 import type { EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
+import type { Aeroway } from '../../domain/properties';
 import type { GraphDialogState } from './types';
 
 type DrawPoint = [number, number];
@@ -38,6 +39,8 @@ function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, 
 export function useGraphEditorMachine() {
   const wb = useWorkbench();
   const [machine, send] = useReducer(graphEditorReducer, wb.tool, idle);
+  const [drawAeroway, setDrawAeroway] = useState<Aeroway>('taxiway');
+  const [drawRef, setDrawRef] = useState('');
   useEffect(() => { send({ type: 'RESET', tool: wb.tool }); }, [wb.tool]);
 
   const reset = useCallback(() => {
@@ -86,9 +89,14 @@ export function useGraphEditorMachine() {
       if (!isNode(feature)) return;
       if (!machine.selection.length) { send({ type: 'SELECT', selection: [feature] }); wb.dispatch({ type: 'status', value: '已选择起点，请选择终点' }); return; }
       const start = machine.selection[0] as GeoFeature<PointGeometry, NodeProperties>;
+      if (start.properties.id === feature.properties.id) {
+        wb.dispatch({ type: 'status', value: '起点和终点不能相同' });
+        return;
+      }
       if (wb.tool === 'draw') {
-        const result = await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: machine.drawPoints, aeroway: 'taxiway' });
-        if (result !== null) reset();
+        const ref = drawRef.trim() || null;
+        const result = await wb.runGraphCommand('/api/draw-connection', { start: start.properties.id, end: feature.properties.id, intermediate_points: machine.drawPoints, aeroway: drawAeroway, ref });
+        if (result !== null) { setDrawRef(''); reset(); }
       } else {
         const preview = await wb.previewGraphCommand('/api/restore-options', { start: start.properties.id, end: feature.properties.id, candidate_id: null });
         if (preview?.candidates.length) openDialog({ kind: 'restore', preview, start: start.properties.id, end: feature.properties.id });
@@ -104,7 +112,7 @@ export function useGraphEditorMachine() {
         if (preview) openDialog({ kind: 'snap', preview, node: node.properties.id, edge: feature.properties.id });
       }
     }
-  }, [machine.selection, machine.drawPoints, wb, openDialog, reset]);
+  }, [machine.selection, machine.drawPoints, drawAeroway, drawRef, wb, openDialog, reset]);
 
   const handleMapClick = useCallback(async (longitude: number, latitude: number) => {
     if (wb.tool === 'draw' && machine.phase === 'selecting') {
@@ -126,6 +134,10 @@ export function useGraphEditorMachine() {
     state: machine,
     selection: machine.selection,
     drawPoints: machine.drawPoints,
+    drawAeroway,
+    setDrawAeroway,
+    drawRef,
+    setDrawRef,
     dialog: machine.dialog,
     previewGeometry: machine.previewGeometry,
     mergeNodeIds,

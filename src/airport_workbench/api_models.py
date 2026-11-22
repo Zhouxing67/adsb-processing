@@ -358,6 +358,7 @@ class FlightDetailResponse(ApiModel):
 
 class FlightGeometryResponse(ApiModel):
     flight_key: str
+    flight_id: str
     flight: GeoJsonFeatureCollection
     path: GeoJsonFeatureCollection | None
     match: MatchResultResponse

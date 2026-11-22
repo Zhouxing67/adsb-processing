@@ -455,6 +455,10 @@
           "flight": {
             "$ref": "#/components/schemas/GeoJsonFeatureCollection"
           },
+          "flight_id": {
+            "title": "Flight Id",
+            "type": "string"
+          },
           "flight_key": {
             "title": "Flight Key",
             "type": "string"
@@ -475,6 +479,7 @@
         },
         "required": [
           "flight_key",
+          "flight_id",
           "flight",
           "path",
           "match"

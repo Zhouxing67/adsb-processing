@@ -43,3 +43,17 @@ test('merge workflow exposes backend candidates in a React dialog', async ({ pag
   await page.getByRole('button', { name: /查看/ }).click();
   await expect(page.getByRole('heading', { name: '疑似重复图节点' })).not.toBeVisible();
 });
+
+test('editing auto-opens collapsed right rail on selection and guards empty search', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '切换右侧栏', exact: true }).click();
+  await expect(page.locator('.right-rail')).toHaveCount(0);
+  await page.getByRole('button', { name: /搜索/ }).click();
+  await page.getByRole('button', { name: '选中', exact: true }).click();
+  await expect(page.locator('.status')).toContainText('请输入节点 ID 或边 ID');
+  await expect(page.locator('.details')).toHaveCount(0);
+  await page.getByPlaceholder('节点 ID 或完整边 ID').fill('1—2 · 0');
+  await page.getByRole('button', { name: '选中', exact: true }).click();
+  await expect(page.locator('.details')).toBeVisible();
+  await expect(page.locator('.property-form select')).toBeVisible();
+});

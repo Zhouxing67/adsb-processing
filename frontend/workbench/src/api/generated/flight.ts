@@ -283,6 +283,8 @@ export interface components {
         /** FlightGeometryResponse */
         FlightGeometryResponse: {
             flight: components["schemas"]["GeoJsonFeatureCollection"];
+            /** Flight Id */
+            flight_id: string;
             /** Flight Key */
             flight_key: string;
             match: components["schemas"]["MatchResultResponse"];

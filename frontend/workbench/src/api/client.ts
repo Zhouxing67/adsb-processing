@@ -56,7 +56,7 @@ export const api = {
   state: (signal?: AbortSignal) => request<WorkbenchState>('/api/state', { signal }),
   catalogue: (params: FlightCatalogueQuery, signal?: AbortSignal) => request<FlightCatalogue>(`/api/flights?${queryString(params)}`, { signal }),
   filteredFlights: (params: FlightSelectionQuery) => request<FlightApi['schemas']['FlightSelectionResponse']>(`/api/flight-selection?${queryString(params)}`),
-  geometry: (key: string) => request<FlightGeometry>(`/api/flights/${encodeURIComponent(key)}/geometry`),
+  geometry: (key: string, signal?: AbortSignal) => request<FlightGeometry>(`/api/flights/${encodeURIComponent(key)}/geometry`, { signal }),
   detail: (key: string, page = 1, allFields = false) => request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}&observation_page_size=100&all_fields=${allFields}`),
   updateStand: (key: string, stand_position: string | null) => request<void>(`/api/flights/${encodeURIComponent(key)}/stand`, json('PATCH', { stand_position })),
   submitMatches: (flight_keys: string[], force = false) => request<FlightApi['schemas']['MatchSubmissionResponse']>('/api/matches', json('POST', { flight_keys, force })),
