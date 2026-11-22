@@ -1,6 +1,9 @@
 import { useState } from 'react';
-import type { SelectedFeature } from '../../api/types';
-import { useWorkbench } from '../../app/WorkbenchContext';
+import { X } from 'lucide-react';
+import type { SelectedFeature } from '@/api/types';
+import { useWorkbench } from '@/app/WorkbenchContext';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 
 function edgeLabel(id: { u: string; v: string; key: number }) {
   return `${id.u}—${id.v} · ${id.key}`;
@@ -60,57 +63,82 @@ export function SearchPanel() {
   };
 
   return (
-    <section className="search-panel panel">
-      <div className="panel-heading">
+    <section
+      className="fixed top-[70px] z-[1050] max-h-[calc(100vh-120px)] w-80 space-y-3.5 overflow-auto rounded-lg border border-border bg-background/95 p-4 shadow-lg backdrop-blur-xs"
+      style={{ left: 'calc(var(--left-sidebar-width, var(--sidebar-width)) + 14px)' }}
+    >
+      <div className="flex items-start justify-between gap-2">
         <div>
-          <small>快速定位</small>
-          <h2>搜索图要素</h2>
+          <small className="block text-[11px] text-muted-foreground">快速定位</small>
+          <h2 className="m-0 text-[15px] font-semibold text-foreground">搜索图要素</h2>
         </div>
-        <button className="panel-close" onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: false })}>
-          ×
-        </button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          aria-label="关闭搜索面板"
+          onClick={() => wb.dispatch({ type: 'panel', panel: 'searchOpen', value: false })}
+        >
+          <X className="h-4 w-4" />
+        </Button>
       </div>
-      <label>
-        节点或边 ID
-        <div className="input-action">
-          <input
+
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        <span>节点或边 ID</span>
+        <div className="flex items-center gap-1.5">
+          <Input
             value={query}
             onChange={event => setQuery(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') search(); }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') search();
+            }}
             placeholder="节点 ID 或完整边 ID"
           />
-          <button onClick={search}>选中</button>
+          <Button variant="outline" size="default" onClick={search}>
+            选中
+          </Button>
         </div>
       </label>
-      <label>
-        机位编号
-        <div className="input-action">
-          <input
+
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        <span>机位编号</span>
+        <div className="flex items-center gap-1.5">
+          <Input
             value={stand}
             onChange={event => setStand(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') searchStand(); }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') searchStand();
+            }}
             placeholder="例如 A01"
           />
-          <button onClick={searchStand}>定位机位</button>
+          <Button variant="outline" size="default" onClick={searchStand}>
+            定位机位
+          </Button>
         </div>
       </label>
-      <label>
-        边的两个端点
-        <div className="edge-inputs">
-          <input
+
+      <label className="grid gap-1.5 text-xs text-muted-foreground">
+        <span>边的两个端点</span>
+        <div className="flex items-center gap-1.5">
+          <Input
             value={edgeU}
             onChange={event => setEdgeU(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') searchEdge(); }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') searchEdge();
+            }}
             placeholder="端点 A"
           />
-          <span>—</span>
-          <input
+          <span className="text-muted-foreground">—</span>
+          <Input
             value={edgeV}
             onChange={event => setEdgeV(event.target.value)}
-            onKeyDown={event => { if (event.key === 'Enter') searchEdge(); }}
+            onKeyDown={event => {
+              if (event.key === 'Enter') searchEdge();
+            }}
             placeholder="端点 B"
           />
-          <button onClick={searchEdge}>选中边</button>
+          <Button variant="outline" size="default" onClick={searchEdge}>
+            选中边
+          </Button>
         </div>
       </label>
     </section>

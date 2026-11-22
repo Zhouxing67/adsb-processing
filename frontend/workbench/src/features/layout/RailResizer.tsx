@@ -68,7 +68,13 @@ export function RailResizer({ side }: { side: Side }) {
   return (
     <button
       ref={handle}
-      className={`sidebar-resizer sidebar-resizer-${side}`}
+      type="button"
+      className="group fixed top-14 bottom-[34px] z-[2000] hidden w-2.5 cursor-col-resize touch-none border-0 bg-transparent p-0 outline-none md:block"
+      style={
+        side === 'left'
+          ? { left: 'calc(var(--left-sidebar-width, var(--sidebar-width)) - 5px)' }
+          : { right: 'calc(var(--right-sidebar-width, var(--sidebar-width)) - 5px)' }
+      }
       role="separator"
       aria-label={side === 'left' ? '调整左侧栏宽度' : '调整右侧栏宽度'}
       aria-orientation="vertical"
@@ -105,6 +111,8 @@ export function RailResizer({ side }: { side: Side }) {
             : (event.key === 'ArrowRight' ? 1 : -1) * direction * step;
         updateAria(setWidth(side, currentWidth() + delta));
       }}
-    />
+    >
+      <span className="pointer-events-none absolute inset-y-0 left-1 w-0.5 bg-transparent transition-colors group-hover:bg-zinc-400 group-focus-visible:bg-zinc-500" />
+    </button>
   );
 }

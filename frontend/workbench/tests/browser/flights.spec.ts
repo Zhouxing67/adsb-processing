@@ -7,7 +7,7 @@ test('flight catalogue, selection, matching, detail and map are React-owned', as
   await page.getByPlaceholder('航班号 / ID').fill('F01');
   await page.getByRole('button', { name: '过滤', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(1);
-  await page.locator('.sheet-table tbody input[type=checkbox]').check();
+  await page.locator('.sheet-table tbody [role="checkbox"]').first().click();
   await expect(page.getByText('已选 1 条')).toBeVisible();
   await page.getByRole('button', { name: '匹配所选航班', exact: true }).click();
   await page.getByRole('button', { name: '确认提交', exact: true }).click();
@@ -21,9 +21,11 @@ test('flight catalogue, selection, matching, detail and map are React-owned', as
   await page.getByRole('button', { name: '地图', exact: true }).click();
   await expect(page.locator('#map canvas')).not.toHaveCount(0);
   await expect(page.locator('.flight-map-label')).toHaveCount(1);
-  await page.locator('.selected-chip label').filter({ hasText: '轨迹' }).getByRole('checkbox').uncheck();
+  await page.locator('.selected-chip').first().hover();
+  await page.locator('.selected-chip').getByRole('switch', { name: /轨迹/ }).click();
   await expect(page.locator('.flight-map-label')).toHaveCount(0);
 });
+
 test('filter draft is committed explicitly and reset restores catalogue', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
@@ -32,6 +34,7 @@ test('filter draft is committed explicitly and reset restores catalogue', async 
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
   await page.getByRole('button', { name: '过滤', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(1);
+  await expect(page.getByText('搜索: F00')).toBeVisible();
   await page.getByRole('button', { name: '重置', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
 });
@@ -44,15 +47,15 @@ test('flight mode restores topology, drag split view and resizable rails', async
   await page.getByRole('button', { name: '地图', exact: true }).dragTo(workspace, { targetPosition: { x: 120, y: 240 } });
   await expect(page.locator('.map-view')).toBeVisible();
   await expect(page.locator('#flight-sheet')).toBeVisible();
-  const splitDragger = page.locator('.ant-splitter-bar-dragger');
+  const splitDragger = page.getByTestId('workspace-split-handle');
   await expect(splitDragger).toBeVisible();
   const splitBox = await splitDragger.boundingBox();
   const firstPanel = page.locator('.workspace-pane').first();
   const widthBefore = await firstPanel.evaluate(element => element.getBoundingClientRect().width);
   expect(splitBox).not.toBeNull();
-  await page.mouse.move(splitBox.x + splitBox.width / 2, splitBox.y + splitBox.height / 2);
+  await page.mouse.move(splitBox!.x + splitBox!.width / 2, splitBox!.y + splitBox!.height / 2);
   await page.mouse.down();
-  await page.mouse.move(splitBox.x + 80, splitBox.y + splitBox.height / 2);
+  await page.mouse.move(splitBox!.x + 80, splitBox!.y + splitBox!.height / 2);
   await page.mouse.up();
   await expect.poll(() => firstPanel.evaluate(element => element.getBoundingClientRect().width)).toBeGreaterThan(widthBefore + 50);
   await expect.poll(() => page.evaluate(() => Number(localStorage.getItem('airport-workbench.map-split-width')))).toBeGreaterThan(50);
@@ -70,16 +73,18 @@ test('observation records can be split with the map by dragging the tab', async 
   await page.getByRole('button', { name: '观测记录', exact: true }).dragTo(page.locator('.workspace'), { targetPosition: { x: 700, y: 240 } });
   await expect(page.locator('.map-view')).toBeVisible();
   await expect(page.locator('.observations-view')).toBeVisible();
-  await expect(page.locator('.ant-splitter-bar-dragger')).toBeVisible();
+  await expect(page.getByTestId('workspace-split-handle')).toBeVisible();
 });
 
 test('map sidebar can isolate one displayed flight and restore all flights', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
-  await page.locator('.sheet-table tbody input[type=checkbox]').nth(0).check();
-  await page.locator('.sheet-table tbody input[type=checkbox]').nth(1).check();
+  await page.locator('.sheet-table tbody [role="checkbox"]').nth(0).click();
+  await page.locator('.sheet-table tbody [role="checkbox"]').nth(1).click();
   await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
   await expect(page.locator('.flight-map-label')).toHaveCount(2);
+  const firstChip = page.locator('.selected-chip').first();
+  await firstChip.hover();
   const isolate = page.locator('.flight-isolate-action').first();
   await isolate.click();
   await expect(isolate).toHaveAttribute('aria-pressed', 'true');
@@ -96,7 +101,7 @@ test('all filtered flights can be displayed without a ten-flight cap', async ({ 
     const pathname = new URL(request.url()).pathname;
     if (/^\/api\/flights\/[^/]+$/.test(pathname)) detailRequests.push(pathname);
   });
-  await page.getByRole('checkbox', { name: '选择全部结果', exact: true }).check();
+  await page.getByRole('checkbox', { name: '选择全部结果', exact: true }).click();
   await expect(page.getByText('已选 18 条')).toBeVisible();
   await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
   await expect(page.locator('.map-selection .selected-chip')).toHaveCount(18);
@@ -106,10 +111,10 @@ test('all filtered flights can be displayed without a ten-flight cap', async ({ 
 test('selection and map display survive paging and reload', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
-  await page.locator('.sheet-table tbody input[type=checkbox]').first().check();
+  await page.locator('.sheet-table tbody [role="checkbox"]').first().click();
   await page.getByRole('button', { name: '下一页', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(3);
-  await page.locator('.sheet-table tbody input[type=checkbox]').first().check();
+  await page.locator('.sheet-table tbody [role="checkbox"]').first().click();
   await expect(page.getByText('已选 2 条')).toBeVisible();
   await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
   await expect(page.locator('.map-selection .selected-chip')).toHaveCount(2);
@@ -120,17 +125,24 @@ test('selection and map display survive paging and reload', async ({ page }) => 
   await expect(page.locator('.map-selection .selected-chip')).toHaveCount(2);
 });
 
-test('stand/date filters validate before committing', async ({ page }) => {
+test('stand and date range filters default to dataset bounds and validate before committing', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
-  await page.locator('summary').filter({ hasText: '机位' }).click();
-  await page.getByRole('checkbox', { name: '空机位' }).check();
-  await page.getByRole('button', { name: '过滤', exact: true }).click();
+  await page.getByRole('button', { name: /更多筛选/ }).click();
+  const dateRangeButton = page.getByRole('button', { name: '日期范围' });
+  await expect(dateRangeButton).toContainText(/\d{4}-\d{2}-\d{2} 至 \d{4}-\d{2}-\d{2}/);
+  await dateRangeButton.click();
+  await expect(page.getByRole('button', { name: '恢复全部日期', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: '确定', exact: true }).click();
+  await page.getByRole('checkbox', { name: '空机位', exact: true }).click();
+  await page.getByRole('button', { name: '应用', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
-  await page.getByLabel('起始日期').fill('2024-01-02');
-  await page.getByLabel('终止日期').fill('2024-01-01');
-  await page.getByRole('button', { name: '过滤', exact: true }).click();
-  await expect(page.getByRole('alert')).toContainText('起始日期不得晚于终止日期');
+  await expect(page.getByText('机位: 空机位')).toBeVisible();
+  await page.getByRole('button', { name: /更多筛选/ }).click();
+  await page.getByLabel('最小观测点数').fill('20');
+  await page.getByLabel('最大观测点数').fill('10');
+  await page.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('最小观测点数不得大于最大观测点数');
 });
 
 test('stand editing only accepts a catalogue option or empty stand', async ({ page }) => {
@@ -146,7 +158,7 @@ test('stand editing only accepts a catalogue option or empty stand', async ({ pa
   await expect(page.locator('.sheet-table tbody tr').first().getByRole('button', { name: 'A01' })).toBeVisible();
 });
 
-test('max points draft does not auto-fetch and stand picker supports multi-select', async ({ page }) => {
+test('max points draft does not auto-fetch and advanced popover supports multi-select and chips', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr')).toHaveCount(15);
@@ -154,18 +166,17 @@ test('max points draft does not auto-fetch and stand picker supports multi-selec
   page.on('request', request => {
     if (new URL(request.url()).pathname === '/api/flights') flightRequests += 1;
   });
+  await page.getByRole('button', { name: /更多筛选/ }).click();
   const maxInput = page.getByLabel('最大观测点数');
   await maxInput.fill('');
   await maxInput.fill('50');
   await page.waitForTimeout(150);
   expect(flightRequests).toBe(0);
-  await page.locator('summary').filter({ hasText: '机位' }).click();
-  await page.getByRole('checkbox', { name: '空机位' }).check();
-  await expect(page.locator('.stand-options-panel')).toBeVisible();
-  await page.getByRole('checkbox', { name: 'A01' }).check();
-  await expect(page.locator('summary').filter({ hasText: '已选 2 个机位' })).toBeVisible();
-  await page.keyboard.press('Escape');
-  await expect(page.locator('.stand-options-panel')).not.toBeVisible();
+  await maxInput.fill('');
+  await page.getByRole('checkbox', { name: '空机位', exact: true }).click();
+  await page.getByRole('checkbox', { name: 'A01', exact: true }).click();
+  await page.getByRole('button', { name: '应用', exact: true }).click();
+  await expect(page.getByText('机位: 空机位, A01')).toBeVisible();
 });
 
 test('locating an observation in split view preserves the observation table', async ({ page }) => {
@@ -177,4 +188,45 @@ test('locating an observation in split view preserves the observation table', as
   await page.getByRole('button', { name: '在地图中定位' }).first().click();
   await expect(page.locator('.observations-view')).toBeVisible();
   await expect(page.locator('.flight-status-toast')).toContainText('已在地图中定位观测点');
+  const zoomOut = page.locator('.leaflet-control-zoom-out');
+  for (let i = 0; i < 10; i += 1) {
+    await zoomOut.click();
+  }
+  await expect(zoomOut).not.toHaveClass(/leaflet-disabled/);
+});
+
+test('full-screen flight table auto-collapses right rail and restores it on map view', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.locator('.right-rail')).toBeVisible();
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await expect(page.locator('.right-rail')).toHaveCount(0);
+  await page.getByRole('button', { name: '地图', exact: true }).click();
+  await expect(page.locator('.right-rail')).toBeVisible();
+});
+
+test('split view keeps filter controls unclipped within narrow pane', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '地图', exact: true }).dragTo(page.locator('.workspace'), { targetPosition: { x: 120, y: 240 } });
+  const sheet = page.locator('#flight-sheet');
+  const filterBtn = page.getByRole('button', { name: '过滤', exact: true });
+  await expect(filterBtn).toBeVisible();
+  const [sheetBox, btnBox] = await Promise.all([sheet.boundingBox(), filterBtn.boundingBox()]);
+  expect(sheetBox).not.toBeNull();
+  expect(btnBox).not.toBeNull();
+  expect(btnBox!.x + btnBox!.width).toBeLessThanOrEqual(sheetBox!.x + sheetBox!.width + 1);
+});
+
+test('clicking a flight on map highlights sidebar item, opens detail from sidebar, and resizes list height', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await page.getByRole('button', { name: '加入地图', exact: true }).first().click();
+  await page.getByRole('button', { name: '地图', exact: true }).click();
+  await page.locator('.flight-map-label').first().click();
+  await expect(page.locator('.map-selection .selected-chip').first()).toHaveAttribute('data-highlighted', 'true');
+  const listResizer = page.getByRole('separator', { name: '调整地图展示列表高度' });
+  await listResizer.focus();
+  await listResizer.press('ArrowDown');
+  await expect(listResizer).toHaveAttribute('aria-valuenow', '63');
+  await page.locator('.map-selection .selected-chip').first().getByRole('button', { name: '详情', exact: true }).click();
+  await expect(page.locator('.observations-view')).toBeVisible();
 });

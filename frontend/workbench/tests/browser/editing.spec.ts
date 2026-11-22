@@ -55,5 +55,5 @@ test('editing auto-opens collapsed right rail on selection and guards empty sear
   await page.getByPlaceholder('节点 ID 或完整边 ID').fill('1—2 · 0');
   await page.getByRole('button', { name: '选中', exact: true }).click();
   await expect(page.locator('.details')).toBeVisible();
-  await expect(page.locator('.property-form select')).toBeVisible();
+  await expect(page.locator('.property-form').getByRole('combobox')).toBeVisible();
 });

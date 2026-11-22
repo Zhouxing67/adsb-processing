@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
-import type { GeoFeature, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
-import { useWorkbench } from '../../app/WorkbenchContext';
-import { aerowayTypes, propertyPatch } from '../../domain/properties';
-import type { Aeroway } from '../../domain/properties';
+import { X } from 'lucide-react';
+import type { GeoFeature, NodeProperties, PointGeometry, SelectedFeature } from '@/api/types';
+import { useWorkbench } from '@/app/WorkbenchContext';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { aerowayTypes, propertyPatch } from '@/domain/properties';
+import type { Aeroway } from '@/domain/properties';
 
 function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, NodeProperties> {
   return feature.geometry.type === 'Point';
@@ -66,18 +71,18 @@ export function FeatureDetails() {
 
   const renderFields = (title: string, fields: Array<[string, unknown]>) =>
     fields.length ? (
-      <section className="details-section">
-        <h3>{title}</h3>
-        <dl>
+      <section className="border-t border-border py-4">
+        <h3 className="mb-2.5 text-xs font-semibold text-foreground">{title}</h3>
+        <dl className="m-0 divide-y divide-border/60 text-xs">
           {fields.map(([key, value]) => (
-            <div key={key}>
-              <dt>
-                <span>{fieldLabels[key] ?? key}</span>
-                {fieldLabels[key] && <small>{key}</small>}
+            <div key={key} className="grid grid-cols-[minmax(90px,40%)_minmax(0,1fr)] gap-2 py-1.5">
+              <dt className="text-muted-foreground">
+                <span className="block">{fieldLabels[key] ?? key}</span>
+                {fieldLabels[key] && <small className="block text-[10px] text-zinc-400">{key}</small>}
               </dt>
-              <dd>
+              <dd className="m-0 flex items-center gap-1.5 break-words text-foreground tabular-nums">
                 {key === 'validation_color' && typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) && (
-                  <i className="property-color" style={{ background: value }} />
+                  <i className="h-3 w-3 shrink-0 rounded-[2px] border border-border" style={{ background: value }} />
                 )}
                 {formatValue(key, value)}
               </dd>
@@ -106,51 +111,81 @@ export function FeatureDetails() {
   const customAeroway = aeroway && !aerowayTypes.includes(aeroway as Aeroway);
 
   return (
-    <aside className="details panel">
-      <button className="panel-close" onClick={() => wb.dispatch({ type: 'selected', value: null })}>
-        ×
-      </button>
-      <div className="details-content">
-        <small>图要素详情 · {node ? '节点' : '边'}</small>
-        <h2>{node ? feature.properties.id : edgeLabel(feature.properties.id)}</h2>
+    <ScrollArea className="details relative h-full w-full bg-background">
+      <aside className="relative p-5">
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          className="absolute right-3 top-3"
+          aria-label="关闭要素详情"
+          onClick={() => wb.dispatch({ type: 'selected', value: null })}
+        >
+          <X className="h-4 w-4" />
+        </Button>
+
+        <div className="pr-7 pb-4">
+          <small className="block text-[11px] text-muted-foreground">图要素详情 · {node ? '节点' : '边'}</small>
+          <h2 className="mt-0.5 break-words text-base font-semibold text-foreground">
+            {node ? feature.properties.id : edgeLabel(feature.properties.id)}
+          </h2>
+        </div>
+
         {renderFields('基本信息', basicEntries)}
         {renderFields('拓扑信息', topologyEntries)}
         {renderFields('检查状态', inspectionEntries)}
         {renderFields('其他属性', otherEntries)}
+
         {wb.state?.capabilities.can_edit_graph && (
-          <section className="details-section property-form">
-            <h3>可编辑属性</h3>
-            <label>
-              <span>类型 <small>aeroway</small></span>
-              <select
-                value={aeroway}
-                onChange={event => {
-                  setAeroway(event.target.value);
+          <section className="property-form grid gap-3 border-t border-border py-4">
+            <h3 className="m-0 text-xs font-semibold text-foreground">可编辑属性</h3>
+            <div className="grid gap-1 text-xs text-muted-foreground">
+              <span className="flex items-baseline gap-1">
+                类型 <small className="text-[10px] text-zinc-400">aeroway</small>
+              </span>
+              <Select
+                value={aeroway || '__empty__'}
+                onValueChange={value => {
+                  setAeroway(value === '__empty__' ? '' : value);
                   setValidationError('');
                 }}
               >
-                <option value="">（无）</option>
-                {aerowayTypes.map(item => (
-                  <option key={item} value={item}>{item}</option>
-                ))}
-                {customAeroway && <option value={aeroway}>{aeroway}（非标准）</option>}
-              </select>
+                <SelectTrigger aria-label="类型" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__empty__">（无）</SelectItem>
+                  {aerowayTypes.map(item => (
+                    <SelectItem key={item} value={item}>
+                      {item}
+                    </SelectItem>
+                  ))}
+                  {customAeroway && <SelectItem value={aeroway}>{aeroway}（非标准）</SelectItem>}
+                </SelectContent>
+              </Select>
+            </div>
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              <span className="flex items-baseline gap-1">
+                名称 <small className="text-[10px] text-zinc-400">name</small>
+              </span>
+              <Input value={name} onChange={event => setName(event.target.value)} />
             </label>
-            <label>
-              <span>名称 <small>name</small></span>
-              <input value={name} onChange={event => setName(event.target.value)} />
+            <label className="grid gap-1 text-xs text-muted-foreground">
+              <span className="flex items-baseline gap-1">
+                编号 <small className="text-[10px] text-zinc-400">ref</small>
+              </span>
+              <Input value={ref} onChange={event => setRef(event.target.value)} />
             </label>
-            <label>
-              <span>编号 <small>ref</small></span>
-              <input value={ref} onChange={event => setRef(event.target.value)} />
-            </label>
-            {validationError && <p className="field-error" role="alert">{validationError}</p>}
-            <button className="primary-button" onClick={() => void save()}>
+            {validationError && (
+              <p className="m-0 text-xs text-destructive" role="alert">
+                {validationError}
+              </p>
+            )}
+            <Button variant="default" onClick={() => void save()}>
               保存属性
-            </button>
+            </Button>
           </section>
         )}
-      </div>
-    </aside>
+      </aside>
+    </ScrollArea>
   );
 }

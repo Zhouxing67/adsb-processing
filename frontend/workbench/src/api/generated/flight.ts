@@ -227,8 +227,12 @@ export interface components {
         };
         /** FlightCatalogueResponse */
         FlightCatalogueResponse: {
+            /** Dataset Max Date */
+            dataset_max_date?: string | null;
             /** Dataset Max Points */
             dataset_max_points: number;
+            /** Dataset Min Date */
+            dataset_min_date?: string | null;
             /** Graph Id */
             graph_id: string;
             /** Items */

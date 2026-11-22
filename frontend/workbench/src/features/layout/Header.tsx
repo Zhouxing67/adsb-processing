@@ -1,6 +1,18 @@
-import { Modal } from 'antd';
-import { useWorkbench } from '../../app/WorkbenchContext';
-import { StudioIcon } from './StudioIcon';
+import { useState } from 'react';
+import { PanelLeft, PanelRight, Undo2 } from 'lucide-react';
+import { useWorkbench } from '@/app/WorkbenchContext';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 
 interface HeaderProps {
   editing: boolean;
@@ -13,57 +25,101 @@ interface HeaderProps {
 export function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: HeaderProps) {
   const wb = useWorkbench();
   const state = wb.state;
+  const [finishOpen, setFinishOpen] = useState(false);
+
   const command = async (path: '/api/undo' | '/api/save' | '/api/finish') => {
     await wb.runGraphCommand(path);
   };
 
-  const confirmFinish = () => {
-    Modal.confirm({
-      title: '完成并保存机场图？',
-      content: '确认后将保存当前修改并结束编辑会话。',
-      okText: '确认完成',
-      cancelText: '取消',
-      onOk: () => command('/api/finish'),
-    });
-  };
-
   return (
-    <header className="topbar panel">
-      <button className="rail-toggle" aria-label="切换左侧栏" aria-expanded={leftOpen} onClick={onLeft}>
-        <StudioIcon name="leftRail" />
-      </button>
-      <div className="brand-mark">AW</div>
-      <div className="brand-copy">
-        <strong>
-          Airport Workbench
-          {wb.hasUnsavedChanges && <em className="unsaved-dot" title="有未保存的图修改"> · 未保存</em>}
-        </strong>
-        <span>
-          {state
-            ? `${state.node_count} 节点 · ${state.edge_count} 边${state.flight_mode ? ` · ${state.flight_count} 航班` : ''}`
-            : '载入中…'}
+    <header className="relative z-[1200] col-span-full row-start-1 flex h-14 items-center gap-2.5 border-b border-border bg-background px-4">
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="切换左侧栏"
+        aria-expanded={leftOpen}
+        onClick={onLeft}
+      >
+        <PanelLeft className="h-4 w-4" />
+      </Button>
+
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[var(--brand-red)] text-xs font-extrabold tracking-tight text-white shadow-xs">
+        AW
+      </div>
+
+      <div className="flex min-w-0 flex-col leading-tight">
+        <div className="flex items-center gap-2">
+          <strong className="truncate text-[14px] font-semibold text-foreground">Airport Workbench</strong>
+          {wb.hasUnsavedChanges && (
+            <Badge variant="warning" title="有未保存的图修改">
+              未保存
+            </Badge>
+          )}
+        </div>
+        <span className="truncate text-[11px] text-muted-foreground tabular-nums">
+          {!state
+            ? '载入中…'
+            : state.flight_mode
+              ? '航班工作台'
+              : `${state.node_count} 节点 · ${state.edge_count} 边`}
         </span>
       </div>
-      <div className="top-actions">
+
+      <div className="ml-auto flex items-center gap-1.5">
         {state?.capabilities.can_edit_graph && editing && (
           <>
-            <button className="text-button" disabled={!state.can_undo} onClick={() => void command('/api/undo')}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!state.can_undo}
+              onClick={() => void command('/api/undo')}
+            >
+              <Undo2 className="h-3.5 w-3.5" />
               撤销
-            </button>
-            <button className="save-button" onClick={() => void command('/api/save')}>
+            </Button>
+            <Button variant="default" size="sm" onClick={() => void command('/api/save')}>
               保存
-            </button>
+            </Button>
             {state.can_finish && (
-              <button className="finish-button" onClick={confirmFinish}>
+              <Button variant="secondary" size="sm" onClick={() => setFinishOpen(true)}>
                 完成
-              </button>
+              </Button>
             )}
           </>
         )}
       </div>
-      <button className="rail-toggle" aria-label="切换右侧栏" aria-expanded={rightOpen} onClick={onRight}>
-        <StudioIcon name="rightRail" />
-      </button>
+
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        className="text-muted-foreground hover:text-foreground"
+        aria-label="切换右侧栏"
+        aria-expanded={rightOpen}
+        onClick={onRight}
+      >
+        <PanelRight className="h-4 w-4" />
+      </Button>
+
+      <AlertDialog open={finishOpen} onOpenChange={setFinishOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>完成并保存机场图？</AlertDialogTitle>
+            <AlertDialogDescription>确认后将保存当前修改并结束编辑会话。</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>取消</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setFinishOpen(false);
+                void command('/api/finish');
+              }}
+            >
+              确认完成
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </header>
   );
 }

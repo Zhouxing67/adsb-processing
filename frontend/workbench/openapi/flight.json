@@ -298,9 +298,31 @@
       "FlightCatalogueResponse": {
         "additionalProperties": false,
         "properties": {
+          "dataset_max_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Max Date"
+          },
           "dataset_max_points": {
             "title": "Dataset Max Points",
             "type": "integer"
+          },
+          "dataset_min_date": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dataset Min Date"
           },
           "graph_id": {
             "title": "Graph Id",

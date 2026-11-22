@@ -1,6 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { GraphPostInput, GraphPostPath } from '../../api/client';
-import type { LineGeometry, NodeId } from '../../api/types';
+import { X } from 'lucide-react';
+import type { GraphPostInput, GraphPostPath } from '@/api/client';
+import type { LineGeometry, NodeId } from '@/api/types';
+import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { ScrollArea } from '@/components/ui/scroll-area';
 import type { GraphDialogState } from './types';
 
 interface Props {
@@ -10,59 +15,359 @@ interface Props {
   onConfirm<P extends GraphPostPath>(path: P, body: GraphPostInput<P>): Promise<void>;
   onMergeCandidate(nodeIds: NodeId[], revision: number): Promise<void>;
 }
+
 export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCandidate }: Props) {
   const [choice, setChoice] = useState(0);
   const [pairs, setPairs] = useState<Set<string>>(new Set());
   const [discard, setDiscard] = useState(false);
+
   useEffect(() => {
-    const preferred = dialog.kind === 'merge'
-      ? dialog.preview.nodes.findIndex(node => node.node_id === dialog.preview.canonical_node_id)
-      : dialog.kind === 'split' && dialog.preview.recommended_node
-        ? dialog.preview.candidates.findIndex(candidate => candidate.id === dialog.preview.recommended_node)
-        : 0;
-    setChoice(Math.max(0, preferred)); setDiscard(false);
+    const preferred =
+      dialog.kind === 'merge'
+        ? dialog.preview.nodes.findIndex(node => node.node_id === dialog.preview.canonical_node_id)
+        : dialog.kind === 'split' && dialog.preview.recommended_node
+          ? dialog.preview.candidates.findIndex(candidate => candidate.id === dialog.preview.recommended_node)
+          : 0;
+    setChoice(Math.max(0, preferred));
+    setDiscard(false);
     if (dialog.kind === 'delete-node') {
-      const used = new Set<string>(), selected = new Set<string>();
-      dialog.preview.pair_candidates.filter(item => item.recommended).forEach(item => {
-        if (!used.has(item.left) && !used.has(item.right)) { selected.add(item.pair_id); used.add(item.left); used.add(item.right); }
-      });
+      const used = new Set<string>();
+      const selected = new Set<string>();
+      dialog.preview.pair_candidates
+        .filter(item => item.recommended)
+        .forEach(item => {
+          if (!used.has(item.left) && !used.has(item.right)) {
+            selected.add(item.pair_id);
+            used.add(item.left);
+            used.add(item.right);
+          }
+        });
       setPairs(selected);
-    } else setPairs(new Set());
+    } else {
+      setPairs(new Set());
+    }
     if (dialog.kind === 'restore') onPreview(dialog.preview.candidates[0]?.geometry ?? null);
     else if (dialog.kind === 'snap') onPreview(dialog.preview.connector_geometry);
     else onPreview(null);
     return () => onPreview(null);
   }, [dialog, onPreview]);
+
   const unpaired = useMemo(() => {
     if (dialog.kind !== 'delete-node') return [];
     const used = new Set<string>();
-    dialog.preview.pair_candidates.filter(item => pairs.has(item.pair_id)).forEach(item => { used.add(item.left); used.add(item.right); });
+    dialog.preview.pair_candidates
+      .filter(item => pairs.has(item.pair_id))
+      .forEach(item => {
+        used.add(item.left);
+        used.add(item.right);
+      });
     return dialog.preview.half_edges.filter(item => !used.has(item.half_id)).map(item => item.half_id);
   }, [dialog, pairs]);
+
   const confirm = async () => {
     if (dialog.kind === 'restore') {
       const candidate = dialog.preview.candidates[choice];
-      await onConfirm('/api/restore-confirm', { start: dialog.start, end: dialog.end, candidate_id: candidate.candidate_id, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/restore-confirm', {
+        start: dialog.start,
+        end: dialog.end,
+        candidate_id: candidate.candidate_id,
+        expected_revision: dialog.preview.revision,
+      });
     } else if (dialog.kind === 'merge') {
-      await onConfirm('/api/merge-nodes-confirm', { node_ids: dialog.preview.node_ids, canonical_node_id: dialog.preview.nodes[choice].node_id, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/merge-nodes-confirm', {
+        node_ids: dialog.preview.node_ids,
+        canonical_node_id: dialog.preview.nodes[choice].node_id,
+        expected_revision: dialog.preview.revision,
+      });
     } else if (dialog.kind === 'delete-edge') {
-      await onConfirm('/api/delete-edge-confirm', { edge: dialog.edge, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/delete-edge-confirm', {
+        edge: dialog.edge,
+        expected_revision: dialog.preview.revision,
+      });
     } else if (dialog.kind === 'delete-node') {
-      await onConfirm('/api/delete-node-confirm', { node: dialog.node, pair_ids: [...pairs], discard_unpaired: discard, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/delete-node-confirm', {
+        node: dialog.node,
+        pair_ids: [...pairs],
+        discard_unpaired: discard,
+        expected_revision: dialog.preview.revision,
+      });
     } else if (dialog.kind === 'split') {
-      await onConfirm('/api/split-source-confirm', { edge: dialog.edge, longitude: dialog.longitude, latitude: dialog.latitude, osm_node_id: dialog.preview.candidates[choice]?.id ?? null, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/split-source-confirm', {
+        edge: dialog.edge,
+        longitude: dialog.longitude,
+        latitude: dialog.latitude,
+        osm_node_id: dialog.preview.candidates[choice]?.id ?? null,
+        expected_revision: dialog.preview.revision,
+      });
     } else if (dialog.kind === 'snap') {
-      await onConfirm('/api/manual-snap-confirm', { node: dialog.node, edge: dialog.edge, expected_revision: dialog.preview.revision });
+      await onConfirm('/api/manual-snap-confirm', {
+        node: dialog.node,
+        edge: dialog.edge,
+        expected_revision: dialog.preview.revision,
+      });
     }
   };
-  if (dialog.kind === 'merge-candidates') return <aside className="details panel graph-dialog"><button className="panel-close" onClick={onClose}>×</button><h2>疑似重复图节点</h2><p className="field-note">候选距离 ≤ 0.5 m</p><div className="source-options">{dialog.preview.candidates.map((candidate, index) => <div className="merge-candidate" key={index}><strong>候选 {index + 1} · 最大距离 {candidate.max_distance_m.toFixed(3)} m</strong><p>{candidate.nodes.map(node => node.node_id).join('、')}</p><button className="primary-button" onClick={() => void onMergeCandidate(candidate.node_ids, dialog.preview.revision)}>检查并合并</button></div>)}</div></aside>;
-  return <aside className="details panel graph-dialog"><button className="panel-close" onClick={onClose}>×</button>
-    {dialog.kind === 'restore' && <><h2>从 OSM 恢复连接</h2><p>{dialog.preview.current_endpoints.join(' — ')}</p><div className="source-options">{dialog.preview.candidates.map((candidate, index) => <label className="source-option" key={candidate.candidate_id} onMouseEnter={() => onPreview(candidate.geometry)}><input type="radio" checked={choice === index} onChange={() => { setChoice(index); onPreview(candidate.geometry); }} /><span>{candidate.source_ids.join(' + ')}<br />OSM way {candidate.osm_way_ids.join(' + ')} · {candidate.length_m.toFixed(2)} m</span></label>)}</div></>}
-    {dialog.kind === 'merge' && <><h2>合并节点预览</h2><dl><div><dt>最大距离</dt><dd>{dialog.preview.max_distance_m.toFixed(3)} m</dd></div><div><dt>受影响边</dt><dd>{dialog.preview.affected_edges.length}</dd></div></dl><h3>选择规范节点</h3>{dialog.preview.nodes.map((node, index) => <label className="source-option" key={node.node_id}><input type="radio" checked={choice === index} onChange={() => setChoice(index)} /><span>{node.node_id} · {node.manual ? '人工图节点' : 'OSM 图节点'} · 度 {node.degree}</span></label>)}{dialog.preview.warnings.map(item => <p className="warning" key={item}>{item}</p>)}</>}
-    {dialog.kind === 'delete-edge' && <><h2>删除派生边</h2><p>{dialog.preview.edge}</p>{dialog.preview.source_segments.map(segment => <p key={`${segment.source_id}-${segment.source_start_m}`}>{segment.source_id} [{segment.source_start_m.toFixed(2)}, {segment.source_end_m.toFixed(2)}]{segment.reversed ? ' 反向' : ''}</p>)}<p className="field-note">SourceEdge 不会被删除。</p></>}
-    {dialog.kind === 'delete-node' && <><h2>半边配对</h2><p>节点 {dialog.preview.node} · {dialog.preview.half_edges.length} 条关联半边</p><div className="source-options">{dialog.preview.pair_candidates.map(pair => <label className="source-option pair-option" key={pair.pair_id} onMouseEnter={() => onPreview(pair.geometry)}><input type="checkbox" checked={pairs.has(pair.pair_id)} onChange={event => setPairs(value => { const next = new Set(value); if (event.target.checked) { dialog.preview.pair_candidates.filter(item => item.pair_id !== pair.pair_id && (item.left === pair.left || item.left === pair.right || item.right === pair.left || item.right === pair.right)).forEach(item => next.delete(item.pair_id)); next.add(pair.pair_id); } else next.delete(pair.pair_id); return next; })} /><span><strong>{pair.endpoints.join(' ↔ ')}</strong><br />{pair.source_ids.join(' + ')} · 转角 {pair.angle_degrees}° · {pair.same_source ? '同源' : '跨来源'}</span></label>)}</div><p className="field-note">已选择 {pairs.size} 组连接 · 未使用：{unpaired.join(', ') || '无'}</p>{unpaired.length > 0 && <label className="source-option"><input type="checkbox" checked={discard} onChange={event => setDiscard(event.target.checked)} /><span>明确删除未配对半边</span></label>}</>}
-    {dialog.kind === 'split' && <><h2>补充图分割点</h2><p>命中来源：{dialog.preview.source_id}</p>{dialog.preview.candidates.length ? dialog.preview.candidates.map((candidate, index) => <label className="source-option" key={candidate.id}><input type="radio" checked={choice === index} onChange={() => setChoice(index)} /><span>OSM Node {candidate.id} · 距离 {candidate.distance_m.toFixed(2)} m</span></label>) : <p>没有合适 OSM Node，将创建人工节点。</p>}</>}
-    {dialog.kind === 'snap' && <><h2>人工吸附预览</h2><dl><div><dt>节点</dt><dd>{dialog.preview.node}</dd></div><div><dt>目标边</dt><dd>{dialog.preview.edge}</dd></div><div><dt>移动距离</dt><dd>{dialog.preview.distance_m.toFixed(3)} m</dd></div><div><dt>目标来源</dt><dd>{dialog.preview.target_source_id}</dd></div></dl><p className="field-note">确认后将移动图节点、重建关联边，并切分目标来源区间。</p></>}
-    <div className="dialog-actions"><button className="secondary-button" onClick={onClose}>取消</button><button className="primary-button" disabled={dialog.kind === 'delete-node' && unpaired.length > 0 && !discard} onClick={() => void confirm()}>确认</button></div>
-  </aside>;
+
+  if (dialog.kind === 'merge-candidates') {
+    return (
+      <aside className="details relative flex h-full w-full flex-col bg-background">
+        <div className="flex items-start justify-between gap-2 border-b border-border p-4">
+          <div>
+            <h2 className="m-0 text-base font-semibold text-foreground">疑似重复图节点</h2>
+            <p className="mt-0.5 text-[11px] text-muted-foreground">候选距离 ≤ 0.5 m</p>
+          </div>
+          <Button variant="ghost" size="icon-xs" aria-label="关闭" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </Button>
+        </div>
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="space-y-2.5 p-4">
+            {dialog.preview.candidates.map((candidate, index) => (
+              <div key={index} className="space-y-2 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+                <strong className="block font-medium text-foreground tabular-nums">
+                  候选 {index + 1} · 最大距离 {candidate.max_distance_m.toFixed(3)} m
+                </strong>
+                <p className="m-0 break-words text-muted-foreground">
+                  {candidate.nodes.map(node => node.node_id).join('、')}
+                </p>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => void onMergeCandidate(candidate.node_ids, dialog.preview.revision)}
+                >
+                  检查并合并
+                </Button>
+              </div>
+            ))}
+          </div>
+        </ScrollArea>
+      </aside>
+    );
+  }
+
+  return (
+    <aside className="details relative flex h-full w-full flex-col bg-background">
+      <Button
+        variant="ghost"
+        size="icon-xs"
+        className="absolute right-3 top-3 z-10"
+        aria-label="关闭"
+        onClick={onClose}
+      >
+        <X className="h-4 w-4" />
+      </Button>
+
+      <ScrollArea className="min-h-0 flex-1">
+        <div className="space-y-3 p-5 pr-8 text-[13px]">
+          {dialog.kind === 'restore' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">从 OSM 恢复连接</h2>
+              <p className="m-0 text-xs text-muted-foreground">{dialog.preview.current_endpoints.join(' — ')}</p>
+              <RadioGroup
+                value={String(choice)}
+                onValueChange={value => {
+                  const index = Number(value);
+                  setChoice(index);
+                  onPreview(dialog.preview.candidates[index]?.geometry ?? null);
+                }}
+                className="gap-2"
+              >
+                {dialog.preview.candidates.map((candidate, index) => (
+                  <label
+                    key={candidate.candidate_id}
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                    onMouseEnter={() => onPreview(candidate.geometry)}
+                  >
+                    <RadioGroupItem value={String(index)} className="mt-0.5" />
+                    <span className="min-w-0 break-words text-foreground tabular-nums">
+                      {candidate.source_ids.join(' + ')}
+                      <br />
+                      <span className="text-muted-foreground">
+                        OSM way {candidate.osm_way_ids.join(' + ')} · {candidate.length_m.toFixed(2)} m
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </RadioGroup>
+            </>
+          )}
+
+          {dialog.kind === 'merge' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">合并节点预览</h2>
+              <dl className="m-0 divide-y divide-border/70 text-xs tabular-nums">
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">最大距离</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.max_distance_m.toFixed(3)} m</dd>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">受影响边</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.affected_edges.length}</dd>
+                </div>
+              </dl>
+              <h3 className="m-0 pt-2 text-xs font-semibold text-foreground">选择规范节点</h3>
+              <RadioGroup value={String(choice)} onValueChange={value => setChoice(Number(value))} className="gap-2">
+                {dialog.preview.nodes.map((node, index) => (
+                  <label
+                    key={node.node_id}
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                  >
+                    <RadioGroupItem value={String(index)} className="mt-0.5" />
+                    <span className="min-w-0 break-words">
+                      {node.node_id} · {node.manual ? '人工图节点' : 'OSM 图节点'} · 度 {node.degree}
+                    </span>
+                  </label>
+                ))}
+              </RadioGroup>
+              {dialog.preview.warnings.map(item => (
+                <p className="m-0 text-xs text-destructive" key={item}>
+                  {item}
+                </p>
+              ))}
+            </>
+          )}
+
+          {dialog.kind === 'delete-edge' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">删除派生边</h2>
+              <p className="m-0 break-words text-xs font-medium text-foreground">{dialog.preview.edge}</p>
+              <div className="space-y-1 text-xs text-muted-foreground tabular-nums">
+                {dialog.preview.source_segments.map(segment => (
+                  <p className="m-0" key={`${segment.source_id}-${segment.source_start_m}`}>
+                    {segment.source_id} [{segment.source_start_m.toFixed(2)}, {segment.source_end_m.toFixed(2)}]
+                    {segment.reversed ? ' 反向' : ''}
+                  </p>
+                ))}
+              </div>
+              <p className="m-0 text-[11px] text-muted-foreground">SourceEdge 不会被删除。</p>
+            </>
+          )}
+
+          {dialog.kind === 'delete-node' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">半边配对</h2>
+              <p className="m-0 text-xs text-muted-foreground tabular-nums">
+                节点 {dialog.preview.node} · {dialog.preview.half_edges.length} 条关联半边
+              </p>
+              <div className="space-y-2">
+                {dialog.preview.pair_candidates.map(pair => (
+                  <label
+                    key={pair.pair_id}
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                    onMouseEnter={() => onPreview(pair.geometry)}
+                  >
+                    <Checkbox
+                      checked={pairs.has(pair.pair_id)}
+                      onCheckedChange={checked =>
+                        setPairs(value => {
+                          const next = new Set(value);
+                          if (checked === true) {
+                            dialog.preview.pair_candidates
+                              .filter(
+                                item =>
+                                  item.pair_id !== pair.pair_id &&
+                                  (item.left === pair.left ||
+                                    item.left === pair.right ||
+                                    item.right === pair.left ||
+                                    item.right === pair.right),
+                              )
+                              .forEach(item => next.delete(item.pair_id));
+                            next.add(pair.pair_id);
+                          } else {
+                            next.delete(pair.pair_id);
+                          }
+                          return next;
+                        })
+                      }
+                    />
+                    <span className="min-w-0 break-words">
+                      <strong className="font-medium text-foreground">{pair.endpoints.join(' ↔ ')}</strong>
+                      <br />
+                      <span className="text-muted-foreground">
+                        {pair.source_ids.join(' + ')} · 转角 {pair.angle_degrees}° · {pair.same_source ? '同源' : '跨来源'}
+                      </span>
+                    </span>
+                  </label>
+                ))}
+              </div>
+              <p className="m-0 text-[11px] text-muted-foreground">
+                已选择 {pairs.size} 组连接 · 未使用：{unpaired.join(', ') || '无'}
+              </p>
+              {unpaired.length > 0 && (
+                <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs">
+                  <Checkbox checked={discard} onCheckedChange={checked => setDiscard(checked === true)} />
+                  <span>明确删除未配对半边</span>
+                </label>
+              )}
+            </>
+          )}
+
+          {dialog.kind === 'split' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">补充图分割点</h2>
+              <p className="m-0 text-xs text-muted-foreground">命中来源：{dialog.preview.source_id}</p>
+              {dialog.preview.candidates.length ? (
+                <RadioGroup value={String(choice)} onValueChange={value => setChoice(Number(value))} className="gap-2">
+                  {dialog.preview.candidates.map((candidate, index) => (
+                    <label
+                      key={candidate.id}
+                      className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                    >
+                      <RadioGroupItem value={String(index)} className="mt-0.5" />
+                      <span className="tabular-nums">
+                        OSM Node {candidate.id} · 距离 {candidate.distance_m.toFixed(2)} m
+                      </span>
+                    </label>
+                  ))}
+                </RadioGroup>
+              ) : (
+                <p className="m-0 text-xs text-muted-foreground">没有合适 OSM Node，将创建人工节点。</p>
+              )}
+            </>
+          )}
+
+          {dialog.kind === 'snap' && (
+            <>
+              <h2 className="m-0 text-base font-semibold text-foreground">人工吸附预览</h2>
+              <dl className="m-0 divide-y divide-border/70 text-xs tabular-nums">
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">节点</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.node}</dd>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">目标边</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.edge}</dd>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">移动距离</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.distance_m.toFixed(3)} m</dd>
+                </div>
+                <div className="flex justify-between py-1.5">
+                  <dt className="text-muted-foreground">目标来源</dt>
+                  <dd className="m-0 font-medium">{dialog.preview.target_source_id}</dd>
+                </div>
+              </dl>
+              <p className="m-0 text-[11px] text-muted-foreground">
+                确认后将移动图节点、重建关联边，并切分目标来源区间。
+              </p>
+            </>
+          )}
+        </div>
+      </ScrollArea>
+
+      <div className="flex shrink-0 justify-end gap-2 border-t border-border bg-background px-4 py-3">
+        <Button variant="outline" size="sm" onClick={onClose}>
+          取消
+        </Button>
+        <Button
+          variant="default"
+          size="sm"
+          disabled={dialog.kind === 'delete-node' && unpaired.length > 0 && !discard}
+          onClick={() => void confirm()}
+        >
+          确认
+        </Button>
+      </div>
+    </aside>
+  );
 }

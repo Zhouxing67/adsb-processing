@@ -144,6 +144,9 @@ class FlightWorkbench:
             config=self.match_config,
         )
         self.dataset_max_points = max((item.point_count for item in self.items.values()), default=0)
+        display_dates = [self._display_time(item.start_time)[:10] for item in self.items.values()]
+        self.dataset_min_date = min(display_dates, default=None)
+        self.dataset_max_date = max(display_dates, default=None)
 
     @property
     def results(self) -> dict[str, MatchResultItem]:
@@ -221,6 +224,8 @@ class FlightWorkbench:
             "page": actual_page,
             "page_size": page_size,
             "dataset_max_points": self.dataset_max_points,
+            "dataset_min_date": self.dataset_min_date,
+            "dataset_max_date": self.dataset_max_date,
             "min_points": filters.min_points,
             "max_points": filters.max_points,
             "graph_id": self.match_tasks.graph_id,

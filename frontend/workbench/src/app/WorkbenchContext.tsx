@@ -15,6 +15,7 @@ interface UiState {
   focusFeatureRequest: FocusFeatureRequest | null;
   hasUnsavedChanges: boolean;
   matchSelection: Set<string>; mapFlights: Map<string, MapFlightEntry>; isolatedFlightKey: string | null;
+  highlightedFlight: FocusFlightRequest | null;
   mapFocusRequest: FocusFlightRequest | null; fitMapVersion: number; observationLocation: [number, number] | null;
   topologyOpen: boolean; searchOpen: boolean; detailsOpen: boolean;
 }
@@ -38,6 +39,7 @@ type Action =
   | { type: 'map-flights-batch'; entries: Array<{ key: string; value: MapFlightEntry }> }
   | { type: 'clear-map-flights' }
   | { type: 'isolate-flight'; key: string | null }
+  | { type: 'highlight-flight'; key: string | null }
   | { type: 'focus-flight'; key: string; preserveView?: boolean }
   | { type: 'fit-map-flights'; preserveView?: boolean }
   | { type: 'observation-location'; value: [number, number] | null; preserveView?: boolean }
@@ -47,6 +49,7 @@ const initial: UiState = {
   state: null, loading: true, busy: false, error: '', status: '正在载入工作台…', tool: 'inspect',
   view: 'map', selected: null, focusFeatureRequest: null, hasUnsavedChanges: false,
   matchSelection: new Set(readStoredFlightState().matchSelection ?? []), mapFlights: new Map(), isolatedFlightKey: null,
+  highlightedFlight: null,
   mapFocusRequest: null, fitMapVersion: 0, observationLocation: null,
   topologyOpen: false, searchOpen: false, detailsOpen: false,
 };
@@ -98,8 +101,12 @@ function reducer(state: UiState, action: Action): UiState {
       action.entries.forEach(({ key, value }) => next.set(key, value));
       return { ...state, mapFlights: next };
     }
-    case 'clear-map-flights': return { ...state, mapFlights: new Map(), isolatedFlightKey: null, mapFocusRequest: null };
+    case 'clear-map-flights': return { ...state, mapFlights: new Map(), isolatedFlightKey: null, highlightedFlight: null, mapFocusRequest: null };
     case 'isolate-flight': return { ...state, isolatedFlightKey: action.key, status: action.key ? '仅显示所选航班' : '已恢复全部地图航班', error: '' };
+    case 'highlight-flight': return {
+      ...state,
+      highlightedFlight: action.key ? { key: action.key, seq: (state.highlightedFlight?.seq ?? 0) + 1 } : null,
+    };
     case 'focus-flight': return {
       ...state,
       mapFocusRequest: { key: action.key, seq: (state.mapFocusRequest?.seq ?? 0) + 1 },

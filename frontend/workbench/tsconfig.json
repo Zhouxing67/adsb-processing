@@ -7,6 +7,10 @@
     "allowJs": true,
     "checkJs": false,
     "skipLibCheck": true,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["src/*"]
+    },
     "lib": [
       "ES2022",
       "DOM"

@@ -331,6 +331,8 @@ class FlightCatalogueResponse(ApiModel):
     page: int
     page_size: int
     dataset_max_points: int
+    dataset_min_date: str | None = None
+    dataset_max_date: str | None = None
     min_points: int
     max_points: int
     graph_id: str

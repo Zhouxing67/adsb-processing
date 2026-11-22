@@ -1,14 +1,17 @@
-import { useWorkbench } from '../../app/WorkbenchContext';
-import type { EditorTool } from '../../app/WorkbenchContext';
+import { Crosshair, GitMerge, Magnet, PenLine, Route, Scissors, Trash2 } from 'lucide-react';
+import type { ComponentType } from 'react';
+import { useWorkbench } from '@/app/WorkbenchContext';
+import type { EditorTool } from '@/app/WorkbenchContext';
+import { cn } from '@/lib/utils';
 
-const tools: Array<{ key: EditorTool; label: string; symbol: string }> = [
-  { key: 'inspect', label: '查看', symbol: '⌖' },
-  { key: 'split', label: '补充分割点', symbol: '✂' },
-  { key: 'draw', label: '直接绘制连接', symbol: '＋' },
-  { key: 'restore', label: '恢复来源连接', symbol: '⌁' },
-  { key: 'merge', label: '合并重合节点', symbol: '◎' },
-  { key: 'snap', label: '人工吸附到边', symbol: '↦' },
-  { key: 'delete', label: '删除 / 简化', symbol: '×' },
+const tools: Array<{ key: EditorTool; label: string; icon: ComponentType<{ className?: string }> }> = [
+  { key: 'inspect', label: '查看', icon: Crosshair },
+  { key: 'split', label: '补充分割点', icon: Scissors },
+  { key: 'draw', label: '直接绘制连接', icon: PenLine },
+  { key: 'restore', label: '恢复来源连接', icon: Route },
+  { key: 'merge', label: '合并重合节点', icon: GitMerge },
+  { key: 'snap', label: '人工吸附到边', icon: Magnet },
+  { key: 'delete', label: '删除 / 简化', icon: Trash2 },
 ];
 
 const toolMessages: Record<EditorTool, string> = {
@@ -26,21 +29,39 @@ export function ToolDock() {
   if (!wb.state?.capabilities.can_edit_graph) return null;
 
   return (
-    <nav className="tool-dock panel react-tool-dock" aria-label="编辑工具">
-      <div className="dock-title">编辑工具</div>
-      {tools.map(tool => (
-        <button
-          key={tool.key}
-          className={`tool ${wb.tool === tool.key ? 'active' : ''} ${tool.key === 'delete' ? 'danger' : ''}`}
-          onClick={() => {
-            wb.dispatch({ type: 'tool', value: tool.key });
-            wb.dispatch({ type: 'status', value: toolMessages[tool.key] });
-          }}
-        >
-          <span>{tool.symbol}</span>
-          <em>{tool.label}</em>
-        </button>
-      ))}
+    <nav
+      className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col gap-1 overflow-auto border-r border-border bg-muted px-3 py-4"
+      aria-label="编辑工具"
+    >
+      <div className="px-2 pb-1.5 text-[11px] font-semibold tracking-wider text-muted-foreground">编辑工具</div>
+      {tools.map(tool => {
+        const Icon = tool.icon;
+        const active = wb.tool === tool.key;
+        const danger = tool.key === 'delete';
+        return (
+          <button
+            key={tool.key}
+            type="button"
+            className={cn(
+              'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors',
+              active
+                ? danger
+                  ? 'bg-red-50 font-medium text-red-700 ring-1 ring-inset ring-red-200'
+                  : 'bg-zinc-900 text-white font-medium'
+                : danger
+                  ? 'text-red-600 hover:bg-red-50/70'
+                  : 'text-foreground hover:bg-accent',
+            )}
+            onClick={() => {
+              wb.dispatch({ type: 'tool', value: tool.key });
+              wb.dispatch({ type: 'status', value: toolMessages[tool.key] });
+            }}
+          >
+            <Icon className="h-4 w-4 shrink-0" />
+            <span className="truncate">{tool.label}</span>
+          </button>
+        );
+      })}
     </nav>
   );
 }

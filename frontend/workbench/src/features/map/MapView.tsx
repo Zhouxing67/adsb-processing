@@ -7,11 +7,15 @@ import { segmentScreenAngleDegrees } from '../../domain/geometry';
 
 const colors = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#B77900', '#56B4E9', '#E69F00', '#6A3D9A', '#1B9E77', '#E7298A'];
 function escapeHtml(value: unknown) { return String(value ?? '—').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
-function featurePopup(feature: GeoJSON.Feature) {
-  const properties = feature.properties ?? {}, node = feature.geometry.type === 'Point';
+function featureTooltip(feature: GeoJSON.Feature) {
+  const properties = feature.properties ?? {};
+  const node = feature.geometry.type === 'Point';
   const identity = node ? properties.id : `${properties.id.u}—${properties.id.v} · ${properties.id.key}`;
-  const details = [properties.aeroway, properties.ref, properties.name].filter(value => value !== null && value !== undefined && value !== '');
-  return `<div class="feature-popup"><strong>${node ? '节点' : '边'} · ${escapeHtml(identity)}</strong>${details.map(value => `<span>${escapeHtml(value)}</span>`).join('')}</div>`;
+  const details = [properties.aeroway, properties.ref, properties.name].filter(
+    value => value !== null && value !== undefined && value !== '',
+  );
+  const suffix = details.length ? ` · ${details.map(escapeHtml).join(' / ')}` : '';
+  return `<strong>${node ? '节点' : '边'} ${escapeHtml(identity)}</strong>${suffix}`;
 }
 interface Props {
   state: WorkbenchState;
@@ -30,9 +34,10 @@ interface Props {
   observationLocation?: [number, number] | null;
   onFeature(feature: SelectedFeature): void;
   onMapClick(longitude: number, latitude: number): void;
+  onFlightClick?(flightKey: string): void;
 }
 
-export function MapView({ state, flights, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, selected = [], drawPoints = [], previewGeometry, focusFlightRequest, focusFeatureRequest, fitMapVersion = 0, observationLocation, onFeature, onMapClick }: Props) {
+export function MapView({ state, flights, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, selected = [], drawPoints = [], previewGeometry, focusFlightRequest, focusFeatureRequest, fitMapVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const edgesGroup = useRef<L.LayerGroup | null>(null);
@@ -49,10 +54,12 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
   const splitValidationRef = useRef(splitValidation);
   const featureHandler = useRef(onFeature);
   const mapClickHandler = useRef(onMapClick);
+  const flightClickHandler = useRef(onFlightClick);
   flightsRef.current = flights;
   splitValidationRef.current = splitValidation;
   featureHandler.current = onFeature;
   mapClickHandler.current = onMapClick;
+  flightClickHandler.current = onFlightClick;
 
   const edgeStyle = (feature?: GeoJSON.Feature) => {
     const properties = feature?.properties as Record<string, unknown> | undefined;
@@ -71,6 +78,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       preferCanvas: true,
       renderer: L.canvas({ padding: 0.5 }),
       zoomControl: false,
+      minZoom: 3,
       maxZoom: 26,
       zoomSnap: .25,
       zoomDelta: .5,
@@ -133,7 +141,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       const geo = L.geoJSON({ ...state.edges, features } as never, {
         style: edgeStyle,
         onEachFeature: (feature, layer) => {
-          layer.bindPopup(featurePopup(feature));
+          layer.bindTooltip(featureTooltip(feature), { sticky: true, direction: 'top', offset: [0, -8] });
           layer.on('click', event => {
             L.DomEvent.stopPropagation(event);
             featureHandler.current(feature as SelectedFeature);
@@ -161,7 +169,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
         return L.circleMarker(latlng, { radius: Math.max(Number(p.radius) || 0, 4), color: '#fff', weight: 1, fillColor: String(p.color || '#416878'), fillOpacity: .95 });
       },
       onEachFeature: (feature, layer) => {
-        layer.bindPopup(featurePopup(feature));
+        layer.bindTooltip(featureTooltip(feature), { direction: 'top', offset: [0, -8] });
         layer.on('click', event => {
           L.DomEvent.stopPropagation(event);
           featureHandler.current(feature as SelectedFeature);
@@ -169,12 +177,11 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       },
     }).addTo(nGroup);
 
-    if (!fitted.current) {
+    if (!fitted.current && element.current && element.current.clientWidth > 0 && element.current.clientHeight > 0) {
       const bounds = L.featureGroup([derivedLayer, parkingLayer, nodesLayer]).getBounds();
       if (bounds.isValid()) {
+        map.invalidateSize({ animate: false, pan: false });
         map.fitBounds(bounds, { padding: [24, 24] });
-        const minimumZoom = Math.floor((map.getZoom() - Math.log2(3)) * 4) / 4;
-        map.setMinZoom(minimumZoom);
         fitted.current = true;
       }
     }
@@ -228,9 +235,21 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       const subGroup = L.layerGroup();
       const color = colors[entry.slot % colors.length];
       const geometry = entry.geometry;
+      const interactiveLayers: Array<L.GeoJSON> = [];
+      const handleFlightClick = (event: LeafletMouseEvent) => {
+        L.DomEvent.stopPropagation(event);
+        interactiveLayers.forEach(layer => layer.bringToFront());
+        flightClickHandler.current?.(key);
+      };
       if (entry.pathVisible && geometry.path) {
-        L.geoJSON(geometry.path as never, { style: { color: '#fff', weight: 9, opacity: .9 } }).addTo(subGroup);
-        L.geoJSON(geometry.path as never, { style: { color, weight: 5.5, opacity: .95 } }).addTo(subGroup);
+        const halo = L.geoJSON(geometry.path as never, { style: { color: '#fff', weight: 9, opacity: .9 }, interactive: false }).addTo(subGroup);
+        const pathLayer = L.geoJSON(geometry.path as never, {
+          style: { color, weight: 5.5, opacity: .95 },
+          onEachFeature: (_feature, layer) => {
+            layer.on('click', handleFlightClick);
+          },
+        }).addTo(subGroup);
+        interactiveLayers.push(halo, pathLayer);
         geometry.path.features.forEach((feature, index) => {
           if (feature.geometry.type !== 'LineString' || (index % Math.max(1, Math.ceil(geometry.path!.features.length / 6)) !== 0 && index !== geometry.path!.features.length - 1)) return;
           const coordinates = feature.geometry.coordinates;
@@ -243,16 +262,28 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
         });
       }
       if (entry.trajectoryVisible) {
-        L.geoJSON(geometry.flight as never, {
+        const trajLayer = L.geoJSON(geometry.flight as never, {
           style: { color, weight: 3, dashArray: '7 6', opacity: .9 },
-          pointToLayer: (_f, ll) => L.circleMarker(ll, { radius: 3, color, fillColor: '#fff', weight: 2, fillOpacity: 1 }),
+          pointToLayer: (_f, ll) => L.circleMarker(ll, { radius: 4, color, fillColor: '#fff', weight: 2, fillOpacity: 1 }),
+          onEachFeature: (_feature, layer) => {
+            layer.on('click', handleFlightClick);
+          },
         }).addTo(subGroup);
+        interactiveLayers.push(trajLayer);
       }
       const point = geometry.flight.features.find(feature => feature.geometry.type === 'Point');
       if (entry.trajectoryVisible && point?.geometry.type === 'Point') {
-        L.marker([point.geometry.coordinates[1], point.geometry.coordinates[0]], {
-          icon: L.divIcon({ className: 'flight-map-label', html: `<b style="background:${color}">${entry.slot + 1}</b><span>${escapeHtml(entry.label)}</span>` }),
-        }).addTo(subGroup);
+        const marker = L.marker([point.geometry.coordinates[1], point.geometry.coordinates[0]], {
+          icon: L.divIcon({
+            className: 'flight-map-label',
+            html: `<b style="background:${color}">${entry.slot + 1}</b>`,
+            iconSize: [20, 20],
+            iconAnchor: [10, 10],
+          }),
+        });
+        marker.bindTooltip(escapeHtml(entry.label), { direction: 'top', offset: [0, -10] });
+        marker.on('click', handleFlightClick);
+        marker.addTo(subGroup);
       }
       subGroup.addTo(group);
       rendered.set(key, { entry, layer: subGroup });
@@ -272,12 +303,16 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       const entryBounds = layer.getBounds();
       if (entryBounds.isValid()) bounds.extend(entryBounds);
     });
-    if (bounds.isValid()) map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusKey ? 21 : 20 });
+    if (bounds.isValid()) {
+      map.invalidateSize({ animate: false, pan: false });
+      map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusKey ? 21 : 20 });
+    }
   }, [focusFlightRequest, fitMapVersion]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !focusFeatureRequest) return;
+    map.invalidateSize({ animate: false, pan: false });
     const { feature } = focusFeatureRequest;
     if (feature.geometry.type === 'Point') {
       const [lng, lat] = feature.geometry.coordinates;
@@ -291,6 +326,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !observationLocation) return;
+    map.invalidateSize({ animate: false, pan: false });
     map.setView(observationLocation, Math.max(map.getZoom(), 18), { animate: false });
   }, [observationLocation]);
 
@@ -308,5 +344,5 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
     if (observationLocation) L.circleMarker(observationLocation, { radius: 9, color: '#111827', weight: 3, fillColor: '#facc15', fillOpacity: 1 }).addTo(group);
   }, [selected, drawPoints, previewGeometry, observationLocation]);
 
-  return <div ref={element} id="map" aria-label="机场工作台地图" />;
+  return <div ref={element} id="map" className="h-full w-full" aria-label="机场工作台地图" />;
 }
