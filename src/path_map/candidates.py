@@ -8,7 +8,7 @@ import numpy as np
 from shapely import STRtree
 from shapely.geometry import LineString, Point
 
-from airport_surface import AirportGraph, NodeId
+from airport_surface import AirportGraph
 
 from .path import EdgeId
 
@@ -38,36 +38,17 @@ class CandidateIndex:
 
     def __init__(self, airport_graph: AirportGraph) -> None:
         self.airport_graph = airport_graph
-        self.directed_lines: dict[EdgeId, LineString] = {}
         self.edge_ids: list[EdgeId] = []
         self.lines: list[LineString] = []
-        for u, v, key, data in airport_graph.graph.edges(keys=True, data=True):
-            line = airport_graph.project_shape(data["geometry"])
-            if not isinstance(line, LineString):
-                raise ValueError(f"Edge {(u, v, key)} geometry must be a LineString")
-            line = self._orient_from_node(line, u)
-            edge = (u, v, key)
-            reverse = (v, u, key)
-            self.directed_lines[edge] = line
-            self.directed_lines[reverse] = LineString(reversed(line.coords))
+        for u, v, key in airport_graph.graph.edges(keys=True):
+            line = airport_graph.project_shape(airport_graph.oriented_edge_geometry(u, v, key))
             if line.is_empty or line.length == 0:
                 continue
-            self.edge_ids.append(edge)
+            self.edge_ids.append((u, v, key))
             self.lines.append(line)
         if not self.lines:
             raise ValueError("Airport graph has no non-empty edge geometries")
         self.tree = STRtree(self.lines)
-
-    def _orient_from_node(self, line: LineString, node: NodeId) -> LineString:
-        pos = self.airport_graph.graph.nodes[node].get("pos")
-        if pos is None:
-            return line
-        start = Point(line.coords[0])
-        end = Point(line.coords[-1])
-        node_point = Point(*self.airport_graph.project.transform(*pos))
-        if start.distance(node_point) <= end.distance(node_point):
-            return line
-        return LineString(reversed(line.coords))
 
     def candidates(
         self, observation_index: int, point: Point, radius: float, maximum: int

@@ -9,12 +9,13 @@ from typing import Any, Mapping, Self, overload
 
 import networkx as nx
 from pyproj import Proj, Transformer
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import transform
 
 from .identifiers import (
     EdgeId,
+    EdgeKey,
     NodeId,
     OsmId,
     normalize_osm_id,
@@ -235,6 +236,25 @@ class AirportGraph:
 
     def length(self, geometry: BaseGeometry) -> float:
         return self.project_shape(geometry).length
+
+    def oriented_edge_geometry(self, u: NodeId, v: NodeId, key: EdgeKey) -> LineString:
+        """Return edge geometry oriented along ``u -> v`` in WGS84 coordinates."""
+        data = self.graph.edges[u, v, key]
+        geometry = data["geometry"]
+        if not isinstance(geometry, LineString):
+            raise ValueError(f"Edge {(u, v, key)} geometry must be a LineString")
+        node_position = self.graph.nodes[u].get("pos")
+        if node_position is None:
+            forward = data.get("first") == u if "first" in data else True
+        else:
+            forward = geometry.coords[0][:2] == tuple(node_position)[:2]
+            if not forward:
+                # OSM coordinates can differ by tiny floating point noise.
+                node_point = Point(node_position)
+                forward = Point(geometry.coords[0]).distance(node_point) <= Point(
+                    geometry.coords[-1]
+                ).distance(node_point)
+        return geometry if forward else LineString(reversed(geometry.coords))
 
     def canonical_node_id(self, node_id: NodeId) -> NodeId:
         return self.node_aliases.get(node_id, node_id)

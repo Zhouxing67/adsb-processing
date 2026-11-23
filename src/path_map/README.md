@@ -2,7 +2,7 @@
 
 The package matches validated ADS-B observations to directed edge sequences on an
 airport graph. The [algorithm guide](../../docs/path_map.md) explains the HMM and
-its assumptions. The [run guide](../../docs/path_matching_run.md) covers commands,
+its assumptions. The [quickstart and run guide](../../docs/quickstart.md) covers commands,
 TOML settings, and report files.
 
 ## Python entry point
@@ -35,9 +35,10 @@ A work item carries a caller-supplied key and either a loaded flight or a callab
 that loads it. Expected matching errors are recorded in the outcome. Workbench
 supplies lazy loaders and captures per-item system errors to keep task progress
 accurate. The batch runner propagates unexpected exceptions. For a single flight,
-call `matcher.map_flight(flight)`. The flight must provide its movement direction,
-stand reference, and runway designator. The matcher resolves these to endpoint
-candidates and chooses a connected route under the turn constraint.
+call `matcher.map_flight(flight)`. The flight must provide its movement direction
+and stand reference; when the runway designator is omitted, the matcher falls back
+to all runways in the graph and resolves the route from the observations under the
+turn constraint (allowing at most one pushback reversal for departures).
 
 ## Responsibilities
 
@@ -46,7 +47,7 @@ candidates and chooses a connected route under the turn constraint.
 | `matcher.py` | `MatchConfig` defaults, graph preparation, and HMM matching of one trajectory inside the batch. |
 | `batch.py` | Ordered batch execution, outcome timing, failure classification, and shared `BatchStats`. |
 | `candidates.py` | Spatial index and candidate generation for observations. |
-| `hmm.py` and `transition_constraints.py` | Network routing, transition scoring and constraints, and Viterbi decoding. |
+| `hmm.py` | Directed dual-graph routing, local turn filtering, directed state expansion, and Viterbi decoding. |
 | `path.py` | Directed traversal, geometry, and graph-versioned `PathRecord` serialization. |
 
 DuckDB queries and connection lifecycle are in

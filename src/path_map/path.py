@@ -86,22 +86,7 @@ class Path(Sequence[DirectedEdge]):
 
     def oriented_geometry(self, edge: DirectedEdge) -> LineString:
         """返回坐标顺序与 ``edge.from_ -> edge.to_`` 遍历方向一致的边几何。"""
-        graph = self.airport_graph.graph
-        geometry = graph.edges[edge.from_, edge.to_, edge.key_]["geometry"]
-        node_position = graph.nodes[edge.from_].get("pos")
-        if node_position is None:
-            data: dict[str, Any] = graph.edges[edge.from_, edge.to_, edge.key_]
-            forward = data.get("first") == edge.from_
-        else:
-            forward = geometry.coords[0][:2] == tuple(node_position)[:2]
-            if not forward:
-                # OSM coordinates can differ by tiny floating point noise.
-                from shapely.geometry import Point
-
-                forward = Point(geometry.coords[0]).distance(Point(node_position)) <= Point(
-                    geometry.coords[-1]
-                ).distance(Point(node_position))
-        return geometry if forward else LineString(reversed(geometry.coords))
+        return self.airport_graph.oriented_edge_geometry(edge.from_, edge.to_, edge.key_)
 
     @property
     def geometry(self) -> LineString:

@@ -4,26 +4,24 @@ from __future__ import annotations
 
 import logging
 import math
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from enum import StrEnum
 from functools import cached_property
-from typing import Any, Mapping
+from typing import Any, Mapping, NamedTuple
 
 import networkx as nx
 from shapely.geometry import Point
 
-from airport_surface import AirportGraph, NodeId
+from airport_surface import AirportGraph
 from flight import Flight
 
 from .candidates import Candidate, CandidateIndex
 from .hmm import (
-    ZERO_DISTANCE_TOLERANCE_M,
     DirectedNetworkRouter,
     Transition,
     viterbi,
 )
 from .path import DirectedEdge, EdgeId, Path
-from .transition_constraints import LocalTurnConstraint
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +81,12 @@ class MatchConfig:
             raise ValueError("max_candidates must be a positive integer")
 
 
+class _FlightODLayers(NamedTuple):
+    start: list[Candidate]
+    end: list[Candidate]
+    runway_edges: set[EdgeId]
+
+
 class Matcher:
     """Reusable matcher state for many flights on the same airport graph."""
 
@@ -94,19 +98,18 @@ class Matcher:
         self.airport_graph = airport_graph
         self.config = config
         self.index = CandidateIndex(airport_graph)
-        self._turn_constraint = LocalTurnConstraint(
-            self.index,
-            max_angle_deg=self.config.max_transition_turn_angle_deg,
-            tangent_sample_m=self.config.turn_tangent_sample_m,
-        )
 
     @cached_property
     def _directed_router(self) -> DirectedNetworkRouter:
-        return DirectedNetworkRouter(self.index, self._turn_constraint)
+        return DirectedNetworkRouter(
+            self.index,
+            max_turn_angle_deg=self.config.max_transition_turn_angle_deg,
+            tangent_sample_m=self.config.turn_tangent_sample_m,
+        )
 
     def map_flight(self, flight: Flight) -> Path:
         """Match a flight within its reported stand and runway."""
-        (start, end), runway_edges = self._flight_od_layers(flight)
+        start, end, runway_edges = self._flight_od_layers(flight)
         observations = _observations(self.airport_graph, flight)
         matched_observations: list[Point] = []
         layers: list[list[Candidate]] = []
@@ -118,23 +121,10 @@ class Matcher:
             matched_observations.append(point)
             layers.append(candidates)
 
-        # Drop the contiguous runway roll on the runway side of the track.
-        # The adjacent retained observation then scores the taxiway connection.
-        if flight.movement == "departure":
-            while layers and layers[-1][0].edge_id in runway_edges:
-                layers.pop()
-                matched_observations.pop()
-        else:
-            first_taxi = next(
-                (i for i, layer in enumerate(layers) if layer[0].edge_id not in runway_edges),
-                len(layers),
-            )
-            layers = layers[first_taxi:]
-            matched_observations = matched_observations[first_taxi:]
         directed_layers = []
         directed_observations = []
         for point, candidates in zip(matched_observations, layers):
-            directed = self._directed_candidates(candidates)
+            directed = self._directed_router.expand_candidates(candidates)
             if directed:
                 directed_layers.append(directed)
                 directed_observations.append(point)
@@ -164,6 +154,7 @@ class Matcher:
                 self._directed_router,
                 self.config.gps_sigma,
                 self.config.transition_beta,
+                allow_single_reversal=flight.movement == "departure",
             )
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError(
@@ -171,6 +162,16 @@ class Matcher:
                 "No turn-constrained path matches the observations and flight OD",
             ) from exc
         edges = _recover(transitions, states[0])
+        # Trim the runway roll on the runway side so the path ends at the runway interface.
+        if flight.movement == "departure":
+            while edges and edges[-1].id in runway_edges:
+                edges.pop()
+        else:
+            first_taxi = next(
+                (i for i, edge in enumerate(edges) if edge.id not in runway_edges),
+                len(edges),
+            )
+            edges = edges[first_taxi:]
         if not edges:
             raise MapMatchingError(
                 MapMatchingFailure.NO_MOVEMENT,
@@ -179,21 +180,10 @@ class Matcher:
             )
         return Path(self.airport_graph, edges)
 
-    def _runway_boundary(
-        self, node: NodeId, taxiway_edges: tuple[EdgeId, ...], departure: bool
-    ) -> list[Candidate]:
-        result = []
-        for u, v, key in taxiway_edges:
-            other = v if u == node else u
-            edge = (other, node, key) if departure else (node, other, key)
-            if edge in self._directed_router.lengths:
-                result.append(self._boundary_candidate(edge, at_end=departure))
-        return result
-
     def _flight_od_layers(
         self,
         flight: Flight,
-    ) -> tuple[tuple[list[Candidate], list[Candidate]], set[EdgeId]]:
+    ) -> _FlightODLayers:
         if flight.od_error:
             raise MapMatchingError(
                 MapMatchingFailure.INVALID_OD,
@@ -206,25 +196,19 @@ class Matcher:
                 "Missing flight OD: departure or arrival direction is required",
                 context={"field": "movement"},
             )
-        if not flight.stand_ref or not flight.runway_ref:
-            missing = [
-                name
-                for name, value in (("stand", flight.stand_ref), ("runway", flight.runway_ref))
-                if not value
-            ]
+        if not flight.stand_ref:
             raise MapMatchingError(
                 MapMatchingFailure.MISSING_OD,
-                "Missing flight OD: both stand and runway are required",
-                context={"fields": missing},
+                "Missing flight OD: stand is required",
+                context={"fields": ["stand"]},
             )
 
-        departure = flight.movement == "departure"
+        is_departure = flight.movement == "departure"
         graph = self.airport_graph
-        stand_layer = []
-        for u, v, key in graph.stand_to_edges.get(flight.stand_ref, ()):
-            for edge in ((u, v, key), (v, u, key)):
-                if edge in self._directed_router.lengths:
-                    stand_layer.append(self._boundary_candidate(edge, at_end=not departure))
+        stand_layer = self._directed_router.stand_candidates(
+            graph.stand_to_edges.get(flight.stand_ref, ()),
+            departure=is_departure,
+        )
         if not stand_layer:
             raise MapMatchingError(
                 MapMatchingFailure.UNKNOWN_OD,
@@ -232,63 +216,34 @@ class Matcher:
                 context={"field": "stand", "value": flight.stand_ref},
             )
 
-        runway_layer = []
         runway_edges: set[EdgeId] = set()
-        runway_ref = flight.runway_ref.upper()
-        # Include runway segments between interfaces so runway-roll points can be trimmed.
+        runway_ref = flight.runway_ref.upper() if flight.runway_ref else None
         for u, v, key, data in graph.graph.edges(keys=True, data=True):
             if data.get("aeroway") != "runway":
                 continue
-            refs = str(data.get("ref") or "").upper().split("/")
-            if runway_ref in {ref.strip() for ref in refs}:
+            if runway_ref is None or runway_ref in {
+                ref.strip() for ref in str(data.get("ref") or "").upper().split("/")
+            }:
                 runway_edges.update(((u, v, key), (v, u, key)))
+        runway_layer = self._directed_router.runway_edge_candidates(
+            runway_edges, departure=is_departure
+        )
         for node, interface in graph.runway_interfaces.items():
             if runway_edges.intersection(interface["runway"]):
-                runway_layer.extend(self._runway_boundary(node, interface["taxiway"], departure))
+                runway_layer.extend(
+                    self._directed_router.runway_candidates(
+                        node, interface["taxiway"], departure=is_departure
+                    )
+                )
         if not runway_layer:
             raise MapMatchingError(
                 MapMatchingFailure.UNKNOWN_OD,
                 f"Unknown or unusable runway in flight OD: {flight.runway_ref!r}",
                 context={"field": "runway", "value": flight.runway_ref},
             )
-        layers = (stand_layer, runway_layer) if departure else (runway_layer, stand_layer)
-        return layers, runway_edges
-
-    def _boundary_candidate(self, edge: EdgeId, *, at_end: bool) -> Candidate:
-        line = self.index.directed_lines[edge]
-        offset = line.length if at_end else 0.0
-        return Candidate(-1, edge, 0.0, line.interpolate(offset), offset, float(at_end))
-
-    def _directed_candidates(self, candidates: list[Candidate]) -> list[Candidate]:
-        router = self._directed_router
-        directed: dict[tuple[EdgeId, float], Candidate] = {}
-        for candidate in candidates:
-            edge = candidate.edge_id
-            if edge not in router.lengths:
-                continue
-            u, v, key = edge
-            length = router.lengths[edge]
-            offset = candidate.offset
-            if min(offset, length - offset) <= ZERO_DISTANCE_TOLERANCE_M:
-                node = u if offset <= ZERO_DISTANCE_TOLERANCE_M else v
-                # At a junction the arrival edge, rather than the snapped
-                # edge, determines which turns remain available.
-                for incoming in router.incoming.get(node, ()):
-                    end = router.lengths[incoming]
-                    state = replace(candidate, edge_id=incoming, offset=end, fraction=1.0)
-                    previous = directed.get((incoming, end))
-                    if previous is None or state.distance < previous.distance:
-                        directed[incoming, end] = state
-            else:
-                directed[edge, offset] = candidate
-                reverse = (v, u, key)
-                directed[reverse, length - offset] = replace(
-                    candidate,
-                    edge_id=reverse,
-                    offset=length - offset,
-                    fraction=1.0 - candidate.fraction,
-                )
-        return list(directed.values())
+        if is_departure:
+            return _FlightODLayers(stand_layer, runway_layer, runway_edges)
+        return _FlightODLayers(runway_layer, stand_layer, runway_edges)
 
     def _candidates(self, observation_index: int, point: Point) -> list[Candidate]:
         """Find the nearest candidates in one complete-radius spatial query."""
@@ -299,9 +254,7 @@ class Matcher:
             self.config.max_candidates,
         )
         return [
-            candidate
-            for candidate in candidates
-            if candidate.edge_id[0] != candidate.edge_id[1]
+            candidate for candidate in candidates if candidate.edge_id[0] != candidate.edge_id[1]
         ]
 
 

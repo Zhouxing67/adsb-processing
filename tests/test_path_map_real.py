@@ -8,8 +8,7 @@ from airport_surface import load_graph
 from flight import Flight, MovementType
 from path_map import MatchConfig, Matcher
 from path_map.candidates import CandidateIndex
-from path_map.path import DirectedEdge
-from path_map.transition_constraints import LocalTurnConstraint
+from path_map.hmm import DirectedNetworkRouter
 from scripts.csv_flights import load_csv_flights
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -30,18 +29,18 @@ def target_case():
 
 def test_target_turn_is_measured_from_local_directed_tangents(target_case):
     airport_graph, _flight = target_case
-    constraint = LocalTurnConstraint(
+    router = DirectedNetworkRouter(
         CandidateIndex(airport_graph),
-        max_angle_deg=150,
+        max_turn_angle_deg=150,
         tangent_sample_m=10,
     )
-    incoming = DirectedEdge("244881041", "244881044", 0)
-    outgoing = DirectedEdge("244881044", "1055651195", 0)
+    incoming = ("244881041", "244881044", 0)
+    outgoing = ("244881044", "1055651195", 0)
 
-    angle = constraint.turn_angle(incoming, outgoing)
+    angle = router.turn_angle(incoming, outgoing)
 
     assert angle == pytest.approx(169.952391, abs=1e-6)
-    assert not constraint.accepts((incoming, outgoing))
+    assert not router.graph.has_edge(incoming, outgoing)
 
 
 def test_target_flight_never_returns_the_prohibited_turn(target_case):

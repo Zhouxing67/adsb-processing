@@ -270,12 +270,17 @@ def test_database_flight_matches_using_its_od(
         assert flight.observations[0].timestamp == datetime(2025, 12, 31, 16, tzinfo=timezone.utc)
         assert flight.actual_dep is None
         assert matcher.map_flight(flight).edge_ids == expected
-    missing_od = Flight(
+    missing_runway = Flight(
         [{**row, runway_column: None} for row in flight.rows],
         movement=movement,
     )
+    assert matcher.map_flight(missing_runway).edge_ids == expected
+    missing_stand = Flight(
+        [{**row, stand_column: None} for row in flight.rows],
+        movement=movement,
+    )
     with pytest.raises(MapMatchingError, match="Missing flight OD"):
-        matcher.map_flight(missing_od)
+        matcher.map_flight(missing_stand)
 
 
 def test_isolated_observation_without_candidates_is_skipped():
@@ -537,3 +542,121 @@ def test_saved_graph_rejects_content_tampering(tmp_path):
 
     with pytest.raises(ValueError, match="does not match graph_id"):
         load_graph(graph_file)
+
+
+def pushback_airport_graph(*, with_detour_loop: bool) -> tuple[AirportGraph, Transformer]:
+    projection = Proj(proj="utm", zone=50, ellps="WGS84")
+    to_wgs84 = Transformer.from_proj(projection, AirportGraph.wgs84, always_xy=True)
+    x0, y0 = 450_000.0, 4_428_000.0
+    coords = {
+        "1": (x0, y0 - 60),  # stand end
+        "2": (x0, y0),  # junction A
+        "3": (x0, y0 + 100),  # pushback point P
+        "4": (x0 - 120, y0),  # runway interface R
+        "5": (x0 - 220, y0),  # runway
+    }
+    graph = nx.MultiGraph()
+    for node, (x, y) in coords.items():
+        graph.add_node(node, pos=to_wgs84.transform(x, y))
+
+    def add_line(u: str, v: str, key: int, pts: list[tuple[float, float]], **attrs) -> None:
+        graph.add_edge(
+            u,
+            v,
+            key=key,
+            geometry=LineString([to_wgs84.transform(x, y) for x, y in pts]),
+            **attrs,
+        )
+
+    add_line("1", "2", 0, [coords["1"], coords["2"]], aeroway="parking_position", ref="009")
+    add_line("2", "3", 0, [coords["2"], coords["3"]], aeroway="taxiway")
+    add_line("2", "4", 0, [coords["2"], coords["4"]], aeroway="taxiway")
+    add_line("4", "5", 0, [coords["4"], coords["5"]], aeroway="runway", ref="01/19")
+    if with_detour_loop:
+        # A 300m detour bulb east of P that returns to P heading south.
+        d1 = (x0 + 60, y0 + 160)
+        d2 = (x0 + 120, y0 + 80)
+        graph.add_node("6", pos=to_wgs84.transform(*d1))
+        graph.add_node("7", pos=to_wgs84.transform(*d2))
+        add_line("3", "6", 0, [coords["3"], d1], aeroway="taxiway")
+        add_line("6", "7", 0, [d1, d2], aeroway="taxiway")
+        add_line("7", "3", 0, [d2, coords["3"]], aeroway="taxiway")
+    return AirportGraph(graph, projection), to_wgs84
+
+
+def test_departure_allows_single_pushback_reversal_without_detour_loop():
+    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=True)
+    x0, y0 = 450_000.0, 4_428_000.0
+    # Push back north to y0+80, reverse in place, then taxi south to A and west to R.
+    flight = make_flight(
+        to_wgs84,
+        [(x0, y0 + 20), (x0, y0 + 80), (x0, y0 + 40), (x0 - 60, y0)],
+        movement="departure",
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+
+    path = matcher.map_flight(flight)
+
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 0), ("3", "2", 0), ("2", "4", 0))
+
+
+def test_arrival_does_not_allow_in_place_reversal():
+    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=False)
+    x0, y0 = 450_000.0, 4_428_000.0
+    flight = make_flight(
+        to_wgs84,
+        [(x0 - 60, y0), (x0, y0 + 40), (x0, y0 + 80), (x0, y0 + 20)],
+        movement="arrival",
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+
+    with pytest.raises(MapMatchingError, match="No turn-constrained path"):
+        matcher.map_flight(flight)
+
+
+def test_runway_roll_observations_disambiguate_symmetric_runway_entries():
+    projection = Proj(proj="utm", zone=50, ellps="WGS84")
+    to_wgs84 = Transformer.from_proj(projection, AirportGraph.wgs84, always_xy=True)
+    x0, y0 = 450_000.0, 4_428_000.0
+    coords = {
+        "1": (x0 - 150, y0),  # stand
+        "2": (x0 - 80, y0),  # taxiway junction
+        "3": (x0, y0 + 50),  # north runway entry (slightly longer curved branch)
+        "4": (x0, y0 - 40),  # south runway entry (slightly shorter branch)
+        "5": (x0, y0 + 250),  # runway north end
+        "6": (x0, y0 - 250),  # runway south end
+    }
+    graph = nx.MultiGraph()
+    for node, (x, y) in coords.items():
+        graph.add_node(node, pos=to_wgs84.transform(x, y))
+
+    def add_line(u: str, v: str, key: int, pts: list[tuple[float, float]], **attrs) -> None:
+        graph.add_edge(
+            u,
+            v,
+            key=key,
+            geometry=LineString([to_wgs84.transform(x, y) for x, y in pts]),
+            **attrs,
+        )
+
+    add_line("1", "2", 0, [coords["1"], coords["2"]], aeroway="parking_position", ref="009")
+    add_line("2", "3", 0, [coords["2"], (x0 - 20, y0 + 10), coords["3"]], aeroway="taxiway")
+    add_line("2", "4", 0, [coords["2"], (x0 - 20, y0 - 10), coords["4"]], aeroway="taxiway")
+    add_line("6", "4", 0, [coords["6"], coords["4"]], aeroway="runway", ref="01/19")
+    add_line("4", "3", 0, [coords["4"], coords["3"]], aeroway="runway", ref="01/19")
+    add_line("3", "5", 0, [coords["3"], coords["5"]], aeroway="runway", ref="01/19")
+    airport_graph = AirportGraph(graph, projection)
+
+    # Departure rolls north on the runway; missing runway_ref should still match north entry
+    # and trim runway edges from the returned path.
+    flight = make_flight(
+        to_wgs84,
+        [(x0 - 110, y0), (x0 - 85, y0), (x0, y0 + 80), (x0, y0 + 160)],
+        movement="departure",
+    )
+    flight = Flight([{**row, "org_runway": None} for row in flight.rows], movement="departure")
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=30, transition_beta=20))
+
+    path = matcher.map_flight(flight)
+
+    assert path.edge_ids == (("1", "2", 0), ("2", "3", 0))
