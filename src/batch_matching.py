@@ -73,6 +73,8 @@ class BatchMatchingRunner:
             result: dict[str, Any] = {
                 "flight_id": outcome.key,
                 "movement_type": dataset.movement_type.value,
+                "stand_ref": outcome.stand_ref,
+                "runway_ref": outcome.runway_ref,
                 "observation_count": outcome.observation_count,
                 "elapsed_seconds": outcome.elapsed_seconds,
             }

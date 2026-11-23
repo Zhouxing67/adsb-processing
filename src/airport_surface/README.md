@@ -3,7 +3,7 @@
 `airport_surface` 负责机场地面路网（`AirportGraph`）的**数据模型、来源链几何重建、一致性校验、Schema v2 持久化**以及**离线 OSM 建图**。
 
 - 架构设计与概念详解见 [机场图数据设计](../../docs/airport_surface.md)
-- 建图、编辑与运行命令见 [快速上手与运行指南](../../docs/quickstart.md#43-机场图构建与编辑)
+- 建图、编辑与运行命令见 [快速上手与运行指南](../../docs/quickstart.md#44-机场图构建与编辑)
 
 ## 常用入口
 

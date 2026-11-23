@@ -22,6 +22,8 @@ class MatchOutcome:
     reason: str | None = None
     failure_type: str | None = None
     error_kind: str | None = None
+    stand_ref: str | None = None
+    runway_ref: str | None = None
 
     @property
     def status(self) -> str:
@@ -38,9 +40,13 @@ def match_batch(
     for key, source in flights:
         started = perf_counter()
         count = None
+        stand_ref = None
+        runway_ref = None
         try:
             flight = source() if callable(source) else source
             count = flight.point_count
+            stand_ref = flight.stand_ref
+            runway_ref = flight.runway_ref
             started = perf_counter()
             path = matcher.map_flight(flight)
         except MapMatchingError as error:
@@ -52,6 +58,8 @@ def match_batch(
                 reason=reason,
                 failure_type=error.code.value,
                 error_kind="matching",
+                stand_ref=stand_ref,
+                runway_ref=runway_ref,
             )
         except Exception as error:
             if not capture_system_errors:
@@ -63,9 +71,18 @@ def match_batch(
                 reason=f"系统异常（非正常匹配失败）：{type(error).__name__}: {error}",
                 failure_type="system",
                 error_kind="system",
+                stand_ref=stand_ref,
+                runway_ref=runway_ref,
             )
         else:
-            yield MatchOutcome(key, count, perf_counter() - started, path=path)
+            yield MatchOutcome(
+                key,
+                count,
+                perf_counter() - started,
+                path=path,
+                stand_ref=stand_ref,
+                runway_ref=runway_ref,
+            )
 
 
 @dataclass(slots=True)

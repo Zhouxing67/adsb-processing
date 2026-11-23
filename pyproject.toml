@@ -41,7 +41,15 @@ requires = ["uv_build>=0.12.10,<0.13.0"]
 build-backend = "uv_build"
 
 [tool.uv.build-backend]
-module-name = ["config", "flight", "airport_surface", "airport_workbench", "path_map", "utils"]
+module-name = [
+    "config",
+    "flight",
+    "airport_surface",
+    "airport_workbench",
+    "path_map",
+    "route_library",
+    "utils",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

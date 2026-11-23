@@ -2,7 +2,7 @@
 
 本文面向在新电脑上 `git clone` 仓库后的首次部署与日常使用，涵盖**环境安装、数据库与 Quack 并发服务配置、DataGrip 连接、前端构建**，以及**航班工作台、批量匹配、机场图编辑**的完整操作流程。
 
-> **架构与原理文档**见 [机场图数据设计](airport_surface.md) 与 [匹配算法](path_map.md)；**开发与测试文档**见 [匹配模块开发指南](../src/path_map/README.md) 与 [Workbench 前端指南](../frontend/workbench/README.md)。
+> **架构与原理文档**见 [机场图数据设计](airport_surface.md) 与 [匹配算法](path_map.md)；**开发与测试文档**见 [匹配模块开发指南](../src/path_map/README.md)、[路径库模块指南](../src/route_library/README.md) 与 [Workbench 前端指南](../frontend/workbench/README.md)。
 
 ---
 
@@ -152,12 +152,27 @@ uv run --extra stand-editing python -m src
 |---|---|
 | `graph.json` | 本次匹配使用的机场图快照。 |
 | `paths.jsonl` | 按有向边序列去重的路径，关联图内容标识 `graph_id`。 |
-| `matches.jsonl` | 每条航班的匹配结果。成功记录以 `path_id` 引用路径；失败记录保存分类和原因。 |
+| `matches.jsonl` | 每条航班的匹配结果（含 `stand_ref`、`runway_ref`）。成功记录以 `path_id` 引用路径；失败记录保存分类和原因。 |
 | `summary.json` | 整次运行及进港、离港两个批次的统计（全部完成后写入）。 |
 
 - **统计口径**：批量报告与航班工作台共用航班总数、成功数、失败数、成功率（以已完成航班为分母）、失败分类与匹配耗时。批量报告额外记录实际运行耗时与去重路径数；工作台额外提供等待/运行中航班数（可通过 `GET /api/matches` 查询，重复传入 `task_id` 限定范围）。
 
-### 4.3 机场图构建与编辑
+### 4.3 路径库入库（DuckDB 持久化）
+
+批量匹配完成后，可将某次输出目录（`outputs/path_map/<YYYYMMDD_HHMMSS>/`）中的去重路径独立导入到同一个 DuckDB 数据库的 `main.route_library` 表（按 `(graph_id, movement, stand_ref, runway_ref)` 建立复合索引）：
+
+```powershell
+# 默认模式：替换当前 graph_id 下旧的 candidate 路径，保留已审校/手动路径
+uv run --extra stand-editing python -m route_library import outputs/path_map/<YYYYMMDD_HHMMSS>
+
+# 增量追加模式：保留已有 candidate，仅追加本次新出现的路径
+uv run --extra stand-editing python -m route_library import --append outputs/path_map/<YYYYMMDD_HHMMSS>
+```
+
+- 命令会读取目录内的 `graph.json`、`paths.jsonl`、`matches.jsonl`，校验图版本（`graph_id`）与路径拓扑连续性后写入 DuckDB，并打印本次处理行数、去重路径数、清理的旧候选数及新增/已存在计数。
+- 若启用了 `quack_uri`，入库前请确保 Quack 服务处于运行状态；表结构与 Python 查询接口见 [路径库模块指南](../src/route_library/README.md)。
+
+### 4.4 机场图构建与编辑
 
 机场路网先离线构建，再经人工检查和修复，最后作为已确认的 JSON 提供给航班匹配（不依赖 DuckDB 与 Quack）：
 

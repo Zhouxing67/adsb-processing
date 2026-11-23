@@ -6,6 +6,8 @@ import hashlib
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from route_library.repository import RouteLibraryRepository
+
 from .duckdb_connection import DuckDBConnection
 from .flight_catalogue_repository import STAND_COLUMNS, FlightCatalogueRepository
 from .flight_observation_repository import FlightObservationRepository
@@ -59,6 +61,7 @@ class FlightDatabase:
         self.catalogue = FlightCatalogueRepository(self._database)
         self.observations = FlightObservationRepository(self._database)
         self.stands = StandRepository(self._database)
+        self.routes = RouteLibraryRepository(self._database)
 
     @property
     def read_only(self) -> bool:
