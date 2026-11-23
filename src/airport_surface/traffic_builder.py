@@ -9,14 +9,8 @@ from typing import Any, Mapping
 
 import networkx as nx
 from pyproj import CRS, Proj
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString
 
-from .graph import (
-    ENDPOINT_TOLERANCE_M,
-    validate_edge_endpoints,
-    validate_edge_sources,
-    validate_source_intervals,
-)
 from .identifiers import NodeId, normalize_osm_id
 from .models import (
     AirportGraph,
@@ -26,6 +20,98 @@ from .models import (
     SourceSegment,
     mutable_source_attributes,
 )
+from .source_chain import ENDPOINT_TOLERANCE_M, cumulative_distances
+from .validation import (
+    validate_edge_endpoints,
+    validate_edge_sources,
+    validate_source_intervals,
+)
+
+# ---------------------------------------------------------------------------
+# Public entry points
+# ---------------------------------------------------------------------------
+
+
+def build_graph(icao: str, projection: str) -> AirportGraph:
+    """Load one airport from traffic's registry and build its surface graph."""
+    from traffic.data import airports
+
+    normalized_icao = icao.strip().upper()
+    if not normalized_icao:
+        raise ValueError("ICAO airport code must not be empty")
+    try:
+        airport = airports[normalized_icao]
+    except KeyError as error:
+        raise ValueError(f"Airport is not available from traffic: {normalized_icao}") from error
+    return build_airport_graph(airport, resolve_projection(projection))
+
+
+def resolve_projection(specification: str) -> Proj:
+    """Resolve and validate an explicitly selected metric projected CRS."""
+    try:
+        crs = CRS.from_user_input(specification)
+    except Exception as error:
+        raise ValueError(f"Invalid projection: {specification!r}") from error
+
+    if not crs.is_projected:
+        raise ValueError(f"Projection must be a projected CRS, got {crs.name!r}")
+    horizontal_axes = crs.axis_info[:2]
+    if len(horizontal_axes) != 2 or any(
+        not math.isclose(axis.unit_conversion_factor or 0, 1.0) for axis in horizontal_axes
+    ):
+        raise ValueError("Projection horizontal units must be metres")
+    return Proj(crs)
+
+
+def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
+    """Build and validate an AirportGraph from a traffic Airport object."""
+    # traffic exposes the underlying cartes Overpass helper via _openstreetmap().
+    osm = airport._openstreetmap()
+    raw_graph = osm.network_graph(
+        "geometry",
+        "aeroway",
+        "parking_position",
+        "ref",
+        "name",
+        "id_",
+        "nodes",
+        query_str='aeroway == "taxiway" or aeroway == "runway" or aeroway == "parking_position"',
+    )
+
+    # Step 1: Register open LineString OSM ways as immutable SourceEdges.
+    sources, node_positions, issues = _extract_sources(raw_graph)
+
+    # Step 2: Parse OSM features once to gather node tags and standalone Point stands.
+    frame = osm.parse()
+    node_attributes = _node_attributes_from_frame(frame)
+    _merge_point_stand_positions(frame, node_positions)
+    source_nodes, aliases = _canonicalize_source_nodes(node_positions, node_attributes)
+
+    # Step 3 & 4: Select topology nodes and slice each SourceEdge into graph edges.
+    graph = _build_derived_graph(
+        sources,
+        source_nodes,
+        aliases,
+        projection,
+        airport.icao,
+        issues,
+    )
+
+    # Step 5: Retain OSM Point parking_position tags on matching or standalone nodes.
+    _attach_point_stand_nodes(graph, source_nodes)
+
+    # Step 6: Validate structural invariants and rebuild business indices once.
+    validate_edge_endpoints(graph)
+    validate_edge_sources(graph)
+    validate_source_intervals(graph)
+    graph.rebuild_stand_index()
+    graph.rebuild_runway_interfaces()
+    return graph
+
+
+# ---------------------------------------------------------------------------
+# Pipeline stages (ordered by execution)
+# ---------------------------------------------------------------------------
 
 
 def _source_identifier(
@@ -101,6 +187,42 @@ def _extract_sources(
     return source_edges, node_positions, issues
 
 
+def _node_attributes_from_frame(frame: Any) -> dict[NodeId, dict[str, Any]]:
+    """Extract available OSM node tags without making them topology evidence."""
+    if not {"type_", "id_"} <= set(frame.columns):
+        return {}
+    excluded = {
+        "_parent",
+        "id_",
+        "type_",
+        "geometry",
+        "latitude",
+        "longitude",
+        "nodes",
+    }
+    attributes: dict[NodeId, dict[str, Any]] = {}
+    for _index, row in frame.loc[frame["type_"] == "node"].iterrows():
+        attributes[normalize_osm_id(row["id_"])] = {
+            name: value
+            for name, value in row.items()
+            if name not in excluded
+            and value is not None
+            and not (isinstance(value, float) and math.isnan(value))
+        }
+    return attributes
+
+
+def _merge_point_stand_positions(
+    frame: Any, node_positions: dict[NodeId, tuple[float, float]]
+) -> None:
+    if not {"aeroway", "geometry", "id_"} <= set(frame.columns):
+        return
+    for _, row in frame.loc[frame["aeroway"] == "parking_position"].iterrows():
+        geometry = row["geometry"]
+        if getattr(geometry, "geom_type", None) == "Point":
+            node_positions[normalize_osm_id(row["id_"])] = (geometry.x, geometry.y)
+
+
 def _canonicalize_source_nodes(
     node_positions: Mapping[NodeId, tuple[float, float]],
     node_attributes: Mapping[NodeId, Mapping[str, Any]] | None = None,
@@ -140,40 +262,6 @@ def _topology_nodes(
     return endpoints | shared | repeated
 
 
-def _node_attributes_from_osm(osm: Any) -> dict[NodeId, dict[str, Any]]:
-    """Extract available OSM node tags without making them topology evidence."""
-    frame = osm.parse()
-    if not {"type_", "id_"} <= set(frame.columns):
-        return {}
-    excluded = {
-        "_parent",
-        "id_",
-        "type_",
-        "geometry",
-        "latitude",
-        "longitude",
-        "nodes",
-    }
-    attributes: dict[NodeId, dict[str, Any]] = {}
-    for _index, row in frame.loc[frame["type_"] == "node"].iterrows():
-        attributes[normalize_osm_id(row["id_"])] = {
-            name: value
-            for name, value in row.items()
-            if name not in excluded
-            and value is not None
-            and not (isinstance(value, float) and math.isnan(value))
-        }
-    return attributes
-
-
-def _cumulative_distances(graph: AirportGraph, geometry: LineString) -> list[float]:
-    projected = graph.project_shape(geometry)
-    distances = [0.0]
-    for left, right in zip(projected.coords, projected.coords[1:]):
-        distances.append(distances[-1] + Point(left).distance(Point(right)))
-    return distances
-
-
 def _build_derived_graph(
     source_edges: Mapping[str, SourceEdge],
     source_nodes: Mapping[NodeId, SourceNode],
@@ -205,12 +293,14 @@ def _build_derived_graph(
         original_nodes = source.osm_node_ids
         canonical_nodes = tuple(aliases.get(node, node) for node in original_nodes)
         coordinates = tuple(source.geometry.coords)
-        distances = _cumulative_distances(airport_graph, source.geometry)
+        distances = cumulative_distances(airport_graph, source.geometry)
         split_indices = [
             index
             for index, node_id in enumerate(canonical_nodes)
             if index in {0, len(canonical_nodes) - 1} or node_id in topology_nodes
         ]
+        # Keep each parking_position lead-in line as one intact stand edge rather
+        # than splitting it at interior shared nodes.
         if source.attributes.get("aeroway") == "parking_position":
             split_indices = [0, len(canonical_nodes) - 1]
         for start_index, end_index in zip(split_indices, split_indices[1:]):
@@ -241,82 +331,14 @@ def _build_derived_graph(
     return airport_graph
 
 
-def build_airport_graph(airport: Any, projection: Proj) -> AirportGraph:
-    """Build a graph from a traffic Airport in an explicit offline workflow."""
-    osm = airport._openstreetmap()
-    raw_graph = osm.network_graph(
-        "geometry",
-        "aeroway",
-        "parking_position",
-        "ref",
-        "name",
-        "id_",
-        "nodes",
-        query_str='aeroway == "taxiway" or aeroway == "runway" or aeroway == "parking_position"',
-    )
-    sources, node_positions, issues = _extract_sources(raw_graph)
-    source_nodes, aliases = _canonicalize_source_nodes(
-        node_positions, _node_attributes_from_osm(osm)
-    )
-    frame = osm.parse()
-    if {"aeroway", "geometry", "id_"} <= set(frame.columns):
-        for _, row in frame.loc[frame["aeroway"] == "parking_position"].iterrows():
-            geometry = row["geometry"]
-            if getattr(geometry, "geom_type", None) == "Point":
-                node_positions[normalize_osm_id(row["id_"])] = (geometry.x, geometry.y)
-        source_nodes, aliases = _canonicalize_source_nodes(
-            node_positions, _node_attributes_from_osm(osm)
-        )
-    graph = _build_derived_graph(
-        sources,
-        source_nodes,
-        aliases,
-        projection,
-        airport.icao,
-        issues,
-    )
+def _attach_point_stand_nodes(
+    airport_graph: AirportGraph, source_nodes: Mapping[NodeId, SourceNode]
+) -> None:
     for node, source in source_nodes.items():
         tags = source.attributes.get("osm_node_attributes", {})
         if any(value.get("aeroway") == "parking_position" for value in tags.values()):
-            if node not in graph.graph:
-                graph.graph.add_node(
+            if node not in airport_graph.graph:
+                airport_graph.graph.add_node(
                     node, pos=source.position, source_type="osm", osm_node_ids=source.osm_node_ids
                 )
-            graph.graph.nodes[node]["aeroway"] = "parking_position"
-    validate_edge_endpoints(graph)
-    validate_edge_sources(graph)
-    validate_source_intervals(graph)
-    graph.rebuild_stand_index()
-    graph.rebuild_runway_interfaces()
-    return graph
-
-
-def resolve_projection(specification: str) -> Proj:
-    """Resolve and validate an explicitly selected metric projected CRS."""
-    try:
-        crs = CRS.from_user_input(specification)
-    except Exception as error:
-        raise ValueError(f"Invalid projection: {specification!r}") from error
-
-    if not crs.is_projected:
-        raise ValueError(f"Projection must be a projected CRS, got {crs.name!r}")
-    horizontal_axes = crs.axis_info[:2]
-    if len(horizontal_axes) != 2 or any(
-        not math.isclose(axis.unit_conversion_factor or 0, 1.0) for axis in horizontal_axes
-    ):
-        raise ValueError("Projection horizontal units must be metres")
-    return Proj(crs)
-
-
-def build_graph(icao: str, projection: str) -> AirportGraph:
-    """Load one airport from traffic's registry and build its surface graph."""
-    from traffic.data import airports
-
-    normalized_icao = icao.strip().upper()
-    if not normalized_icao:
-        raise ValueError("ICAO airport code must not be empty")
-    try:
-        airport = airports[normalized_icao]
-    except KeyError as error:
-        raise ValueError(f"Airport is not available from traffic: {normalized_icao}") from error
-    return build_airport_graph(airport, resolve_projection(projection))
+            airport_graph.graph.nodes[node]["aeroway"] = "parking_position"

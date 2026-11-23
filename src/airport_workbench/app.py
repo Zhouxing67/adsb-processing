@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 from starlette.exceptions import HTTPException as StarletteHTTPException
 
-from airport_surface.graph import DEFAULT_GRAPH_PATH
+from airport_surface import DEFAULT_GRAPH_PATH
 from flight.flight_repository import FlightDatabase
 from utils.json_value import to_json_value
 

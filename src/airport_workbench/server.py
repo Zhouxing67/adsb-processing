@@ -11,8 +11,7 @@ from typing import Any
 
 import uvicorn
 
-from airport_surface import AirportGraph
-from airport_surface.graph import DEFAULT_GRAPH_PATH, load_graph
+from airport_surface import DEFAULT_GRAPH_PATH, AirportGraph, load_graph
 from flight.flight_repository import FlightDatabase
 
 from .app import create_app

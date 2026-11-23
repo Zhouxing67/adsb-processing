@@ -5,8 +5,11 @@ import pytest
 from pyproj import Proj
 from shapely.geometry import LineString
 
-from airport_surface import AirportGraph, graph_id, load_graph, save_graph
-from airport_surface.graph import (
+from airport_surface import (
+    AirportGraph,
+    graph_id,
+    load_graph,
+    save_graph,
     validate_edge_sources,
     validate_source_intervals,
 )
@@ -102,7 +105,7 @@ def test_coordinate_transforms_preserve_linestring():
 
 
 def test_old_collections_are_verified_then_ignored(tmp_path):
-    from airport_surface.graph import _document_graph_id
+    from airport_surface.persistence import _document_graph_id
 
     graph = nx.MultiGraph()
     graph.add_node("1", pos=(0, 0))

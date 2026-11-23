@@ -61,7 +61,7 @@ flowchart TD
   每条地面滑行轨迹都有明确的运行方向（离港 `departure` / 进港 `arrival`）与起终点语义——离港必须从**机位**出发到达**跑道**，进港必须从**跑道**脱离到达**机位**。即使轨迹首尾存在 ADS-B 信号缺失（如机坪遮挡、脱离跑道较晚），最终路径也必须连通到合法的机位与跑道边界。
 - **怎么实现**：
   1. **虚拟首尾边界层**：在观测点候选层序列的首尾分别拼接虚拟的 `start` 层和 `end` 层（离港为 `stand_layer -> runway_layer`，进港为 `runway_layer -> stand_layer`），强制 Viterbi 解码从合法起点出发、在合法终点结束。
-  2. **跑道缺失回退与双边界兼容**：若航班未提供 `runway_ref`，不直接报错，而是自动回退到全图所有跑道，由轨迹自身锁定实际使用的跑道；同时 `runway_layer` 兼含**跑道本体边**（兼容含滑跑段的轨迹）和**跑道-滑行道接口边**（兼容仅含滑行段的轨迹）。
+  2. **跑道缺失推断与双边界兼容**：若航班未提供 `runway_ref`，要求轨迹跑道端（离港看末帧、进港看首帧）的候选必须命中至少一条跑道边，并据此锁定该跑道；若轨迹半路中断未到达跑道，则直接报 `missing_od`，避免盲目连向最近跑道。同时 `runway_layer` 按 `(runway_ref, is_departure)` 做 `lru_cache` 缓存，并兼含**跑道本体边**（兼容含滑跑段的轨迹）和**跑道-滑行道接口边**（兼容仅含滑行段的轨迹）。
   3. **零位移边界打分**：首尾边界段分别复用首末观测点坐标（观测直线距离 $r = 0$），转移得分退化为 $-D / \beta$，仅惩罚多余的沿网接入距离，不会扭曲中间轨迹。
   4. **跑道端头截断**：解码完成后，从离港路径尾部（或进港路径头部）裁剪掉连续的跑道本体边，使输出精确收敛在**机位 ↔ 跑道接口**之间。
 
@@ -97,9 +97,9 @@ flowchart TD
 先校验 `flight.od_error`、`movement`（`departure`/`arrival`）和 `stand_ref`（机位必填），再借助 `AirportGraph` 的业务索引构造虚拟边界层 `(start, end)` 与跑道边集合 `runway_edges`：
 
 - **机位层（`stand_layer`）**：从 `AirportGraph.stand_to_edges` 获取机位关联边，为正反两个方向生成边界候选（离港取起点 `offset = 0`，进港取终点 `offset = length`）。
-- **跑道层（`runway_layer`）**：按 `runway_ref` 筛选跑道边（缺失时回退到全图跑道边），同时将**跑道本体边**与 `AirportGraph.runway_interfaces` 对应的**跑道-滑行道接口边**纳入候选，最后按离/进港决定 `(start, end)` 顺序。
+- **跑道层（`runway_layer`）**：按 `runway_ref` 通过 `lru_cache` 缓存获取对应的跑道边与边界候选（兼含**跑道本体边**与 `AirportGraph.runway_interfaces` 对应的**跑道-滑行道接口边**）。若 `runway_ref` 缺失，则在完成候选召回后检查轨迹跑道端（离港末帧 / 进港首帧）是否命中跑道边，命中则按该跑道 `ref` 查缓存锁定目标跑道，未命中则报 `missing_od`。最后按离/进港决定 `(start, end)` 顺序。
 
-> 机位索引 `stand_to_edges` 与跑道接口索引 `runway_interfaces` 的结构及生成规则，详见 [机场图数据设计 §5 业务索引和人工修复](airport_surface.md#5-业务索引和人工修复)。
+> 机位索引 `stand_to_edges` 与跑道接口索引 `runway_interfaces` 的结构及生成规则，详见 [机场图数据设计 §3.3 派生业务索引](airport_surface.md#33-派生业务索引modelspy)。
 
 ### 4.2 第二步：坐标投影与空间索引候选召回
 
@@ -240,7 +240,7 @@ flowchart LR
 | 失败码 | 触发原因 |
 |---|---|
 | `invalid_od` | 同一航班记录中存在冲突的 OD 字段（`flight.od_error`）。 |
-| `missing_od` | 缺失 `movement`（非 `departure`/`arrival`）或缺失 `stand_ref`。 |
+| `missing_od` | 缺失 `movement`（非 `departure`/`arrival`）、缺失 `stand_ref`，或缺失 `runway_ref` 且轨迹跑道端未命中任何跑道边。 |
 | `unknown_od` | 机位编号不在路网 `stand_to_edges` 中，或指定跑道（及全图）不存在可用跑道/接口边。 |
 | `no_candidates` | 全部观测点在 `candidate_radius` 内都未找到非自环候选边。 |
 | `no_legal_path` | 无法在起终点 OD 与转角约束下找到贯穿所有保留观测层的可达序列。 |
@@ -269,5 +269,5 @@ flowchart LR
 | `max_transition_turn_angle_deg` | 对偶图允许的最大局部转角 | 150° |
 | `turn_tangent_sample_m` | 边端局部切线采样长度 | 10 m |
 
-- **索引与缓存复用**：同一图快照上的所有航班共享同一个 `Matcher`、`CandidateIndex` 与 `DirectedNetworkRouter`（含 `_route` 的 LRU 缓存）。匹配期间保持图快照只读，避免拓扑变更导致缓存失效。
+- **索引与缓存复用**：同一图快照上的所有航班共享同一个 `Matcher`（含跑道边界层 `lru_cache`）、`CandidateIndex` 与 `DirectedNetworkRouter`（含 `_route` 的 LRU 缓存）。匹配期间保持图快照只读，避免拓扑变更导致缓存失效。
 - **统一批处理接口**：离线运行器（`BatchMatchingRunner`）和工作台后台任务（`FlightMatchTasks`）均调用 `match_batch()` 流式产出 `MatchOutcome`，并用 `BatchStats` 汇总总数、成功数、失败分类和耗时。

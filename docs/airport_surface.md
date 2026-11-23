@@ -1,192 +1,159 @@
-# AirportGraph 的数据设计与自动构建
+# `airport_surface`：机场地面路网数据设计与构建架构
+
+`airport_surface` 定义了本项目的核心路网对象 `AirportGraph`，负责表达机场地面可通行连接、保留精确曲线几何、维护业务索引（机位与跑道接口），并支撑离线 OSM 建图、人工修复与 Schema v2 持久化。
+
+- 日常建图、编辑与运行命令见 [快速上手与运行指南](quickstart.md#43-机场图构建与编辑)
+- 模块文件索引与字典字段速查见 [机场图模块指南](../src/airport_surface/README.md)
+- 路径匹配如何使用路网见 [匹配算法](path_map.md)
+
+---
+
+## 1. 模块架构与职责边界
 
-`AirportGraph` 表达机场地面路网：哪些位置可以连接、连接沿什么曲线延伸，以及这些连接来自哪些原始数据。路径匹配使用它的拓扑和几何，人工修复则调整其中的连接关系和业务标注。
+重构后的 `airport_surface` 按职责拆分为 6 个小而清晰的模块，调用关系单向收敛：
 
-它保存的是一份完整的机场图状态，而不只是一个 NetworkX 图。除当前节点与边外，还包含来源记录、坐标投影、节点归一化关系和构建疑点。这些信息使修改后的图仍能解释自身的几何来源，并能够独立保存和重新加载。
+```mermaid
+flowchart TD
+    Id["identifiers.py\n规范标识校验: NodeId / OsmId / EdgeKey / EdgeId"]
+    Models["models.py\n核心模型: AirportGraph / SourceNode / SourceEdge / SourceSegment\n投影转换与业务索引 (stand_to_edges / runway_interfaces)"]
+    Chain["source_chain.py\n来源链操作与几何重建: 切分 / 压缩 / 反转 / 累计里程 / 折线重建"]
+    Valid["validation.py\n三大不变量校验: 端点一致 / 来源可重建 / 来源全覆盖"]
+    Persist["persistence.py\nSchema v2 JSON 原子读写与 SHA-256 graph_id"]
+    Builder["traffic_builder.py (可选离线)\ntraffic / OSM 读取 -> 归一化 -> 切边 -> 校验"]
+
+    Id --> Models
+    Models --> Chain
+    Chain --> Valid
+    Models --> Persist
+    Builder --> Models
+    Builder --> Chain
+    Builder --> Valid
+```
+
+| 模块 | 职责边界 |
+|---|---|
+| `identifiers.py` | 定义与校验稳定标识：`NodeId`（非零十进制字符串，正数来自 OSM、负数为人工节点）、`OsmId`、`EdgeKey`（非负整数）、`EdgeId`。 |
+| `models.py` | 定义不可变来源对象（`SourceNode`、`SourceEdge`、`SourceSegment`）与可编辑图容器 `AirportGraph`，封装投影转换、边定向几何和业务索引。 |
+| `source_chain.py` | 来源链纯算法与几何重建：切分、压缩、反转、折线累计里程，以及按米制里程区间重建 WGS84 折线。 |
+| `validation.py` | 校验拓扑端点、几何可重建性与来源全覆盖三项不变量。 |
+| `persistence.py` | Schema v2 持久化、确定性内容哈希 `graph_id` 与原子落盘。 |
+| `traffic_builder.py` | 离线建图流水线（唯一依赖 `traffic` 可选依赖组的模块）。 |
 
-本文介绍对象的含义和构建过程。命令及 Workbench 操作见[快速上手与运行指南](quickstart.md#43-机场图构建与编辑)。
+---
+
+## 2. 核心设计：拓扑与来源分离
 
-## 1. 为什么区分拓扑和来源
+OpenStreetMap 中的节点大多只是描绘弯道形状的采样点，并不都是路口。如果把所有 OSM 节点都做成图节点，路网会被大量无意义的二度点淹没；反之若只连端点直线，又会丢失真实滑行道曲率。
 
-OSM 的节点首先是描述线条形状的采样位置，并不都代表路口或连接端点。如果把所有 OSM 节点都变成图节点，图会充满只用于描绘弯曲形状的中间点。相反，如果只保留端点之间的直线，又会丢失真实路形。
+因此 `AirportGraph` 将**“当前可编辑拓扑”**与**“不可变几何来源”**明确分离：
 
-AirportGraph 因此分别保存两件事：
+```mermaid
+flowchart LR
+    subgraph Source["不可变来源层 (冻结记录)"]
+        SN["source_nodes\n归一化坐标 + OSM 节点别名组"]
+        SE["source_edges\n完整 OSM Way / 人工来源折线"]
+    end
 
-- **当前拓扑**决定哪些节点之间存在连接，以及连接的具体几何。
-- **来源记录**保留原始线条及其节点序列，说明当前连接使用了原线的哪些部分。
+    subgraph Topo["当前路网层 (nx.MultiGraph)"]
+        N["图节点 (NodeId)\n路口 / 端点 / 人工节点"]
+        E["图边 (u, v, key)\n折线几何 + source_segments 区间链"]
+    end
 
-图节点可以少于来源节点，但图边的几何仍保留中间坐标。人工切分、合并或重组连接时，改变的是当前拓扑及其对来源的引用，原有来源记录不随之改写。明确创建人工连接时，可以新增人工来源。
+    SE -->|"按米制起止里程引用\nSourceSegment(source_id, start_m, end_m, reversed)"| E
+    SN -->|"提供归一化坐标与属性"| N
+```
 
-这种分离既减少了不必要的拓扑节点，也为修复后的曲线重建和一致性检查提供了依据。
+- **当前路网（`graph`）**是 `nx.MultiGraph`（无向多重图）：
+  - **无向**：仅描述地面物理连通性，不编码单向滑行规则或跑道运行方向（方向与转角约束由 `path_map` 在有向对偶图上处理）。
+  - **多重边**：允许同一对端点间存在多条独立路径，因此每条边由三元组 `(u, v, key)` 唯一标识。
+  - 边属性中的 `first`、`last` 仅标明该边 `geometry` 坐标与 `source_segments` 的排列起止端，不代表单向通行。
+- **不可变来源层（`source_nodes`、`source_edges`）**：
+  - 使用 `frozen=True, slots=True` 的 dataclass 配合递归冻结的 `MappingProxyType` 保存，禁止就地篡改。
+  - 人工切分、合并或重连边时，只改变当前拓扑及其引用的 `source_segments`，不修改原始 `SourceEdge`；需要凭空补线时，则显式新增一条 `source_type="manual"` 的 `SourceEdge`。
 
-## 2. 当前路网：graph
+---
 
-`graph` 是 NetworkX 的 `MultiGraph`，即无向多重图。
+## 3. 核心对象、坐标系与业务索引
 
-无向表示本层记录地面线路的连接关系，不表达单向通行、跑道运行方向或管制许可。多重图允许相同端点之间保留多条不同连接，因此一条边需要通过 `(u, v, key)` 标识，不能只用两个端点区分。
+### 3.1 坐标与投影
+- 所有节点坐标（`pos`）、来源折线与图边几何均以 **WGS84 经纬度**（`EPSG:4326`）存储，便于地图展示与序列化。
+- `AirportGraph.projection` 绑定一个显式指定的**水平单位为米的投影坐标系**（ZBAA 使用 `EPSG:32650`）。长度、来源里程、端点容差（`1e-3 m`）均在投影平面内计算，通过 `project_shape()` / `to_wgs84_shape()` 完成转换。
 
-### 图节点
+### 3.2 来源链与几何重建（`source_chain.py`）
+每条图边通过有序元组 `source_segments: tuple[SourceSegment, ...]` 声明自己的几何来源：
 
-图节点是当前路网中的连接位置，使用节点 ID 标识，`pos` 保存经纬度。自动建图时，它们来自归一化后的来源节点；人工编辑也可以增加新的图节点。
+```python
+SourceSegment(
+    source_id="osm-way-123456",
+    source_start_m=0.0,     # 非负，沿来源曲线的米制累计里程
+    source_end_m=84.5,      # 严格大于 source_start_m
+    reversed=False,         # 反向遍历时设为 True，不交换起止数值
+)
+```
 
-图节点与 OSM 节点不是一一对应关系：多个完全同坐标的 OSM 节点可以归为同一个来源节点，而只承担曲线形状描述的来源节点不一定进入拓扑图。
+重建几何（`geometry_from_source_segments`）时：
+1. 在米制投影平面内逐段截取来源曲线（`shapely.ops.substring`），按 `reversed` 决定方向；
+2. 校验相邻片段首尾间距不超过 `1e-3 m` 并顺序拼接；
+3. 将首尾坐标吸附到 `start_node` / `end_node` 的投影位置，再一次性转回 WGS84 折线。
 
-### 图边
+编辑器对边做切分（`split_source_chain`）、反转（`reverse_source_segments`）或合并时，都会调用 `compact_source_segments` 自动合并同来源、同方向且首尾相接的相邻区间。
 
-图边连接两个图节点，`geometry` 保存完整的经纬度折线。`first`、`last` 指定这条折线和来源链的排列方向；它们不表示线路只能沿该方向通行。
+### 3.3 派生业务索引（`models.py`）
+`AirportGraph` 从当前拓扑和边属性派生两套业务索引，供工作台检索和 `path_map` 构造 OD 边界使用：
 
-边还持有有序的 `source_segments`，说明它沿途使用的来源区间。新建图中的一条边通常对应单一来源的一个区间；经过人工重组后，一条边可以依次使用多个来源区间。
+- **机位索引（`stand_to_edges` / `edge_to_stand`）**：由 `rebuild_stand_index()` 构建。扫描所有 `aeroway == "parking_position"` 且 `ref` 非空（去空白后）的边，按 `str(ref)` 聚合为 `dict[str, tuple[EdgeId, ...]]`（允许同一机位对应多条边），并维护反向映射 `edge_to_stand`。
+- **跑道接口索引（`runway_interfaces`）**：由 `rebuild_runway_interfaces()` 构建。找出同时关联至少一条 `aeroway == "runway"` 边和至少一条 `aeroway == "taxiway"` 边的节点，记录为 `runway_interfaces[node] = {"runway": tuple[EdgeId, ...], "taxiway": tuple[EdgeId, ...]}`。跑道号通过跑道边的 `ref`（如 `"18L/36R"`）识别。
 
-拓扑端点、折线端点和来源链必须相互一致。保存边的几何便于直接绘制和匹配，同时保存来源链，则使这条几何能够被检查和重建。
+> 直接修改底层 `graph` 后需手动调用上述两个 `rebuild_*` 方法；通过工作台 `EditorSession` 执行的编辑会自动同步刷新。
 
-## 3. 来源记录：source_nodes 与 source_edges
+---
 
-### source_nodes
+## 4. 离线自动建图流水线（`traffic_builder.py`）
 
-`source_nodes` 按归一化节点 ID 保存 `SourceNode`。每条记录包含：
+离线建图入口为 `build_graph(icao, projection)` → `build_airport_graph(airport, proj)`，按 6 个阶段自顶向下执行：
 
-- 归一化后的节点 ID 和原始位置。
-- 归属于该位置的 OSM 节点 ID 集合，以元组保存。
-- 可获取的原始节点属性。
+```mermaid
+flowchart TD
+    S0["traffic / cartes Overpass\n获取开放线状 OSM Way 与节点表"] --> S1["1. 提取来源 (_extract_sources)\n过滤无效/节点数不匹配的 Way -> 注册 SourceEdge"]
+    S1 --> S2["2. 解析 OSM 与节点归一化\n合并 Point 机位位置 -> 精确同坐标归并 (SourceNode + node_aliases)"]
+    S2 --> S3["3. 选取拓扑节点 (_topology_nodes)\n首尾端点 ∪ 多来源共享点 ∪ 同来源重复点"]
+    S3 --> S4["4. 沿来源切出图边 (_build_derived_graph)\n按米制累计里程切分 (parking_position 保持整段不切分)"]
+    S4 --> S5["5. 挂载 Point 机位标签 (_attach_point_stand_nodes)\n在已有节点或独立节点上保留 aeroway='parking_position'"]
+    S5 --> S6["6. 三项不变量校验 + 构建业务索引\nvalidate_edge_endpoints / validate_edge_sources / validate_source_intervals"]
+```
 
-这里保存的是来源层的位置记录，不等同于当前拓扑节点表。来源中的内部形状点会保留在这里；人工新增图节点也不必有对应的 OSM 来源记录。
+关于 `osm.network_graph()` 的角色与边界：
+- 构建器调用 `traffic` 底层 `cartes.osm.Overpass.network_graph()` 仅将其作为 **OSM 开放线状 Way 的拉取与解析载体**，不采用其拓扑划分。所有节点归一化、交叉点切分与业务分类均在 `traffic_builder.py` 内独立完成。
+- **已知边界**：
+  - 自动归一化只合并**坐标完全相同**的 OSM 节点，不做距离阈值吸附；无共享节点的几何相交不会自动打断连接，需在工作台人工修复。
+  - `aeroway == "parking_position"` 的机位引导线默认保持首尾整段不切分，避免机位内部共享节点把单条机位边拆碎。
+  - OSM 中首尾闭合的环状 Way 在 `cartes` 解析时会形成面几何，不进入开放 `LineString` 集合，如有缺失可在工作台人工补线。
+  - 无效几何、节点坐标冲突、自环边、零长边等异常会记录在 `metadata.build_issues` 中供人工复核。
 
-`node_aliases` 保存其他 OSM 节点 ID 到归一化 ID 的映射，用于在构建连接关系时统一节点身份。自动归一化只合并坐标完全相同的节点，不根据距离阈值把附近节点当作同一点。
+---
 
-### source_edges
+## 5. 三项结构一致性校验（`validation.py`）
 
-`source_edges` 按 `source_id` 保存 `SourceEdge`。每条记录保留一条输入来源线的完整几何、来源类型、OSM way ID、有序 OSM 节点序列及业务属性。人工创建的来源使用同一结构，但不要求具有 OSM 身份。
+构建完成与保存图文件前，通过以下三项校验保证拓扑、几何与来源之间不存在事实分歧（默认容差 `ENDPOINT_TOLERANCE_M = 1e-3 m`）：
 
-`source_id` 是本图中引用来源的唯一标识，不应把它直接等同于 OSM way ID。输入中出现同一 way ID 的多条记录时，构建器仍会分配不同的来源标识。
+| 校验函数 | 验证内容 | 适用阶段 |
+|---|---|---|
+| `validate_edge_endpoints` | 每条边的 `LineString` 非空，且几何首尾端点与拓扑节点 `(u, v)` 的投影位置误差 $\le 1\text{ mm}$。 | 自动建图、编辑器保存 |
+| `validate_edge_sources` | 每条边均有非空 `source_segments`，引用的 `source_id` 与里程合法，且按来源链重建出的折线与保存的 `geometry` 的 Hausdorff 距离及长度差均 $\le 1\text{ mm}$。 | 自动建图、编辑器保存 |
+| `validate_source_intervals` | 单遍扫描（$O(\lvert E\rvert + \lvert S\rvert)$）校验每条原始 `SourceEdge` 均被派生边区间从 `0` 到全长无缝、无重叠地完整覆盖。 | 自动建图（人工删边后的修订图不强制要求全覆盖） |
 
-来源记录采用冻结的数据对象，属性映射在构造时复制并以只读映射保存。它们承担的是几何依据，不是当前拓扑的可编辑替代品。
+---
 
-### source_segments 如何引用来源
+## 6. Schema v2 持久化与版本标识（`persistence.py`）
 
-每个 `SourceSegment` 包含来源 ID、区间起止里程和 `reversed` 标记。里程从来源折线的起点开始，沿投影后的曲线累计，以米计量，而不是用坐标下标或端点直线距离表示。
+- **唯一支持的格式**：只读写显式声明 `schema_version = 2` 的 JSON 文档，不隐式兼容旧版 v1 或外部 NetworkX 图格式。
+- **确定性内容标识 `graph_id`**：对除 `graph_id` 外的完整 JSON 载荷做 `sort_keys=True` 规范化序列化后计算 `sha256:...`。任何拓扑、几何或业务属性变化都会产生新的 `graph_id`，用于将批量匹配结果（`paths.jsonl`）精确绑定到对应的图快照。
+- **原子写入与加载校验**：`save_graph()` 先写入 `.tmp` 临时文件再原子替换目标文件；`load_graph()` 读取时会校验 `schema_version` 与 `graph_id` 哈希完整性，并自动重建 `stand_to_edges` 与 `runway_interfaces`。
 
-区间始终满足起始里程非负、终止里程大于起始里程。反向使用该区间由 `reversed` 表达，不交换起止数值。多个区间按图边从 `first` 到 `last` 的顺序排列。
+---
 
-重建时，程序从各来源曲线截取指定区间，按方向排列并连接，再使首尾与当前图节点位置对应。因此，人工调整连接后仍能保留来源曲线，而不需要把整条连接替换为直线。
+## 7. 与工作台编辑及路径匹配的边界
 
-## 4. 坐标与距离
-
-图节点位置、来源几何和图边几何均以 WGS84 经度、纬度保存。`projection` 指定机场使用的米制投影，`project` 和 `to_wgs84` 提供两个坐标系之间的转换。
-
-经纬度用于地理定位和地图展示；长度、来源里程和距离容差在投影坐标系中计算。投影定义属于 AirportGraph 本身，使同一份图在重新加载后仍使用相同的距离尺度。
-
-构建入口要求显式指定水平单位为米的投影坐标系。是否适合机场所在区域由调用方决定，构建器不会自动选择。
-
-## 5. 业务索引和人工修复
-
-节点和边保留来源标签与人工编辑后的属性。初始化或图修改后，通过 `rebuild_stand_index()` 与 `rebuild_runway_interfaces()` 从当前拓扑和边属性派生两套业务索引，供工作台检索与 `path_map` 构造 OD 边界使用：
-
-- **机位索引（`stand_to_edges` / `edge_to_stand`）**：遍历所有 `aeroway == "parking_position"` 且 `ref` 非空（去除空白后）的边，按 `str(ref)` 聚合为 `stand_to_edges: dict[str, tuple[EdgeId, ...]]`（同一机位编号可对应多条边），同时维护反向映射 `edge_to_stand`。索引中的边标识沿用 `graph.edges()` 返回的无向端点顺序，不表示通行方向。
-- **跑道接口索引（`runway_interfaces`）**：找出同时关联至少一条 `aeroway == "runway"` 边和至少一条 `aeroway == "taxiway"` 边的拓扑节点，记录为 `runway_interfaces[node] = {"runway": tuple[EdgeId, ...], "taxiway": tuple[EdgeId, ...]}`。跑道边本身通过 `ref`（如 `"18L/36R"`，按 `/` 切分匹配）标识跑道号。在路径匹配中，跑道接口的滑行道边用于兼容不含跑道滑跑点的轨迹，而跑道本体边用于衔接含跑道滑跑点的轨迹。
-
-直接修改底层 `graph` 后需显式调用上述两个 `rebuild_*` 方法刷新索引；通过 `EditorSession` 执行的编辑会自动同步维护。
-
-人工修复的结果体现在当前拓扑、节点位置、边几何、来源区间和 `node_aliases` 中。
-撤销历史由 `EditorSession` 管理。重新加载 JSON 时恢复保存的图状态。
-
-`metadata` 保存机场标识和构建疑点 `build_issues`。疑点是人工检查的线索，可能仍需修复。
-
-## 6. 自动建图如何得到 AirportGraph
-
-自动构建入口位于 `traffic_builder.py`。整个过程先保留来源，再确定拓扑，最后进行几何切分和验证。
-
-构建入口通过 `traffic` 取得机场的 OpenStreetMap 数据，但实际调用的 `network_graph()` 由 `traffic` 依赖的 `cartes.osm.Overpass` 提供。这里返回的 `MultiGraph` 只作为 OSM Way 的解析和传递格式使用，不是本项目最终采用的机场拓扑图。对于筛选出的开放线状 Way，`network_graph()` 以 Way 的首尾 OSM 节点作为图端点，并生成一条携带完整 `geometry`、有序 `nodes`、Way ID 和业务属性的边；它不会在 Way 的内部共享节点处切分，也不会执行本项目的节点归一化、交叉点识别或业务分类。
-
-因此，遍历该临时图的边，在当前输入约束下相当于遍历已经由 `cartes` 解析并筛选出的开放线状 OSM Way。后续构建器先将每条临时边登记为不可变的 `SourceEdge`，再根据完整节点序列独立计算拓扑，并创建新的 `MultiGraph` 作为 `AirportGraph.graph`。两个图虽然都是无向多重图，但前者只是第三方解析结果的中间载体，后者才是本项目验证、保存和人工修复的当前路网。
-
-### 第一步：读取地面线路，建立来源记录
-
-构建器通过 `traffic`（第三方库）获取机场 OSM 数据，并调用 `cartes.osm.Overpass.network_graph()`，选取 `aeroway` 为 `taxiway`、`runway` 或 `parking_position` 的开放 `LineString` Way。该方法为每条 Way 产生一条仅连接 Way 首尾节点的临时图边，同时在边属性中保留完整几何、有序 OSM 节点序列、Way ID 和相关业务属性。闭合 Way 会在 `cartes` 解析时形成面几何，不属于 `network_graph()` 接收的 `LineString`，因而不会进入这份临时图。
-
-构建器遍历临时图的所有边；在上述筛选条件下，这相当于逐条处理解析后的开放线状 OSM Way。每条有效输入边被转换为 `SourceEdge`，其节点序列与几何坐标逐项对应。缺少有效折线、或节点数量与坐标数量不一致的输入会被跳过并记录构建问题。同一 OSM 节点出现不一致坐标时，也会记录问题。
-
-这一步得到来源线登记表和节点位置表，还没有根据几何接近关系补充连接。
-
-### 第二步：统一完全同坐标节点的身份
-
-构建器按精确坐标对节点分组，为每组选择一个代表 ID，建立 `SourceNode` 和别名映射，同时保留该组包含的原始 OSM 节点 ID 及属性。
-
-后续判断共享节点时使用归一化后的身份。来源线仍保留原始节点序列和几何，归一化不会抹去原始数据。
-
-### 第三步：选出需要进入拓扑图的节点
-
-以下节点成为图节点：
-
-- 每条来源线的首尾节点。
-- 被多条来源线共同使用的节点。
-- 在同一条来源线序列中重复出现的节点。
-
-其余节点只承担折线形状描述，保留在来源中，不单独成为图节点。这样既保留线路端点和共享连接，也能在重复经过同一点时正确分段。
-
-构建器还检查来源线之间的几何重合及无共享节点的几何相交，将疑点记录到 `build_issues`。几何相交本身不会触发自动连接；空间接近也不会触发自动吸附。
-
-### 第四步：沿来源线切出图边
-
-构建器创建空的 `MultiGraph`，写入选出的节点，并将它与来源表、别名表和投影一起装入 AirportGraph。
-
-随后按每条来源线的原始顺序，找出所有拓扑节点出现的位置。相邻分割位置之间生成一条图边：其几何保留这段原线的全部坐标，其来源链记录该段在完整来源上的起止里程，`first` 和 `last` 指向两端图节点。
-
-来源里程由米制投影下的折线累计长度计算。此阶段不把相同端点的多条边合并，也不将弯曲线路拉直。发现自环或极短边时记录构建问题，最终结果仍须通过后续验证。
-
-### 第五步：保留 Point 机位与业务索引
-
-从解析后的 OSM 要素中保留 Point 机位。已有相同位置的节点时沿用归一化身份；
-未进入派生路网的机位可作为独立节点存在。机位索引和跑道接口索引由当前拓扑及属性构建。
-
-### 第六步：检查结构一致性，返回对象
-
-返回前验证图边几何端点与图节点位置是否一致、来源引用及区间是否合法、图边几何能否由来源链重建，以及各来源区间是否无间隙、无重叠地覆盖完整来源曲线。
-
-验证失败会阻止构建结果返回。验证通过说明对象满足这些结构约束，并不证明所有实际连接都已正确、全图必然连通，或业务标注无需人工复核。构建疑点仍随 `metadata` 一起保留。
-
-## 7. 图文件与版本标识
-
-JSON schema v2 保存当前节点、边、节点属性、来源记录、投影、节点别名和构建疑点。
-加载时从这些信息恢复图和派生索引；机位和跑道接口索引按当前边属性重新计算。
-加载器只接受显式标记为 v2 的图，不隐式迁移 v1 或其他外部 NetworkX 图。需要保留的
-旧图应先离线转换，而不是在主流程中长期保留双格式兼容分支。
-
-v2 中，图节点 ID、OSM node ID 和 OSM way ID 都使用规范十进制字符串。OSM 标识必须
-为正数，例如 `"244881041"`；人工节点从负数空间分配，例如 `"-1"`。字符串不能带
-前导零、正号或空白。多重边的 `key` 保持非负整数，因此完整边标识为
-`{u: string, v: string, key: integer}`。
-
-派生边只以 `source_segments` 表达来源链。旧的边级 `source_id`、`source_start_m` 和
-`source_end_m` 单字段不再读取或写出，避免同一来源关系出现两个事实来源。
-
-`graph_id` 由图文档计算，参与路径结果与图快照的关联。业务属性变化也会改变内容标识。
-加载已有图不需要访问 OSM。保存和完成负责校验与持久化，机位组和门户没有自动重算步骤。
-
-## 8. Workbench 稳定标识与并发控制
-
-Workbench API 直接传输 schema v2 的稳定标识。节点字段就是规范十进制字符串，例如
-`"244881041"` 或 `"-1"`；边使用 `{u: "244881041", v: "244881044", key: 0}`。
-项目不再定义 `EncodedValue` 或额外的 `encode/decode` 协议。NodeId 保持字符串，因此
-不会经过 JavaScript Number；EdgeKey 是图内生成的非负小整数。
-
-请求模型由 Pydantic 定义并进入 FastAPI OpenAPI，前端类型从已提交的 OpenAPI 文档
-自动生成。前端端点函数以这些生成类型作为边界，手写的界面状态类型只组合业务视图，
-不另行发明传输编码。
-
-无向 `MultiGraph` 边允许交换 `u`、`v` 后解析到同一对象，但 `key` 必须精确匹配；反向请求不会改变边的 `first`、`last` 或来源链方向。不存在的节点或边明确返回对象不存在错误，不会寻找同端点的替代边。
-
-每次状态快照包含会话 `revision`。所有编辑、依赖当前图的预览、撤销、保存和完成请求都必须携带 `expected_revision`。成功编辑只递增一次 revision 并生成一条撤销记录；撤销弹出一条历史记录并递增一次 revision，不恢复旧版本号，也不新增撤销记录。保存不递增。版本不一致返回 HTTP 409 和 `revision_conflict` 详情，缺失或非法版本返回 HTTP 422。
-
-`EditorSession` 在同一把可重入锁内完成版本检查、对象解析、业务校验、修改、回滚、撤销记录和版本递增。预览在锁内计算并返回其 revision，确认必须提交该版本；服务端会重新解析对象并重新计算操作计划。保存和完成在锁内检查版本、验证并写出，保存失败或版本冲突不会结束编辑服务。
-
-浏览器内部以稳定标识建立索引。表单、选择和预览绑定创建它们的 revision，不会借用后台刷新后的新版本。收到版本冲突时，旧预览和确认入口立即失效，页面刷新当前状态且不会自动重试修改。
-
-## 9. 人工补线与航班匹配的边界
-
-编辑工作台的「直接绘制连接」使用现有起点、可选形状点和现有终点创建一条连接。
-确认后新增一个 `manual` 来源和引用完整区间的派生边。形状点保留在线条几何中，
-沿途几何交叉不会自动添加拓扑连接。撤销该操作会一起移除派生边和新增来源。
-确认请求必须使用预览返回的版本号。
-
-航班工作台以只读方式使用已确认图。地图上的机位索引用于图要素查询，航班机位
-归属保存在各自的 DuckDB 观测记录中。航班目录、匹配任务和结果见[快速上手与运行指南](quickstart.md#41-航班工作台交互式筛选机位编辑与匹配)。
+- **稳定标识与前后端契约**：Workbench API 直接传输 Schema v2 的规范标识（`NodeId` 保持字符串以避免 JavaScript `Number` 精度问题，边使用 `{u, v, key}`）。请求/响应模型由 FastAPI Pydantic 定义并生成前端 TypeScript 类型。
+- **并发与版本控制**：`EditorSession` 在可重入锁内维护会话 `revision`。所有编辑、预览、撤销、保存与完成请求均携带 `expected_revision`，版本冲突返回 HTTP 409（`revision_conflict`），防止并发覆盖。
+- **人工补线与航班模式边界**：工作台「直接绘制连接」会创建一条 `source_type="manual"` 的新来源及对应派生边，撤销时一并移除；航班匹配工作台则始终以只读方式加载已确认的机场图，航班机位归属保存在 DuckDB 观测记录中。

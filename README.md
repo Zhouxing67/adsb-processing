@@ -22,6 +22,8 @@
 - **架构与算法**：
   - [机场图数据设计](docs/airport_surface.md) —— 拓扑、几何、来源区间、业务索引与版本控制。
   - [匹配算法](docs/path_map.md) —— 候选生成、有向对偶图转角约束、OD 约束与两阶段 Viterbi 解码。
-- **开发指南**：
+- **开发指南与排查记录**：
+  - [机场图模块指南](src/airport_surface/README.md) —— `airport_surface` 文件职责与图字段约定。
   - [匹配模块开发指南](src/path_map/README.md) —— `path_map` 编程接口与模块职责。
   - [Workbench 前端指南](frontend/workbench/README.md) —— 前端架构、OpenAPI 契约生成与回归测试。
+  - [Windows Access Violation 排查记录](docs/windows_access_violation.md) —— 间歇性运行时内存损坏的纯 Python 复现样例与排查方法。

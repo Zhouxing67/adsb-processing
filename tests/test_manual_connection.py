@@ -3,8 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 from pyproj import Proj
 
-from airport_surface import AirportGraph, load_graph
-from airport_surface.graph import validate_edge_sources
+from airport_surface import AirportGraph, load_graph, validate_edge_sources
 from airport_workbench import EditorSession
 from airport_workbench.app import create_app
 from airport_workbench.editor import RevisionConflict

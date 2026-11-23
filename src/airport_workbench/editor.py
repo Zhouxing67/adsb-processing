@@ -20,21 +20,21 @@ from airport_surface import (
     SourceEdge,
     SourceNode,
     SourceSegment,
+    cumulative_distances,
     edge_source_segments,
-    mutable_source_attributes,
-)
-from airport_surface.graph import (
-    apply_source_segments,
-    compact_source_segments,
-    geometry_from_source_interval,
     geometry_from_source_segments,
-    reverse_source_segments,
+    mutable_source_attributes,
     save_graph,
     validate_edge_endpoints,
     validate_edge_sources,
 )
-from airport_surface.source_chain import split_source_chain
-from airport_surface.traffic_builder import _cumulative_distances
+from airport_surface.source_chain import (
+    apply_source_segments,
+    compact_source_segments,
+    geometry_from_source_interval,
+    reverse_source_segments,
+    split_source_chain,
+)
 
 MANUAL_SOURCE_TOLERANCE_M = 0.5
 MERGE_CANDIDATE_TOLERANCE_M = 0.5
@@ -970,7 +970,7 @@ class EditorSession:
         projected_source = self.airport_graph.project_shape(source.geometry)
         start_m, end_m = segment.source_start_m, segment.source_end_m
         station = max(start_m, min(end_m, start_m + piece.project(click)))
-        source_stations = _cumulative_distances(self.airport_graph, source.geometry)
+        source_stations = cumulative_distances(self.airport_graph, source.geometry)
         candidates = []
         for index, (osm_node_id, coordinate, node_station) in enumerate(
             zip(source.osm_node_ids, projected_source.coords, source_stations)
@@ -1216,7 +1216,7 @@ class EditorSession:
     ) -> tuple[Any, ...]:
         """Return the original OSM nodes covered by one source interval."""
         source = self.airport_graph.get_source_edge(source_id)
-        stations = _cumulative_distances(self.airport_graph, source.geometry)
+        stations = cumulative_distances(self.airport_graph, source.geometry)
         result = []
         for node_id, station in zip(source.osm_node_ids, stations):
             if start_m - 1e-3 <= station <= end_m + 1e-3:
