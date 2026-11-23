@@ -1,33 +1,27 @@
 # ADS-B 航班路径匹配
 
-项目使用 ADS-B 地面观测和机场路网，估计航班经过的有向边序列。当前工作流以首都机场（ZBAA）为例。Python 依赖由 `uv` 管理，浏览器工作台由独立的 Vite 项目构建。
+项目使用 ADS-B 地面观测和机场路网，估计航班经过的有向边序列。当前工作流以首都机场（ZBAA）为例。Python 依赖由 `uv` 管理，浏览器工作台由独立的 Vite + `pnpm` 项目构建，DuckDB 并发访问由 Quack 提供支持。
 
-| 任务 | 从仓库根目录启动 | 说明 |
+## 快速开始
+
+新电脑首次部署（安装依赖、配置 `config.local.toml`、启动 Quack 与 DataGrip 连接、构建前端）请按步骤执行 **[快速上手与运行指南](docs/quickstart.md)**。
+
+完成初始化后，从仓库根目录运行常用任务：
+
+| 任务 | 命令 | 说明 |
 |---|---|---|
-| 批量匹配 | `uv run --extra stand-editing python -m src` | 从 DuckDB 顺序读取航班，输出路径、结果和统计文件。 |
-| 航班工作台 | `uv run --extra stand-editing python -m src --workbench` | 筛选航班、编辑航班机位、提交匹配并比较地图轨迹。机场图在此模式中只读。 |
-| 机场图编辑 | `uv run python -m airport_workbench` | 检查和修复机场路网。 |
+| Quack 服务 | `uv run --extra stand-editing python -m flight.quack_server` | 提供 DuckDB 并发访问并生成 DataGrip 初始化脚本（保持后台运行）。 |
+| 构建前端 | `pnpm --dir frontend/workbench build` | 编译浏览器工作台静态资源（首次或前端更新后执行）。 |
+| 航班工作台 | `uv run --extra stand-editing python -m src --workbench` | 筛选航班、编辑机位、提交匹配并对比轨迹（机场图只读）。 |
+| 批量匹配 | `uv run --extra stand-editing python -m src` | 离线顺序匹配全部航班，输出路径、结果与统计报告。 |
+| 机场图编辑 | `uv run python -m airport_workbench` | 检查和修复机场路网 JSON。 |
 
-### 启动quack以并发访问duckdb
+## 文档导航
 
-设置 `config.local.toml` 的 `[database]` 下启用
-`quack_uri = 'quack:127.0.0.1:9494'`，并保留指向实际数据库的 路径。
-在项目根目录启动 Quack 服务并保持终端运行。
-
-```powershell
-uv run --extra stand-editing python -m flight.quack_server
-```
-
-设置datagrip数据源的url为：
-
-```url
-jdbc:duckdb:;session_init_sql_file=D:/code/adsb-processing/outputs/quack-datagrip.sql
-```
-
-## 文档
-
-- [路径匹配运行说明](docs/path_matching_run.md)介绍配置、航班工作台操作、结果文件和统计口径。
-- [机场图建图与修复](docs/graph_build_and_repair.md)介绍如何生成、编辑并交付机场图。
-- [机场图数据设计](docs/airport_surface.md)解释拓扑、几何、来源区间与版本控制。
-- [匹配算法](docs/path_map.md)解释候选生成、沿网转移和 Viterbi 解码。
-- [匹配模块开发指南](src/path_map/README.md)和 [Workbench 前端指南](frontend/workbench/README.md)说明代码职责和测试入口。
+- **操作指南**：[快速上手与运行指南](docs/quickstart.md) —— 涵盖环境安装、Quack & DataGrip、前端构建、工作台操作、机场图构建修复、配置参考与常见问题。
+- **架构与算法**：
+  - [机场图数据设计](docs/airport_surface.md) —— 拓扑、几何、来源区间、业务索引与版本控制。
+  - [匹配算法](docs/path_map.md) —— 候选生成、有向对偶图转角约束、OD 约束与两阶段 Viterbi 解码。
+- **开发指南**：
+  - [匹配模块开发指南](src/path_map/README.md) —— `path_map` 编程接口与模块职责。
+  - [Workbench 前端指南](frontend/workbench/README.md) —— 前端架构、OpenAPI 契约生成与回归测试。

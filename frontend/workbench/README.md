@@ -21,7 +21,7 @@ this directory at `/`. A missing build returns HTTP 503 with build instructions.
 | Flight workbench | `uv run --extra stand-editing python -m src --workbench` | Loads flight catalogue, map comparisons, and observation details. The graph is read-only. |
 
 Configure the flight backend in `config.local.toml` as described in the
-[run guide](../../docs/path_matching_run.md). For frontend development, start
+[quickstart and run guide](../../docs/quickstart.md). For frontend development, start
 the desired Python backend first, then run `pnpm --dir frontend/workbench dev`.
 The Vite proxy forwards `/api` to port 8765. If the backend listens elsewhere,
 adjust the proxy target in `vite.config.ts` for that development session.

@@ -4,7 +4,7 @@
 
 它保存的是一份完整的机场图状态，而不只是一个 NetworkX 图。除当前节点与边外，还包含来源记录、坐标投影、节点归一化关系和构建疑点。这些信息使修改后的图仍能解释自身的几何来源，并能够独立保存和重新加载。
 
-本文介绍对象的含义和构建过程。命令及 Workbench 操作见[机场图建图与修复说明](graph_build_and_repair.md)。
+本文介绍对象的含义和构建过程。命令及 Workbench 操作见[快速上手与运行指南](quickstart.md#43-机场图构建与编辑)。
 
 ## 1. 为什么区分拓扑和来源
 
@@ -79,9 +79,12 @@ AirportGraph 因此分别保存两件事：
 
 ## 5. 业务索引和人工修复
 
-节点和边保留来源标签与人工编辑后的属性。机位索引按 `aeroway=parking_position`
-边的 `ref` 聚合。同一个编号可对应多条边，空编号不进入索引。跑道接口索引包含同时
-连接跑道边和滑行道边的节点。两者从当前图计算，供工作台搜索和展示。
+节点和边保留来源标签与人工编辑后的属性。初始化或图修改后，通过 `rebuild_stand_index()` 与 `rebuild_runway_interfaces()` 从当前拓扑和边属性派生两套业务索引，供工作台检索与 `path_map` 构造 OD 边界使用：
+
+- **机位索引（`stand_to_edges` / `edge_to_stand`）**：遍历所有 `aeroway == "parking_position"` 且 `ref` 非空（去除空白后）的边，按 `str(ref)` 聚合为 `stand_to_edges: dict[str, tuple[EdgeId, ...]]`（同一机位编号可对应多条边），同时维护反向映射 `edge_to_stand`。索引中的边标识沿用 `graph.edges()` 返回的无向端点顺序，不表示通行方向。
+- **跑道接口索引（`runway_interfaces`）**：找出同时关联至少一条 `aeroway == "runway"` 边和至少一条 `aeroway == "taxiway"` 边的拓扑节点，记录为 `runway_interfaces[node] = {"runway": tuple[EdgeId, ...], "taxiway": tuple[EdgeId, ...]}`。跑道边本身通过 `ref`（如 `"18L/36R"`，按 `/` 切分匹配）标识跑道号。在路径匹配中，跑道接口的滑行道边用于兼容不含跑道滑跑点的轨迹，而跑道本体边用于衔接含跑道滑跑点的轨迹。
+
+直接修改底层 `graph` 后需显式调用上述两个 `rebuild_*` 方法刷新索引；通过 `EditorSession` 执行的编辑会自动同步维护。
 
 人工修复的结果体现在当前拓扑、节点位置、边几何、来源区间和 `node_aliases` 中。
 撤销历史由 `EditorSession` 管理。重新加载 JSON 时恢复保存的图状态。
@@ -186,4 +189,4 @@ Workbench API 直接传输 schema v2 的稳定标识。节点字段就是规范�
 确认请求必须使用预览返回的版本号。
 
 航班工作台以只读方式使用已确认图。地图上的机位索引用于图要素查询，航班机位
-归属保存在各自的 DuckDB 观测记录中。航班目录、匹配任务和结果见[运行说明](path_matching_run.md)。
+归属保存在各自的 DuckDB 观测记录中。航班目录、匹配任务和结果见[快速上手与运行指南](quickstart.md#41-航班工作台交互式筛选机位编辑与匹配)。

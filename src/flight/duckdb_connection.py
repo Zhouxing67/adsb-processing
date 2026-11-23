@@ -23,7 +23,7 @@ def sql_literal(value: str) -> str:
 
 def attach_sql(uri: str, token: str, read_only: bool = False) -> str:
     access = ", READ_ONLY" if read_only else ""
-    return f"ATTACH {sql_literal(uri)} AS adsb (TOKEN {sql_literal(token)}{access});"
+    return f"ATTACH {sql_literal(uri)} AS adsb (TOKEN {sql_literal(token)}{access}); "
 
 
 class DuckDBSession:

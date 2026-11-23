@@ -28,7 +28,12 @@ stand-editing = [
 ]
 
 [dependency-groups]
-dev = ["pytest", "ruff", "jupyterlab"]
+dev = [
+    "pytest",
+    "ruff",
+    "jupyterlab",
+    "pytest-timeout>=2.4.0",
+]
 graph-build = ["traffic>=2.13"]
 
 [build-system]
@@ -41,6 +46,7 @@ module-name = ["config", "flight", "airport_surface", "airport_workbench", "path
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = [".", "src"]
+timeout = 60
 
 [tool.ruff]
 target-version = "py312"
