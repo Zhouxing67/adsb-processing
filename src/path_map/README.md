@@ -36,9 +36,24 @@ that loads it. Expected matching errors are recorded in the outcome. Workbench
 supplies lazy loaders and captures per-item system errors to keep task progress
 accurate. The batch runner propagates unexpected exceptions. For a single flight,
 call `matcher.map_flight(flight)`. The flight must provide its movement direction
-and stand reference; when the runway designator is omitted, the matcher falls back
-to all runways in the graph and resolves the route from the observations under the
-turn constraint (allowing at most one pushback reversal for departures).
+and stand reference; when the runway designator is omitted, the runway end of the
+track must hit a runway edge so the matcher can infer that runway (otherwise it
+raises `missing_od`). The matcher resolves the route under the turn constraint
+(allowing at most one pushback reversal for departures).
+
+## Surface OD for downstream callers
+
+`from path_map import get_od` exposes `get_od(airport_graph, flight, movetype=None, *, config=MatchConfig())`.
+For multiple flights on one graph, reuse `matcher.get_od(flight, movetype)`.
+An explicit arrival or departure supplies a missing flight direction and must agree with
+an existing direction. Both entry points raise `MapMatchingError` on resolution failure.
+OD resolution does not run Viterbi or establish that a taxi path exists.
+
+The immutable `FlightOD` includes ordered `origin` and `destination` labels, movement,
+stand and runway references, and a `runway_source` of `reported` or `inferred`.
+For inference, `runway_hit_edge` identifies the observed runway edge. The runway
+label keeps both ends of a physical runway such as `01/19`, or is `None` for an
+unlabelled runway edge. A reported runway uses the supplied designator.
 
 ## Responsibilities
 

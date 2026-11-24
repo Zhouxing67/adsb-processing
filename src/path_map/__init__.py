@@ -2,10 +2,12 @@
 
 from .batch import BatchStats, MatchOutcome, match_batch
 from .matcher import (
+    FlightOD,
     MapMatchingError,
     MapMatchingFailure,
     MatchConfig,
     Matcher,
+    get_od,
 )
 from .path import DirectedEdge, Path, PathGraphMismatch, PathRecord
 
@@ -14,6 +16,8 @@ __all__ = [
     "MatchOutcome",
     "match_batch",
     "DirectedEdge",
+    "FlightOD",
+    "get_od",
     "MapMatchingError",
     "MapMatchingFailure",
     "Matcher",

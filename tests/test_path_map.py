@@ -11,15 +11,17 @@ from pyproj import Proj, Transformer
 from shapely.geometry import LineString, Point
 
 from airport_surface import AirportGraph, graph_id, load_graph, save_graph
-from flight import Flight
+from flight import Flight, MovementType
 from flight.flight_repository import FlightDatabase
 from path_map import (
     MapMatchingError,
+    MapMatchingFailure,
     MatchConfig,
     Matcher,
     Path,
     PathGraphMismatch,
     PathRecord,
+    get_od,
 )
 from path_map.candidates import Candidate
 
@@ -59,6 +61,34 @@ def straight_od_graph() -> tuple[AirportGraph, Transformer]:
     airport_graph.rebuild_stand_index()
     airport_graph.rebuild_runway_interfaces()
     return airport_graph, transform
+
+
+@pytest.mark.parametrize("direction", [MovementType.ARRIVAL, MovementType.DEPARTURE])
+def test_get_od_uses_direction_and_preserves_physical_runway(direction):
+    graph, transform = straight_od_graph()
+    points = [(450_001, 4_428_000), (450_026, 4_428_000)]
+    departure = direction == MovementType.DEPARTURE
+    flight = make_flight(transform, points if departure else points[::-1], movement=direction)
+    rows = flight.rows
+    column = "org_runway" if departure else "dst_runway"
+    config = MatchConfig(candidate_radius=1)
+    reported = get_od(graph, Flight(rows), direction, config=config)
+    expected = ("009", "01") if departure else ("01", "009")
+    assert (reported.origin, reported.destination) == expected
+    assert reported.runway_source == "reported"
+    inferred = Matcher(graph, config).get_od(
+        Flight([{**row, column: None} for row in rows], movement=direction)
+    )
+    assert inferred.runway_source == "inferred"
+    assert inferred.runway_ref == "01/19"
+    assert graph.graph.edges[inferred.runway_hit_edge]["aeroway"] == "runway"
+
+    with pytest.raises(MapMatchingError) as conflict:
+        get_od(graph, Flight([rows[0], {**rows[1], column: "19"}]), direction)
+    assert conflict.value.code == MapMatchingFailure.INVALID_OD
+    with pytest.raises(MapMatchingError) as mismatch:
+        get_od(graph, flight, "arrival" if departure else "departure")
+    assert mismatch.value.code == MapMatchingFailure.INVALID_OD
 
 
 def test_reusing_matcher_does_not_mutate_graph_or_change_result():
@@ -660,3 +690,21 @@ def test_runway_roll_observations_disambiguate_symmetric_runway_entries():
     path = matcher.map_flight(flight)
 
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 0))
+
+
+def test_missing_runway_ref_requires_runway_end_observation():
+    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=False)
+    x0, y0 = 450_000.0, 4_428_000.0
+    # Track stops mid-taxiway without reaching the runway, and runway_ref is missing.
+    flight = make_flight(
+        to_wgs84,
+        [(x0, y0 - 20), (x0 - 40, y0)],
+        movement="departure",
+    )
+    flight = Flight([{**row, "org_runway": None} for row in flight.rows], movement="departure")
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+
+    with pytest.raises(MapMatchingError, match="Missing flight OD") as exc_info:
+        matcher.map_flight(flight)
+
+    assert exc_info.value.code is MapMatchingFailure.MISSING_OD
