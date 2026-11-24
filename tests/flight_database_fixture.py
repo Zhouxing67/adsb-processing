@@ -31,7 +31,7 @@ def create_flight_database(
 
     required = {
         "flight_id": pd.Series(dtype="string"),
-        "NUMBER": pd.Series(dtype="string"),
+        "number": pd.Series(dtype="string"),
         "timestamp": pd.Series(dtype="datetime64[ns]"),
         "longitude": pd.Series(dtype="float64"),
         "latitude": pd.Series(dtype="float64"),
@@ -42,15 +42,16 @@ def create_flight_database(
             ("departure", "dep", "dep_stand_position", "org_runway"),
         ):
             frame = pd.DataFrame(rows_by_movement[movement])
+            existing_columns = {str(col).casefold() for col in frame.columns}
             for name, empty in required.items():
-                if name not in frame:
+                if name.casefold() not in existing_columns:
                     frame[name] = empty
             for name in (stand, runway):
-                if name not in frame:
+                if name.casefold() not in existing_columns:
                     frame[name] = pd.Series(dtype="string")
             connection.register("fixture_rows", frame)
             connection.execute(
-                f"CREATE TABLE adsb_202406_{suffix} AS SELECT * FROM fixture_rows"
+                f"CREATE TABLE adsb_{suffix} AS SELECT * FROM fixture_rows"
             )
             connection.unregister("fixture_rows")
     return FlightDatabase(destination)

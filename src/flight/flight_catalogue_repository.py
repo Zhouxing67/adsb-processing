@@ -10,8 +10,8 @@ from .duckdb_connection import DuckDBConnection
 from .models import FlightSummary, utc_timestamp
 
 STAND_COLUMNS = {
-    "departure": ("adsb_202406_dep", "dep_stand_position"),
-    "arrival": ("adsb_202406_arr", "arr_stand_position"),
+    "departure": ("adsb_dep", "dep_stand_position"),
+    "arrival": ("adsb_arr", "arr_stand_position"),
 }
 BEIJING = "Asia/Shanghai"
 
@@ -72,8 +72,8 @@ class FlightCatalogueRepository:
                                {zone} AS display_zone,
                                {input_zone} AS input_zone
                     ), flights AS (
-                        SELECT flight_id, MIN("NUMBER") AS number,
-                               COUNT(DISTINCT "NUMBER") AS number_count,
+                        SELECT flight_id, MIN(number) AS number,
+                               COUNT(DISTINCT number) AS number_count,
                                MIN(timestamp) AS started, MAX(timestamp) AS ended,
                                COUNT(*) AS points,
                                MIN(NULLIF(TRIM({column}), '')) AS stand,

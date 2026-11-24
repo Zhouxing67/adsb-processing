@@ -399,12 +399,12 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
             ("dep", "dep_stand_position"),
         ):
             connection.execute(f"""
-                CREATE TABLE adsb_202406_{movement} (
-                    flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+                CREATE TABLE adsb_{movement} (
+                    flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
                     longitude DOUBLE, latitude DOUBLE,
                     {stand_column} VARCHAR CHECK ({stand_column} <> 'invalid')
                 );
-                INSERT INTO adsb_202406_{movement} VALUES
+                INSERT INTO adsb_{movement} VALUES
                     ('same', 'CA1', '2024-06-15 00:05:00', 116.0, 40.0, NULL),
                     ('same', 'CA1', '2024-06-15 00:06:00', 116.1, 40.0, NULL);
             """)
@@ -444,7 +444,7 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
 
     with duckdb.connect(str(database), read_only=True) as db:
         assert db.execute(
-            "SELECT arr_stand_position FROM adsb_202406_arr ORDER BY timestamp"
+            "SELECT arr_stand_position FROM adsb_arr ORDER BY timestamp"
         ).fetchall() == [("009",), ("009",)]
     restarted = FlightWorkbench(SmallGraph(), flight_database=store)
     assert restarted.detail(arrival)["fields"]["arr_stand_position"] == "009"
@@ -470,10 +470,10 @@ def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
             ("dep", "dep_stand_position", "org_runway"),
             ("arr", "arr_stand_position", "dst_runway"),
         ):
-            table = f"adsb_202406_{suffix}"
+            table = f"adsb_{suffix}"
             connection.execute(f"""
                 CREATE TABLE {table} AS
-                SELECT flight_id, flight_id AS "NUMBER",
+                SELECT flight_id, flight_id AS number,
                        TIMESTAMP '2024-06-15 00:05:00' AS timestamp,
                        116.0 AS longitude, 40.0 AS latitude,
                        stand AS {stand}, runway AS {runway}

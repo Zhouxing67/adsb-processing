@@ -40,16 +40,16 @@ def _flight_database(path: Path) -> FlightDatabase:
 
     with duckdb.connect(str(path)) as connection:
         connection.execute("""
-            CREATE TABLE adsb_202406_dep (
-                flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+            CREATE TABLE adsb_dep (
+                flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
                 longitude DOUBLE, latitude DOUBLE, dep_stand_position VARCHAR,
                 org_runway VARCHAR
             );
-            INSERT INTO adsb_202406_dep VALUES
+            INSERT INTO adsb_dep VALUES
                 ('OPENAPI', 'OPENAPI', '2024-01-01 00:00:00', 116.59, 40.07, 'A01', NULL),
                 ('OPENAPI', 'OPENAPI', '2024-01-01 00:01:00', 116.595, 40.07, 'A01', NULL);
-            CREATE TABLE adsb_202406_arr (
-                flight_id VARCHAR, "NUMBER" VARCHAR, timestamp TIMESTAMP,
+            CREATE TABLE adsb_arr (
+                flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
                 longitude DOUBLE, latitude DOUBLE, arr_stand_position VARCHAR,
                 dst_runway VARCHAR
             );

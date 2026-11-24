@@ -31,12 +31,13 @@ uv sync --group graph-build
 
 ### 1.2 放置数据库与 SQL 文件
 
-将准备好的 DuckDB 数据库文件（需包含 `main.adsb_202406_arr` 和 `main.adsb_202406_dep` 两张表）放到本地目录，推荐放在仓库下的 `data/database/`（该目录已在 `.gitignore` 中忽略），例如：
+将准备好的 DuckDB 数据库文件（需包含 `main.adsb_arr` 和 `main.adsb_dep` 两张表）放到本地目录，推荐放在仓库下的 `data/database/`（该目录已在 `.gitignore` 中忽略），例如：
 
 ```text
 data/database/adsb.db
-data/database/sql/        # 可选：存放离线 import/filter/export/analyse 等 SQL 脚本
 ```
+
+数据库建表、单月增量导入、分析与导出 SQL 模板统一维护在仓库根目录的 `sql/` 目录（见 [sql/README.md](../sql/README.md)）。
 
 > **数据约定**：同一表中相同 `flight_id` 的观测组成一条航班轨迹，进港和离港中的同名航班分别处理。两张表的无时区 `timestamp` 按北京时间解释，匹配读取时转换为 UTC；工作台目录与日期筛选默认使用北京时间。离线诊断脚本见 [scripts/csv_flights.py](../scripts/csv_flights.py)。
 
@@ -133,7 +134,7 @@ uv run --extra stand-editing python -m src --workbench
 2. **提交匹配**：勾选待匹配航班（支持跨页、本页或当前筛选的全部结果），点击「匹配所选航班」提交任务。
 3. **地图对比**：将航班加入地图，对比虚线原始轨迹与实线匹配路径。地图展示集合独立于待匹配集合，可点击「并排」同时浏览目录与地图并拖动分隔线。
 4. **观测详情**：点击「详情」查看按时间排序的观测记录（默认每页 100 条），支持单条观测定位到地图及展开全部字段。
-5. **编辑机位**：机位列支持直接编辑，保存时在一个事务内更新该 `flight_id` 的全部观测（离港写 `adsb_202406_dep.dep_stand_position`，进港写 `adsb_202406_arr.arr_stand_position`，清空写 `NULL`）。
+5. **编辑机位**：机位列支持直接编辑，保存时在一个事务内更新该 `flight_id` 的全部观测（离港写 `adsb_dep.dep_stand_position`，进港写 `adsb_arr.arr_stand_position`，清空写 `NULL`）。
 
 > 匹配任务与路径缓存在服务端内存中，关闭浏览器标签页不会停止服务；按 `Ctrl+C` 关闭服务时，正在处理的航班会完成，其余排队任务取消。重启后需重新匹配，但已提交的机位编辑已持久化到 DuckDB。
 

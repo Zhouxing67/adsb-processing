@@ -235,12 +235,12 @@ def test_database_flight_matches_using_its_od(
     if movement == "arrival":
         points.reverse()
         expected = tuple((v, u, key) for u, v, key in reversed(expected))
-    table = f"adsb_202406_{suffix}"
+    table = f"adsb_{suffix}"
     with duckdb.connect(str(database_path)) as connection:
         connection.execute(
             f"CREATE TABLE {table} (flight_id VARCHAR, timestamp TIMESTAMP, "
             f"longitude DOUBLE, latitude DOUBLE, {stand_column} VARCHAR, {runway_column} VARCHAR, "
-            '"NUMBER" VARCHAR, sche_dep TIMESTAMP)'
+            "number VARCHAR, sche_dep TIMESTAMP)"
         )
         connection.executemany(
             f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
