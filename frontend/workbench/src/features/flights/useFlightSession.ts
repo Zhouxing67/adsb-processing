@@ -105,6 +105,9 @@ export function useFlightSession(enabled: boolean) {
 
     return () => {
       controller.abort();
+      if (!restoreCompleteRef.current) {
+        restoredRef.current = false;
+      }
     };
   }, [enabled, saved, dispatch]);
 
