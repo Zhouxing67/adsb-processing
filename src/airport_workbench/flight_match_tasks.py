@@ -21,6 +21,8 @@ class MatchResultItem:
     config: dict[str, Any] = field(default_factory=dict)
     status: str = "unmatched"
     path: Path | None = None
+    stand_ref: str | None = None
+    runway_ref: str | None = None
     error: str | None = None
     error_kind: str | None = None
     failure_type: str | None = None
@@ -51,6 +53,10 @@ class MatchTask:
     flight_keys: tuple[str, ...]
     created_at: str
     results: dict[str, dict[str, Any]]
+    stats: BatchStats = field(default_factory=BatchStats)
+
+
+BATCH_LOAD_SIZE = 200
 
 
 class FlightMatchTasks:
@@ -64,8 +70,10 @@ class FlightMatchTasks:
         airport_graph: AirportGraph,
         lock: Any,
         config: MatchConfig,
+        load_flights_batch: Callable[[Sequence[str]], dict[str, Flight]] | None = None,
     ) -> None:
         self.load_flight = load_flight
+        self.load_flights_batch = load_flights_batch
         self.lock = lock
         self.match_config = config
         self.graph_id = graph_id(airport_graph)
@@ -122,6 +130,8 @@ class FlightMatchTasks:
                 result.config = config
                 result.status = "queued"
                 result.path = None
+                result.stand_ref = None
+                result.runway_ref = None
                 result.error = None
                 result.error_kind = None
                 result.failure_type = None
@@ -129,11 +139,15 @@ class FlightMatchTasks:
                 result.task_id = task_id
                 result.updated_at = self._now()
                 pending.append(key)
+            task_stats = BatchStats()
+            if pending:
+                task_stats.counts["queued"] = len(pending)
             self.tasks[task_id] = MatchTask(
                 task_id,
                 tuple(pending),
                 self._now(),
                 {key: self.results[key].public() for key in pending},
+                task_stats,
             )
             if pending:
                 self.executor.submit(self._run, task_id, tuple(pending))
@@ -146,26 +160,40 @@ class FlightMatchTasks:
             "skipped_count": len(skipped),
         }
 
-    def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
-        """Return compact progress without catalogue rows or geometry."""
-        wanted = set(task_ids or ())
+    def task_status(
+        self,
+        task_ids: Sequence[str] | None = None,
+        *,
+        include_items: bool = True,
+        flight_keys: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return progress; when include_items is False, include only requested flight_keys."""
+        wanted_tasks = set(task_ids or ())
+        wanted_keys = set(flight_keys or ())
         with self.lock:
             tasks = [
-                task for task_id, task in self.tasks.items() if not wanted or task_id in wanted
+                task for task_id, task in self.tasks.items()
+                if not wanted_tasks or task_id in wanted_tasks
             ]
             payload = []
             total_stats = BatchStats()
             for task in tasks:
-                stats = BatchStats()
-                items = [dict(task.results[key]) for key in task.flight_keys]
-                for item in items:
-                    stats.add(item["status"], item["failure_type"], item["elapsed_seconds"])
-                total_stats.merge(stats)
+                total_stats.merge(task.stats)
+                if include_items:
+                    task_flight_keys = list(task.flight_keys)
+                    items = [dict(task.results[key]) for key in task.flight_keys]
+                elif wanted_keys:
+                    matched_keys = [key for key in wanted_keys if key in task.results]
+                    task_flight_keys = matched_keys
+                    items = [dict(task.results[key]) for key in matched_keys]
+                else:
+                    task_flight_keys = []
+                    items = []
                 payload.append(
                     {
                         "task_id": task.task_id,
-                        "flight_keys": list(task.flight_keys),
-                        **stats.progress(),
+                        "flight_keys": task_flight_keys,
+                        **task.stats.progress(),
                         "items": items,
                     }
                 )
@@ -180,18 +208,48 @@ class FlightMatchTasks:
         self,
         task_id: str,
         keys: tuple[str, ...],
-    ) -> Iterable[tuple[str, Callable[[], Flight]]]:
-        for key in keys:
+    ) -> Iterable[tuple[str, Flight | Callable[[], Flight]]]:
+        if self.load_flights_batch is None:
+            for key in keys:
+                with self.lock:
+                    if self._closing:
+                        return
+                    result = self.results[key]
+                    if result.task_id != task_id:
+                        continue
+                    result.status = "matching"
+                    result.updated_at = self._now()
+                    self._snapshot_task_result(key, task_id)
+                yield key, partial(self.load_flight, key)
+            return
+
+        for offset in range(0, len(keys), BATCH_LOAD_SIZE):
+            chunk = keys[offset : offset + BATCH_LOAD_SIZE]
+            active_chunk: list[str] = []
             with self.lock:
                 if self._closing:
                     return
-                result = self.results[key]
-                if result.task_id != task_id:
-                    continue
-                result.status = "matching"
-                result.updated_at = self._now()
-                self._snapshot_task_result(key, task_id)
-            yield key, partial(self.load_flight, key)
+                for key in chunk:
+                    if self.results[key].task_id == task_id:
+                        active_chunk.append(key)
+            if not active_chunk:
+                continue
+            try:
+                preloaded = self.load_flights_batch(active_chunk)
+            except Exception:
+                preloaded = {}
+            for key in active_chunk:
+                with self.lock:
+                    if self._closing:
+                        return
+                    result = self.results[key]
+                    if result.task_id != task_id:
+                        continue
+                    result.status = "matching"
+                    result.updated_at = self._now()
+                    self._snapshot_task_result(key, task_id)
+                flight = preloaded.pop(key, None)
+                yield key, flight if flight is not None else partial(self.load_flight, key)
 
     def _complete(self, task_id: str, outcome: MatchOutcome) -> None:
         key = outcome.key
@@ -201,6 +259,8 @@ class FlightMatchTasks:
                 return
             result.status = outcome.status
             result.path = outcome.path
+            result.stand_ref = outcome.stand_ref
+            result.runway_ref = outcome.runway_ref
             result.error = outcome.reason
             result.error_kind = outcome.error_kind
             result.failure_type = outcome.failure_type
@@ -226,4 +286,17 @@ class FlightMatchTasks:
             return
         task = self.tasks.get(task_id)
         if task is not None and key in task.results:
-            task.results[key] = self.results[key].public()
+            previous = task.results[key]
+            updated = self.results[key].public()
+            task.results[key] = updated
+            prev_status = previous["status"]
+            task.stats.counts[prev_status] -= 1
+            if task.stats.counts[prev_status] <= 0:
+                del task.stats.counts[prev_status]
+            task.stats.matching_seconds -= previous["elapsed_seconds"]
+            if prev_status == "failed":
+                prev_failure = previous["failure_type"] or prev_status
+                task.stats.failures[prev_failure] -= 1
+                if task.stats.failures[prev_failure] <= 0:
+                    del task.stats.failures[prev_failure]
+            task.stats.add(updated["status"], updated["failure_type"], updated["elapsed_seconds"])

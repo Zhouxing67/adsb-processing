@@ -392,12 +392,16 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
     from flight.flight_repository import FlightDatabase, database_flight_key
 
     duckdb = pytest.importorskip("duckdb")
+    from db import apply_core_schema
+
     database = tmp_path / "catalogue.duckdb"
     with duckdb.connect(str(database)) as connection:
+        apply_core_schema(connection)
         for movement, stand_column in (
             ("arr", "arr_stand_position"),
             ("dep", "dep_stand_position"),
         ):
+            connection.execute(f"DROP TABLE main.adsb_{movement}")
             connection.execute(f"""
                 CREATE TABLE adsb_{movement} (
                     flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
@@ -461,16 +465,19 @@ def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
 
 
 def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
+    from db import apply_core_schema
     from flight.flight_repository import FlightDatabase, database_flight_key
 
     duckdb = pytest.importorskip("duckdb")
     database = tmp_path / "validation.duckdb"
     with duckdb.connect(str(database)) as connection:
+        apply_core_schema(connection)
         for suffix, stand, runway in (
             ("dep", "dep_stand_position", "org_runway"),
             ("arr", "arr_stand_position", "dst_runway"),
         ):
             table = f"adsb_{suffix}"
+            connection.execute(f"DROP TABLE main.{table}")
             connection.execute(f"""
                 CREATE TABLE {table} AS
                 SELECT flight_id, flight_id AS number,

@@ -5,13 +5,13 @@ from __future__ import annotations
 from collections import defaultdict
 from contextlib import asynccontextmanager
 from pathlib import Path as FilePath
-from typing import Annotated, Any, Callable
+from typing import Any, Callable
 
 import networkx as nx
-from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
+from fastapi import APIRouter, FastAPI, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, StrictInt
 from shapely.geometry import LineString, mapping
 from starlette.exceptions import HTTPException as StarletteHTTPException
@@ -26,28 +26,22 @@ from .api_models import (
     DeleteEdgePreviewResponse,
     DeleteNodePreviewResponse,
     ErrorResponse,
-    FlightCatalogueRequest,
-    FlightCatalogueResponse,
-    FlightDetailResponse,
-    FlightFilterRequest,
-    FlightGeometryResponse,
-    FlightSelectionResponse,
     GraphCommandResponse,
     ManualSnapPreviewResponse,
-    MatchStatusResponse,
-    MatchSubmissionResponse,
     MergeCandidatesResponse,
     MergeNodesPreviewResponse,
     RestoreOptionsResponse,
     SplitSourcePreviewResponse,
-    StandRecommendations,
     WorkbenchStateResponse,
     error_detail,
     normalize_error_detail,
 )
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
-from .flights import CataloguePageOutOfRange, FlightFilter, FlightWorkbench
+from .flights import FlightWorkbench
 from .identifiers import EdgeIdentity, NodeIdField
+from .routes_flights import build_flights_router
+from .routes_issues import build_match_issues_router
+from .routes_library import build_route_library_router
 
 VALIDATION_EDGE_COLORS = (
     "#406c80",
@@ -133,29 +127,6 @@ class SourceSplitRequest(VersionedRequest):
 class ManualSnapRequest(VersionedRequest):
     node: NodeIdField
     edge: EdgeIdentity
-
-
-class UpdateStandRequest(BaseModel):
-    stand_position: str | None
-
-
-class MatchFlightsRequest(BaseModel):
-    flight_keys: list[str] = Field(default_factory=list)
-    force: bool = False
-
-
-def _flight_filter(item: FlightFilterRequest) -> FlightFilter:
-    return FlightFilter(
-        query=item.q,
-        movement_type=item.movement_type,
-        status=item.match_status,
-        min_points=item.min_points,
-        max_points=item.max_points,
-        stands=tuple(item.stands),
-        start_date=item.start_date,
-        end_date=item.end_date,
-        validation_only=item.validation_only,
-    )
 
 
 class BrowserState:
@@ -338,7 +309,6 @@ def create_app(
         lifespan=lifespan,
         responses=ERROR_RESPONSES,
     )
-    flight_routes = APIRouter()
     graph_routes = APIRouter()
 
     @app.exception_handler(RevisionConflict)
@@ -418,103 +388,6 @@ def create_app(
         if flight_workbench is not None:
             value["flight_count"] = len(flight_workbench.items)
         return WorkbenchStateResponse.model_validate(value)
-
-    @flight_routes.get("/api/flights")
-    def flights_catalogue(
-        filters: Annotated[FlightCatalogueRequest, Query()],
-    ) -> FlightCatalogueResponse:
-        try:
-            value = flight_workbench.catalogue(
-                _flight_filter(filters),
-                page=filters.page,
-                page_size=filters.page_size,
-            )
-            return FlightCatalogueResponse.model_validate(value)
-        except CataloguePageOutOfRange as error:
-            raise HTTPException(
-                400,
-                {
-                    "code": "page_out_of_range",
-                    "message": str(error),
-                    "total_pages": error.total_pages,
-                },
-            ) from error
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-
-    @flight_routes.get("/api/flights/{flight_key}/stand-recommendations")
-    def stand_recommendations(flight_key: str) -> StandRecommendations:
-        try:
-            return flight_workbench.recommend_stands(flight_key)
-        except KeyError as error:
-            raise HTTPException(404, "未知 flight_key") from error
-
-    @flight_routes.patch(
-        "/api/flights/{flight_key}/stand", status_code=204, response_class=Response
-    )
-    def update_stand(flight_key: str, item: UpdateStandRequest) -> None:
-        try:
-            flight_workbench.update_stand(flight_key, item.stand_position)
-        except KeyError as error:
-            raise HTTPException(404, "未知 flight_key") from error
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-        except RuntimeError as error:
-            raise HTTPException(503, str(error)) from error
-
-    @flight_routes.get("/api/flights/{flight_key}")
-    def flight_detail(
-        flight_key: str,
-        observation_page: int = 1,
-        observation_page_size: int = 100,
-        all_fields: bool = False,
-    ) -> FlightDetailResponse:
-        try:
-            value = flight_workbench.detail(
-                flight_key,
-                observation_page=observation_page,
-                observation_page_size=observation_page_size,
-                all_fields=all_fields,
-            )
-            return FlightDetailResponse.model_validate(value)
-        except KeyError as error:
-            raise HTTPException(404, str(error)) from error
-        except (ValueError, CataloguePageOutOfRange) as error:
-            raise HTTPException(400, str(error)) from error
-
-    @flight_routes.get("/api/flight-selection")
-    def flight_selection(
-        filters: Annotated[FlightFilterRequest, Query()],
-    ) -> FlightSelectionResponse:
-        try:
-            value = flight_workbench.filtered_keys(_flight_filter(filters))
-            return FlightSelectionResponse.model_validate(value)
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-
-    @flight_routes.get("/api/flights/{flight_key}/geometry")
-    def flight_geometry(flight_key: str) -> FlightGeometryResponse:
-        try:
-            return FlightGeometryResponse.model_validate(flight_workbench.geometry(flight_key))
-        except KeyError as error:
-            raise HTTPException(404, str(error)) from error
-
-    @flight_routes.post("/api/matches")
-    def match_flights(item: MatchFlightsRequest) -> MatchSubmissionResponse:
-        try:
-            return MatchSubmissionResponse.model_validate(
-                flight_workbench.submit(item.flight_keys, force=item.force)
-            )
-        except KeyError as error:
-            raise HTTPException(404, str(error)) from error
-        except ValueError as error:
-            raise HTTPException(400, str(error)) from error
-
-    @flight_routes.get("/api/matches")
-    def match_status(
-        task_id: Annotated[list[str] | None, Query()] = None,
-    ) -> MatchStatusResponse:
-        return MatchStatusResponse.model_validate(flight_workbench.task_status(task_id))
 
     @graph_routes.post("/api/draw-connection")
     def draw_connection(item: DrawConnectionRequest) -> GraphCommandResponse:
@@ -771,7 +644,13 @@ def create_app(
             revision=result.revision,
         )
 
-    app.include_router(flight_routes if flight_mode else graph_routes)
+    if flight_mode:
+        assert flight_workbench is not None
+        app.include_router(build_flights_router(flight_workbench))
+        app.include_router(build_route_library_router(flight_workbench))
+        app.include_router(build_match_issues_router(flight_workbench))
+    else:
+        app.include_router(graph_routes)
 
     from .frontend import mount_frontend
 

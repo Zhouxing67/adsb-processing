@@ -1,11 +1,10 @@
 import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import type { LeafletMouseEvent, Map as LeafletMap } from 'leaflet';
-import type { LineGeometry, MapFlightEntry, SelectedFeature, WorkbenchState } from '../../api/types';
+import type { LineGeometry, MapFlightEntry, MapRouteEntry, SelectedFeature, WorkbenchState } from '../../api/types';
 import type { FocusFeatureRequest, FocusFlightRequest } from '../../app/WorkbenchContext';
 import { segmentScreenAngleDegrees } from '../../domain/geometry';
-
-const colors = ['#0072B2', '#D55E00', '#009E73', '#CC79A7', '#B77900', '#56B4E9', '#E69F00', '#6A3D9A', '#1B9E77', '#E7298A'];
+import { FLIGHT_COLORS as colors, ROUTE_COLORS as routeColors, ROUTE_STATUS_LABELS as routeStatusLabels } from '../../domain/palette';
 function escapeHtml(value: unknown) { return String(value ?? '—').replace(/[&<>"']/g, character => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[character]!); }
 function featureTooltip(feature: GeoJSON.Feature) {
   const properties = feature.properties ?? {};
@@ -20,6 +19,7 @@ function featureTooltip(feature: GeoJSON.Feature) {
 interface Props {
   state: WorkbenchState;
   flights: Map<string, MapFlightEntry>;
+  routes?: Map<string, MapRouteEntry>;
   splitValidation: boolean;
   baseLayer?: 'none' | 'osm' | 'satellite';
   showEdges?: boolean;
@@ -29,15 +29,20 @@ interface Props {
   drawPoints?: Array<[number, number]>;
   previewGeometry?: LineGeometry | null;
   focusFlightRequest?: FocusFlightRequest | null;
+  focusRouteRequest?: FocusFlightRequest | null;
   focusFeatureRequest?: FocusFeatureRequest | null;
   fitMapVersion?: number;
+  fitRoutesVersion?: number;
   observationLocation?: [number, number] | null;
   onFeature(feature: SelectedFeature): void;
   onMapClick(longitude: number, latitude: number): void;
   onFlightClick?(flightKey: string): void;
+  onRouteClick?(routeId: string): void;
 }
 
-export function MapView({ state, flights, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, selected = [], drawPoints = [], previewGeometry, focusFlightRequest, focusFeatureRequest, fitMapVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick }: Props) {
+const EMPTY_ROUTES: Map<string, MapRouteEntry> = new Map();
+
+export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, selected = [], drawPoints = [], previewGeometry, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick, onRouteClick }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const edgesGroup = useRef<L.LayerGroup | null>(null);
@@ -47,19 +52,25 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
   const parkingLayerRef = useRef<L.GeoJSON | null>(null);
   const flightGroup = useRef<L.LayerGroup | null>(null);
   const flightLayersRef = useRef<Map<string, { entry: MapFlightEntry; layer: L.LayerGroup }>>(new Map());
+  const routeGroup = useRef<L.LayerGroup | null>(null);
+  const routeLayersRef = useRef<Map<string, { entry: MapRouteEntry; layer: L.LayerGroup }>>(new Map());
   const previewGroup = useRef<L.LayerGroup | null>(null);
   const baseLayers = useRef<Record<'osm' | 'satellite', L.TileLayer> | null>(null);
   const fitted = useRef(false);
   const flightsRef = useRef(flights);
+  const routesRef = useRef(routes);
   const splitValidationRef = useRef(splitValidation);
   const featureHandler = useRef(onFeature);
   const mapClickHandler = useRef(onMapClick);
   const flightClickHandler = useRef(onFlightClick);
+  const routeClickHandler = useRef(onRouteClick);
   flightsRef.current = flights;
+  routesRef.current = routes;
   splitValidationRef.current = splitValidation;
   featureHandler.current = onFeature;
   mapClickHandler.current = onMapClick;
   flightClickHandler.current = onFlightClick;
+  routeClickHandler.current = onRouteClick;
 
   const edgeStyle = (feature?: GeoJSON.Feature) => {
     const properties = feature?.properties as Record<string, unknown> | undefined;
@@ -94,6 +105,7 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
     parkingGroup.current = L.layerGroup();
     nodesGroup.current = L.layerGroup();
     flightGroup.current = L.layerGroup().addTo(map);
+    routeGroup.current = L.layerGroup().addTo(map);
     previewGroup.current = L.layerGroup().addTo(map);
     map.on('click', (event: LeafletMouseEvent) => mapClickHandler.current(event.latlng.lng, event.latlng.lat));
     mapRef.current = map;
@@ -115,6 +127,8 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       parkingLayerRef.current = null;
       flightLayersRef.current.clear();
       flightGroup.current = null;
+      routeLayersRef.current.clear();
+      routeGroup.current = null;
       previewGroup.current = null;
       baseLayers.current = null;
     };
@@ -289,6 +303,111 @@ export function MapView({ state, flights, splitValidation, baseLayer = 'none', s
       rendered.set(key, { entry, layer: subGroup });
     }
   }, [flights]);
+
+  useEffect(() => {
+    const group = routeGroup.current;
+    if (!group) return;
+    const rendered = routeLayersRef.current;
+
+    for (const [routeId, record] of rendered.entries()) {
+      if (!routes.has(routeId)) {
+        group.removeLayer(record.layer);
+        rendered.delete(routeId);
+      }
+    }
+
+    for (const [routeId, entry] of routes.entries()) {
+      const existing = rendered.get(routeId);
+      if (
+        existing &&
+        existing.entry.geometry === entry.geometry &&
+        existing.entry.slot === entry.slot &&
+        existing.entry.label === entry.label &&
+        existing.entry.visible === entry.visible
+      ) {
+        continue;
+      }
+      if (existing) group.removeLayer(existing.layer);
+
+      const subGroup = L.layerGroup();
+      if (entry.visible) {
+        const color = routeColors[entry.slot % routeColors.length];
+        const route = entry.geometry.route;
+        const rejected = route.status === 'rejected';
+        const verified = route.status === 'verified' || route.status === 'manual';
+        const path = entry.geometry.path;
+        const interactiveLayers: Array<L.GeoJSON> = [];
+        const handleRouteClick = (event: LeafletMouseEvent) => {
+          L.DomEvent.stopPropagation(event);
+          interactiveLayers.forEach(layer => layer.bringToFront());
+          routeClickHandler.current?.(routeId);
+        };
+        const tooltip = `<strong>${escapeHtml(entry.label)}</strong> · ${Math.round(route.total_length_m)} m · ${route.edge_count} 边 · ${escapeHtml(routeStatusLabels[route.status] ?? route.status)}`;
+
+        const halo = L.geoJSON(path as never, {
+          style: { color: '#fff', weight: verified ? 10 : 8.5, opacity: rejected ? 0.5 : 0.9 },
+          interactive: false,
+        }).addTo(subGroup);
+        const pathLayer = L.geoJSON(path as never, {
+          style: {
+            color,
+            weight: verified ? 6 : rejected ? 4 : 5,
+            opacity: rejected ? 0.65 : 0.95,
+            dashArray: rejected ? '8 6' : undefined,
+          },
+          onEachFeature: (_feature, layer) => {
+            layer.bindTooltip(tooltip, { sticky: true, direction: 'top', offset: [0, -8] });
+            layer.on('click', handleRouteClick);
+          },
+        }).addTo(subGroup);
+        interactiveLayers.push(halo, pathLayer);
+
+        path.features.forEach((feature, index) => {
+          if (
+            feature.geometry.type !== 'LineString' ||
+            (index % Math.max(1, Math.ceil(path.features.length / 6)) !== 0 && index !== path.features.length - 1)
+          ) {
+            return;
+          }
+          const coordinates = feature.geometry.coordinates;
+          if (coordinates.length < 2) return;
+          const mid = Math.max(1, Math.floor(coordinates.length / 2));
+          const prev = coordinates[mid - 1];
+          const point = coordinates[mid];
+          const angle = segmentScreenAngleDegrees([prev[0], prev[1]], [point[0], point[1]]);
+          L.marker([point[1], point[0]], {
+            interactive: false,
+            icon: L.divIcon({
+              className: 'path-direction',
+              html: `<span style="color:${color};display:inline-block;transform:rotate(${angle.toFixed(1)}deg)">▶</span>`,
+              iconSize: [14, 14],
+            }),
+          }).addTo(subGroup);
+        });
+      }
+      subGroup.addTo(group);
+      rendered.set(routeId, { entry, layer: subGroup });
+    }
+  }, [routes]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (!focusRouteRequest && fitRoutesVersion === 0) return;
+    const currentRoutes = routesRef.current;
+    const focusId = focusRouteRequest?.key;
+    const entries = focusId && currentRoutes.has(focusId) ? [currentRoutes.get(focusId)!] : [...currentRoutes.values()];
+    const bounds = L.latLngBounds([]);
+    entries.forEach(entry => {
+      const layer = L.geoJSON(entry.geometry.path as never);
+      const entryBounds = layer.getBounds();
+      if (entryBounds.isValid()) bounds.extend(entryBounds);
+    });
+    if (bounds.isValid()) {
+      map.invalidateSize({ animate: false, pan: false });
+      map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusId ? 20 : 19 });
+    }
+  }, [focusRouteRequest, fitRoutesVersion]);
 
   useEffect(() => {
     const map = mapRef.current;

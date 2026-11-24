@@ -36,7 +36,11 @@ export function useMatchPolling({
     const poll = async () => {
       if (cancelled) return;
       try {
-        const status = await api.matchStatus();
+        const trackedKeys = [...mapFlightsRef.current.keys()];
+        const status = await api.matchStatus({
+          include_items: false,
+          flight_key: trackedKeys.length ? trackedKeys : undefined,
+        });
         if (cancelled) return;
         callbacksRef.current.onProgress(status.progress);
 

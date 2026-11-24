@@ -19,6 +19,8 @@ from utils.json_value import to_json_value
 
 from .api_models import HistoricalStandCandidate, StandRecommendations
 from .flight_match_tasks import FlightMatchTasks, MatchResultItem
+from .issues_service import MatchIssueService
+from .routes_service import RouteLibraryService
 from .serializers import flight_geojson, path_geojson
 from .stand_recommendations import StandGeometryIndex
 
@@ -76,8 +78,16 @@ class FlightFilter:
     start_date: date | None = None
     end_date: date | None = None
     validation_only: bool = False
+    whitelist_only: bool = False
+    issues_only: bool = False
 
-    def validate(self, dataset_max_points: int, *, supports_validation: bool) -> FlightFilter:
+    def validate(
+        self,
+        dataset_max_points: int,
+        *,
+        supports_validation: bool,
+        supports_whitelist: bool = False,
+    ) -> FlightFilter:
         if self.status and self.status not in MATCH_STATUSES:
             raise ValueError("unknown match status")
         if self.min_points < 0:
@@ -93,6 +103,8 @@ class FlightFilter:
             raise ValueError("起始日期不得晚于终止日期")
         if self.validation_only and not supports_validation:
             raise ValueError("验证航班筛选需要数据库")
+        if self.whitelist_only and not supports_whitelist:
+            raise ValueError("白名单航班筛选需要数据库包含 flight_whitelist 表")
         return replace(
             self,
             query=self.query.strip(),
@@ -145,6 +157,23 @@ class FlightWorkbench:
             airport_graph=self.airport_graph,
             lock=self.lock,
             config=self.match_config,
+            load_flights_batch=self._flights_batch,
+        )
+        self.routes_service = RouteLibraryService(
+            self.airport_graph,
+            self.flight_database,
+            graph_id=self.match_tasks.graph_id,
+            lock=self.lock,
+            items=self.items,
+            results=self.match_tasks.results,
+            page_out_of_range_cls=CataloguePageOutOfRange,
+        )
+        self.issues_service = MatchIssueService(
+            self.flight_database,
+            graph_id=self.match_tasks.graph_id,
+            lock=self.lock,
+            items=self.items,
+            results=self.match_tasks.results,
         )
         self.dataset_max_points = max((item.point_count for item in self.items.values()), default=0)
         display_dates = [self._display_time(item.start_time)[:10] for item in self.items.values()]
@@ -161,8 +190,18 @@ class FlightWorkbench:
     def submit(self, flight_keys: Sequence[str], *, force: bool = False) -> dict[str, Any]:
         return self.match_tasks.submit(flight_keys, force=force)
 
-    def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
-        return self.match_tasks.task_status(task_ids)
+    def task_status(
+        self,
+        task_ids: Sequence[str] | None = None,
+        *,
+        include_items: bool = True,
+        flight_keys: Sequence[str] | None = None,
+    ) -> dict[str, Any]:
+        return self.match_tasks.task_status(
+            task_ids,
+            include_items=include_items,
+            flight_keys=flight_keys,
+        )
 
     @cached_property
     def _stand_geometry(self) -> StandGeometryIndex:
@@ -212,10 +251,12 @@ class FlightWorkbench:
         filters = filters.validate(
             self.dataset_max_points,
             supports_validation=True,
+            supports_whitelist=True,
         )
         rows = []
         with self.lock:
-            keys = self._filtered_keys(filters)
+            issue_map = self._issue_map()
+            keys = self._filtered_keys(filters, issue_keys=set(issue_map))
             start = (page - 1) * page_size
             for key in keys[start : start + page_size]:
                 item = self.items[key]
@@ -223,6 +264,8 @@ class FlightWorkbench:
                 row = asdict(item)
                 row["start_time"] = self._display_time(item.start_time)
                 row["end_time"] = self._display_time(item.end_time)
+                row["is_issue"] = key in issue_map
+                row["issue_reason"] = issue_map.get(key)
                 rows.append({**row, "match": result.public()})
             stand_options = sorted(
                 {
@@ -242,6 +285,9 @@ class FlightWorkbench:
             "items": rows,
             "stand_options": stand_options,
             "supports_validation_filter": True,
+            "supports_whitelist_filter": True,
+            "issue_count": len(issue_map),
+            "can_edit_issues": not self.flight_database.read_only,
             "total": total,
             "total_pages": total_pages,
             "page": actual_page,
@@ -266,9 +312,11 @@ class FlightWorkbench:
         filters = filters.validate(
             self.dataset_max_points,
             supports_validation=True,
+            supports_whitelist=True,
         )
         with self.lock:
-            keys = self._filtered_keys(filters)
+            issue_keys = set(self._issue_map()) if filters.issues_only else None
+            keys = self._filtered_keys(filters, issue_keys=issue_keys)
         return {"flight_keys": keys, "count": len(keys)}
 
     def detail(
@@ -340,7 +388,55 @@ class FlightWorkbench:
                 "match": result.public(),
             }
 
-    def _filtered_keys(self, filters: FlightFilter) -> list[str]:
+    def routes_list(self, **kwargs: Any) -> dict[str, Any]:
+        return self.routes_service.list_routes(**kwargs)
+
+    def route_geometry(self, route_id: str) -> dict[str, Any]:
+        return self.routes_service.geometry(route_id)
+
+    def update_route_review(
+        self,
+        route_id: str,
+        status: str,
+        *,
+        note: str | None = None,
+    ) -> dict[str, Any]:
+        return self.routes_service.update_review(route_id, status, note=note)
+
+    def import_matched_routes(
+        self,
+        flight_keys: Sequence[str] | None = None,
+        *,
+        replace_candidates: bool = False,
+    ) -> dict[str, Any]:
+        return self.routes_service.import_matched_routes(
+            flight_keys,
+            replace_candidates=replace_candidates,
+        )
+
+    def _issue_map(self) -> dict[str, str | None]:
+        return self.issues_service.issue_map()
+
+    def list_issue_keys(self) -> dict[str, Any]:
+        return self.issues_service.list_issue_keys()
+
+    def add_match_issues(
+        self,
+        flight_keys: Sequence[str],
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        return self.issues_service.add_issues(flight_keys, reason=reason)
+
+    def remove_match_issues(self, flight_keys: Sequence[str]) -> dict[str, Any]:
+        return self.issues_service.remove_issues(flight_keys)
+
+    def _filtered_keys(
+        self,
+        filters: FlightFilter,
+        *,
+        issue_keys: set[str] | None = None,
+    ) -> list[str]:
         maximum = filters.max_points
         assert maximum is not None
         eligible = None
@@ -351,6 +447,15 @@ class FlightWorkbench:
                 for row in self.flight_database.catalogue.validation_flights()
                 if row["flight_id"] is not None
             }
+        if filters.whitelist_only:
+            whitelisted = {
+                database_flight_key(movement, flight_id)
+                for movement, flight_id in self.flight_database.catalogue.whitelist_flights()
+            }
+            eligible = whitelisted if eligible is None else eligible & whitelisted
+        if filters.issues_only:
+            archived = issue_keys if issue_keys is not None else set(self._issue_map())
+            eligible = archived if eligible is None else eligible & archived
         return [
             key
             for summary in self.flight_database.catalogue.summaries(
@@ -394,6 +499,23 @@ class FlightWorkbench:
             return self.flight_database.observations.flight(item.movement_type, item.flight_id)
         except KeyError as error:
             raise KeyError("未知 flight_key") from error
+
+    def _flights_batch(self, flight_keys: Sequence[str]) -> dict[str, Flight]:
+        by_movement: dict[str, list[tuple[str, str]]] = {}
+        for key in flight_keys:
+            item = self.items.get(key)
+            if item is not None:
+                by_movement.setdefault(item.movement_type, []).append((key, item.flight_id))
+        loaded: dict[str, Flight] = {}
+        for movement, pairs in by_movement.items():
+            flights_by_id = self.flight_database.observations.flights_batch(
+                movement, [flight_id for _, flight_id in pairs]
+            )
+            for key, flight_id in pairs:
+                flight = flights_by_id.get(flight_id)
+                if flight is not None:
+                    loaded[key] = flight
+        return loaded
 
     def _display_time(self, value: str) -> str:
         return datetime.fromisoformat(value).astimezone(ZoneInfo(self.display_timezone)).isoformat()

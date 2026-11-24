@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar as CalendarIcon, Crosshair, Filter, MapPinPlus, RotateCcw, Search, X } from 'lucide-react';
+import { Calendar as CalendarIcon, Crosshair, Filter, Flag, FlagOff, MapPinPlus, RotateCcw, Search, X } from 'lucide-react';
 import { format, isValid, parseISO } from 'date-fns';
 import type { DateRange } from 'react-day-picker';
 import { ApiError, api } from '@/api/client';
@@ -22,28 +22,16 @@ import { Calendar } from '@/components/ui/calendar';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Separator } from '@/components/ui/separator';
+import { MATCH_STATUS_LABELS as statusLabels, MOVEMENT_LABELS as movementLabels } from '@/domain/palette';
 import { cn } from '@/lib/utils';
+import { RouteImportPopover } from './RouteImportPopover';
+import { StandEditorCell } from './StandEditorCell';
 import { defaultFlightFilters, readStoredFlightState, writeStoredFlightState } from './storage';
 import type { FlightFilters } from './storage';
 import { useMatchPolling } from './useMatchPolling';
-
-const statusLabels: Record<string, string> = {
-  unmatched: '未匹配',
-  queued: '排队中',
-  matching: '匹配中',
-  success: '成功',
-  failed: '失败',
-};
-
-const movementLabels: Record<string, string> = {
-  arrival: '进港',
-  departure: '离港',
-  unknown: '未知',
-};
 
 const ALL_VALUE = '__all__';
 
@@ -67,6 +55,8 @@ interface DraftFilters {
   start: string;
   end: string;
   validation: boolean;
+  whitelist: boolean;
+  issues: boolean;
 }
 
 function toDraft(value: FlightFilters): DraftFilters {
@@ -88,6 +78,8 @@ function paramsFor(filters: FlightFilters, page?: number): FlightCatalogueQuery 
     start_date: filters.start || undefined,
     end_date: filters.end || undefined,
     validation_only: filters.validation || undefined,
+    whitelist_only: filters.whitelist || undefined,
+    issues_only: filters.issues || undefined,
     page,
     page_size: page === undefined ? undefined : 15,
   };
@@ -122,26 +114,6 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [datePickerOpen, setDatePickerOpen] = useState(false);
   const [standSearch, setStandSearch] = useState('');
-  const [editingStand, setEditingStand] = useState<{ key: string; value: string } | null>(null);
-  const [standEditSearch, setStandEditSearch] = useState('');
-  const [recommendations, setRecommendations] = useState<Awaited<ReturnType<typeof api.recommendStands>> | null>(null);
-  const [recommendationError, setRecommendationError] = useState('');
-  const [showRecommendations, setShowRecommendations] = useState(false);
-  const editingKey = editingStand?.key;
-  useEffect(() => {
-    if (!showRecommendations || !editingKey) return;
-    const controller = new AbortController();
-    setRecommendations(null);
-    setRecommendationError('');
-    api.recommendStands(editingKey, controller.signal).then(result => {
-      if (!controller.signal.aborted) setRecommendations(result);
-    }).catch(failure => {
-      if (!controller.signal.aborted) {
-        setRecommendationError(failure instanceof Error ? failure.message : '推荐读取失败');
-      }
-    });
-    return () => controller.abort();
-  }, [editingKey, showRecommendations]);
   const [loading, setLoading] = useState(false);
   const [addingProgress, setAddingProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
@@ -151,6 +123,45 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
   const [allResultsIntent, setAllResultsIntent] = useState<boolean | null>(null);
   const [filteredKeys, setFilteredKeys] = useState<{ catalogue: FlightCatalogue; keys: string[] } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
+  const [mutatingIssues, setMutatingIssues] = useState(false);
+
+  const archiveSelectedIssues = async () => {
+    const keys = [...wb.matchSelection];
+    if (!keys.length) return;
+    setMutatingIssues(true);
+    try {
+      const res = await api.addMatchIssues(keys);
+      dispatch({ type: 'set-issue-keys', keys: res.issue_flight_keys });
+      dispatch({
+        type: 'status',
+        value: `异常归档完成：新增 ${res.inserted} 条，已存在 ${res.existing} 条`,
+      });
+      await load();
+    } catch (failure) {
+      dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '加入异常归档失败' });
+    } finally {
+      setMutatingIssues(false);
+    }
+  };
+
+  const removeSelectedIssues = async () => {
+    const keys = [...wb.matchSelection];
+    if (!keys.length) return;
+    setMutatingIssues(true);
+    try {
+      const res = await api.removeMatchIssues(keys);
+      dispatch({ type: 'set-issue-keys', keys: res.issue_flight_keys });
+      dispatch({
+        type: 'status',
+        value: `已从异常归档移出 ${res.deleted} 条航班`,
+      });
+      await load();
+    } catch (failure) {
+      dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '移出异常归档失败' });
+    } finally {
+      setMutatingIssues(false);
+    }
+  };
 
   const restored = useRef(false);
   const mounted = useRef(true);
@@ -441,12 +452,9 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     }
   };
 
-  const saveStand = async () => {
-    if (!editingStand) return;
+  const saveStand = async (flightKey: string, standValue: string | null) => {
     try {
-      await api.updateStand(editingStand.key, editingStand.value || null);
-      setEditingStand(null);
-      setStandEditSearch('');
+      await api.updateStand(flightKey, standValue);
       await load();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '机位保存失败');
@@ -530,11 +538,6 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     [catalogue, standSearch],
   );
 
-  const editableStands = useMemo(
-    () => ['', ...(catalogue?.stand_options ?? [])].filter(stand => (stand || '空机位').toLowerCase().includes(standEditSearch.toLowerCase())),
-    [catalogue, standEditSearch],
-  );
-
   const datasetMax = catalogue?.dataset_max_points ?? null;
   const advancedActiveCount = useMemo(() => {
     let count = 0;
@@ -543,6 +546,8 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     if (filters.maximum !== null && datasetMax !== null && filters.maximum < datasetMax) count += 1;
     if (filters.start || filters.end) count += 1;
     if (filters.validation) count += 1;
+    if (filters.whitelist) count += 1;
+    if (filters.issues) count += 1;
     return count;
   }, [filters, datasetMax]);
 
@@ -599,6 +604,20 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
         id: 'validation',
         label: '仅验证航班',
         clear: () => applyFilterPatch({ validation: false }),
+      });
+    }
+    if (filters.whitelist) {
+      chips.push({
+        id: 'whitelist',
+        label: '仅白名单航班',
+        clear: () => applyFilterPatch({ whitelist: false }),
+      });
+    }
+    if (filters.issues) {
+      chips.push({
+        id: 'issues',
+        label: '仅异常归档航班',
+        clear: () => applyFilterPatch({ issues: false }),
       });
     }
     return chips;
@@ -830,6 +849,45 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
                 </label>
               )}
 
+              {catalogue && (
+                <label
+                  className={cn(
+                    'flex items-center gap-2 text-xs',
+                    catalogue.supports_whitelist_filter
+                      ? 'cursor-pointer text-foreground'
+                      : 'cursor-not-allowed text-muted-foreground',
+                  )}
+                  title={
+                    catalogue.supports_whitelist_filter
+                      ? '仅显示通过轨迹质量白名单筛选的航班'
+                      : '当前数据库尚无 flight_whitelist 表，请先运行 scripts/build_flight_whitelist.py'
+                  }
+                >
+                  <Checkbox
+                    disabled={!catalogue.supports_whitelist_filter}
+                    checked={draft.whitelist && catalogue.supports_whitelist_filter}
+                    onCheckedChange={checked => setDraft({ ...draft, whitelist: checked === true })}
+                  />
+                  <span>
+                    白名单航班
+                    {!catalogue.supports_whitelist_filter && '（未生成）'}
+                  </span>
+                </label>
+              )}
+
+              {catalogue && (
+                <label
+                  className="flex cursor-pointer items-center gap-2 text-xs text-foreground"
+                  title="仅显示已归档到 match_issues 表的异常航班"
+                >
+                  <Checkbox
+                    checked={draft.issues}
+                    onCheckedChange={checked => setDraft({ ...draft, issues: checked === true })}
+                  />
+                  <span>异常归档航班（{wb.issueKeys.size || catalogue.issue_count}）</span>
+                </label>
+              )}
+
               <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
                 <Button
                   variant="ghost"
@@ -928,6 +986,30 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
         </div>
 
         <div className="flex flex-wrap items-center gap-1.5">
+          {catalogue?.can_edit_issues && (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!wb.matchSelection.size || mutatingIssues}
+                title="将当前已勾选航班归档到 match_issues 表"
+                onClick={() => void archiveSelectedIssues()}
+              >
+                <Flag className="h-3.5 w-3.5" />
+                加入异常
+              </Button>
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={!wb.matchSelection.size || mutatingIssues}
+                title="将当前已勾选航班从 match_issues 表移出（不删除航班本身）"
+                onClick={() => void removeSelectedIssues()}
+              >
+                <FlagOff className="h-3.5 w-3.5" />
+                移出异常
+              </Button>
+            </>
+          )}
           <Button
             variant="outline"
             size="sm"
@@ -950,6 +1032,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
           >
             {tracking ? '匹配中…' : '匹配所选航班'}
           </Button>
+          <RouteImportPopover disabled={tracking} />
         </div>
       </div>
 
@@ -994,7 +1077,6 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
           <tbody className="divide-y divide-border/70">
             {catalogue?.items.map(item => {
               const onMap = wb.mapFlights.has(item.flight_key);
-              const standOpen = editingStand?.key === item.flight_key;
               return (
                 <tr key={item.flight_key} className="transition-colors hover:bg-muted/40">
                   <td className="px-3 py-2 align-middle">
@@ -1007,113 +1089,29 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
                     />
                   </td>
                   <td className="px-3 py-2 align-middle whitespace-nowrap">
-                    <strong className="block font-medium text-foreground">{item.flight_number || item.flight_id}</strong>
+                    <div className="flex items-center gap-1.5">
+                      <strong className="font-medium text-foreground">{item.flight_number || item.flight_id}</strong>
+                      {(wb.issueKeys.has(item.flight_key) || item.is_issue) && (
+                        <Badge
+                          variant="destructive"
+                          className="h-4 px-1.5 text-[10px]"
+                          title={item.issue_reason || '已归档到 match_issues'}
+                        >
+                          异常
+                        </Badge>
+                      )}
+                    </div>
                     <small className="block text-[11px] text-muted-foreground">{item.flight_id}</small>
                   </td>
                   <td className="px-3 py-2 align-middle whitespace-nowrap text-foreground">
                     {movementLabels[item.movement_type] ?? '未知'}
                   </td>
                   <td className="px-3 py-2 align-middle whitespace-nowrap">
-                    {item.can_edit_stand ? (
-                      <Popover
-                        open={standOpen}
-                        onOpenChange={open => {
-                          if (open) {
-                            setShowRecommendations(false);
-                            setEditingStand({ key: item.flight_key, value: item.stand_position ?? '' });
-                            setStandEditSearch('');
-                          } else if (standOpen) {
-                            setEditingStand(null);
-                          }
-                        }}
-                      >
-                        <PopoverTrigger asChild>
-                          <button
-                            type="button"
-                            className="stand-edit-trigger cursor-pointer border-0 border-b border-dashed border-zinc-400 bg-transparent px-0 py-0.5 text-[13px] text-foreground transition-colors hover:border-foreground"
-                            title="点击编辑机位"
-                          >
-                            {item.stand_position || '选择机位'}
-                          </button>
-                        </PopoverTrigger>
-                        <PopoverContent
-                          role="dialog"
-                          aria-label={`编辑 ${item.flight_id} 机位`}
-                          className="w-60 space-y-2 p-2.5"
-                        >
-                          {!item.stand_position && !item.inconsistent_fields.includes(
-                            item.movement_type === 'departure' ? 'dep_stand_position' : 'arr_stand_position'
-                          ) && (
-                            <Button variant="outline" size="sm" onClick={() => setShowRecommendations(!showRecommendations)}>
-                              {showRecommendations ? '返回机位搜索' : '推荐机位'}
-                            </Button>
-                          )}
-                          {!showRecommendations && <Input
-                            type="search"
-                            aria-label="搜索可选机位"
-                            placeholder="搜索机位"
-                            value={standEditSearch}
-                            onChange={event => setStandEditSearch(event.target.value)}
-                          />}
-                          <ScrollArea className="h-44">
-                            <RadioGroup
-                              value={editingStand?.value ? editingStand.value : '__empty__'}
-                              onValueChange={value =>
-                                setEditingStand({ key: item.flight_key, value: value === '__empty__' ? '' : value })
-                              }
-                              className="gap-0.5 pr-2"
-                            >
-                              {showRecommendations && !recommendations && (
-                                <small role="status" className="px-2 text-muted-foreground">{recommendationError || '正在查找推荐机位…'}</small>
-                              )}
-                              {showRecommendations && recommendations && (
-                                recommendations.high.length + recommendations.medium.length === 0
-                                  ? <small role="status" className="px-2 text-muted-foreground">暂无推荐机位</small>
-                                  : (['high', 'medium'] as const).map(group => recommendations[group].length > 0 && (
-                                    <div key={group} className="space-y-1 py-1">
-                                      <Badge variant="secondary">{group === 'high' ? '高置信度' : '中置信度'}</Badge>
-                                      {recommendations[group].map(candidate => (
-                                        <label key={candidate.stand} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent">
-                                          <RadioGroupItem value={candidate.stand} aria-label={candidate.stand} />
-                                          <span>{candidate.stand}
-                                            <small className="block text-muted-foreground">
-                                              {'nearest_m' in candidate
-                                                ? `停靠端 ${candidate.consecutive_points} 个点，最近 ${candidate.nearest_m.toFixed(1)} 米`
-                                                : `近 90 天使用 ${candidate.uses}/${candidate.total} 次，未发现同期占用`}
-                                            </small>
-                                          </span>
-                                        </label>
-                                      ))}
-                                    </div>
-                                  ))
-                              )}
-                              {!showRecommendations && editableStands.map(stand => {
-                                const label = stand || '空机位';
-                                return (
-                                  <label
-                                    key={stand || '__empty'}
-                                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-foreground hover:bg-accent"
-                                  >
-                                    <RadioGroupItem value={stand || '__empty__'} aria-label={label} />
-                                    <span>{label}</span>
-                                  </label>
-                                );
-                              })}
-                            </RadioGroup>
-                          </ScrollArea>
-                          <div className="flex justify-end gap-1.5 border-t border-border pt-2">
-                            <Button variant="ghost" size="sm" onClick={() => setEditingStand(null)}>
-                              取消
-                            </Button>
-                            <Button variant="default" size="sm" onClick={() => void saveStand()}>
-                              保存
-                            </Button>
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                    ) : (
-                      <span className="text-muted-foreground">{item.stand_position || '—'}</span>
-                    )}
+                    <StandEditorCell
+                      item={item}
+                      standOptions={catalogue?.stand_options ?? []}
+                      onSave={saveStand}
+                    />
                   </td>
                   <td className="px-3 py-2 align-middle whitespace-nowrap">
                     <Badge variant={statusBadgeVariant(item.match.status)}>

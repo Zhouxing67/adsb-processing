@@ -278,6 +278,8 @@ class FlightFilterRequest(ApiModel):
     start_date: date | None = None
     end_date: date | None = None
     validation_only: bool = False
+    whitelist_only: bool = False
+    issues_only: bool = False
 
 
 class FlightCatalogueRequest(FlightFilterRequest):
@@ -311,6 +313,8 @@ class FlightSummaryResponse(ApiModel):
     inconsistent_fields: list[str]
     stand_position: str | None
     can_edit_stand: bool
+    is_issue: bool = False
+    issue_reason: str | None = None
 
 
 class FlightCatalogueItemResponse(FlightSummaryResponse):
@@ -326,6 +330,9 @@ class FlightCatalogueResponse(ApiModel):
     items: list[FlightCatalogueItemResponse]
     stand_options: list[str]
     supports_validation_filter: bool
+    supports_whitelist_filter: bool
+    issue_count: int = 0
+    can_edit_issues: bool = True
     total: int
     total_pages: int
     page: int
@@ -359,6 +366,92 @@ class HistoricalStandCandidate(ApiModel):
 class StandRecommendations(ApiModel):
     high: list[SpatialStandCandidate]
     medium: list[HistoricalStandCandidate]
+
+
+class RouteListRequest(ApiModel):
+    q: str = ""
+    movement: str | None = None
+    stand_ref: str | None = None
+    runway_ref: str | None = None
+    runway_is_null: bool = False
+    status: str | None = None
+    all_graphs: bool = False
+    page: int = Field(default=1, ge=1)
+    page_size: int = Field(default=20, ge=1, le=200)
+
+
+class RouteItemResponse(ApiModel):
+    route_id: str
+    graph_id: str
+    matches_current_graph: bool
+    movement: str
+    stand_ref: str
+    runway_ref: str | None
+    runway_interface_node: str
+    edge_count: int
+    total_length_m: float
+    status: str
+    source: str
+    note: str | None
+    created_at: str | None
+    updated_at: str | None
+
+
+class RouteListResponse(ApiModel):
+    items: list[RouteItemResponse]
+    has_route_library: bool
+    current_graph_id: str
+    can_edit: bool
+    stand_options: list[str]
+    runway_options: list[str]
+    status_counts: dict[str, int]
+    total: int
+    total_pages: int
+    page: int
+    page_size: int
+
+
+class RouteGeometryResponse(ApiModel):
+    route: RouteItemResponse
+    path: GeoJsonFeatureCollection
+
+
+class UpdateRouteReviewRequest(ApiModel):
+    status: str
+    note: str | None = None
+
+
+class ImportMatchesToRouteLibraryRequest(ApiModel):
+    flight_keys: list[str] | None = None
+    replace_candidates: bool = False
+
+
+class ImportRoutesSummaryResponse(ApiModel):
+    graph_id: str
+    evaluated_flights: int
+    unique_routes: int
+    deleted_candidates: int
+    inserted_routes: int
+    existing_routes: int
+    skipped_missing_stand: int
+    skipped_invalid_path: int
+
+
+class MatchIssueKeysRequest(ApiModel):
+    flight_keys: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
+class MatchIssueListResponse(ApiModel):
+    flight_keys: list[str]
+    count: int
+
+
+class MatchIssueMutationResponse(ApiModel):
+    inserted: int = 0
+    existing: int = 0
+    deleted: int = 0
+    issue_flight_keys: list[str]
 
 
 class FlightDetailResponse(ApiModel):

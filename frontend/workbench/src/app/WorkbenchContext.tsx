@@ -2,11 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useReducer 
 import type { Dispatch, ReactNode } from 'react';
 import { ApiError, api } from '../api/client';
 import type { GraphPostInput, GraphPostPath, GraphPostRequest, GraphPostResponse } from '../api/client';
-import type { MapFlightEntry, SelectedFeature, WorkbenchState } from '../api/types';
+import type { MapFlightEntry, MapRouteEntry, SelectedFeature, WorkbenchState } from '../api/types';
 import { readStoredFlightState } from '../features/flights/storage';
 
 export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'delete';
-export type MainView = 'map' | 'flights' | 'observations';
+export type MainView = 'map' | 'flights' | 'observations' | 'routes';
 export interface FocusFlightRequest { key: string; seq: number }
 export interface FocusFeatureRequest { feature: SelectedFeature; seq: number }
 interface UiState {
@@ -17,6 +17,12 @@ interface UiState {
   matchSelection: Set<string>; mapFlights: Map<string, MapFlightEntry>; isolatedFlightKey: string | null;
   highlightedFlight: FocusFlightRequest | null;
   mapFocusRequest: FocusFlightRequest | null; fitMapVersion: number; observationLocation: [number, number] | null;
+  showMapFlights: boolean;
+  mapRoutes: Map<string, MapRouteEntry>; isolatedRouteId: string | null;
+  highlightedRoute: FocusFlightRequest | null;
+  routeFocusRequest: FocusFlightRequest | null; fitRoutesVersion: number;
+  showMapRoutes: boolean;
+  issueKeys: Set<string>;
   topologyOpen: boolean; searchOpen: boolean; detailsOpen: boolean;
 }
 type Action =
@@ -42,6 +48,16 @@ type Action =
   | { type: 'highlight-flight'; key: string | null }
   | { type: 'focus-flight'; key: string; preserveView?: boolean }
   | { type: 'fit-map-flights'; preserveView?: boolean }
+  | { type: 'toggle-map-flights-group' }
+  | { type: 'map-route'; routeId: string; value: MapRouteEntry | null }
+  | { type: 'map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteEntry }> }
+  | { type: 'clear-map-routes' }
+  | { type: 'isolate-route'; routeId: string | null }
+  | { type: 'highlight-route'; routeId: string | null }
+  | { type: 'focus-route'; routeId: string; preserveView?: boolean }
+  | { type: 'fit-map-routes'; preserveView?: boolean }
+  | { type: 'toggle-map-routes-group' }
+  | { type: 'set-issue-keys'; keys: string[] }
   | { type: 'observation-location'; value: [number, number] | null; preserveView?: boolean }
   | { type: 'panel'; panel: 'topologyOpen' | 'searchOpen' | 'detailsOpen'; value: boolean };
 
@@ -51,6 +67,10 @@ const initial: UiState = {
   matchSelection: new Set(readStoredFlightState().matchSelection ?? []), mapFlights: new Map(), isolatedFlightKey: null,
   highlightedFlight: null,
   mapFocusRequest: null, fitMapVersion: 0, observationLocation: null,
+  showMapFlights: true,
+  mapRoutes: new Map(), isolatedRouteId: null, highlightedRoute: null,
+  routeFocusRequest: null, fitRoutesVersion: 0, showMapRoutes: true,
+  issueKeys: new Set(),
   topologyOpen: false, searchOpen: false, detailsOpen: false,
 };
 function reducer(state: UiState, action: Action): UiState {
@@ -121,6 +141,71 @@ function reducer(state: UiState, action: Action): UiState {
       status: '已适配全部地图航班',
       error: '',
     };
+    case 'toggle-map-flights-group': return {
+      ...state,
+      showMapFlights: !state.showMapFlights,
+      status: state.showMapFlights ? '已隐藏地图航班图层' : '已显示地图航班图层',
+      error: '',
+    };
+    case 'map-route': {
+      const next = new Map(state.mapRoutes);
+      action.value ? next.set(action.routeId, action.value) : next.delete(action.routeId);
+      return {
+        ...state,
+        mapRoutes: next,
+        showMapRoutes: action.value ? true : state.showMapRoutes,
+        isolatedRouteId: !action.value && state.isolatedRouteId === action.routeId ? null : state.isolatedRouteId,
+      };
+    }
+    case 'map-routes-batch': {
+      if (!action.entries.length) return state;
+      const next = new Map(state.mapRoutes);
+      action.entries.forEach(({ routeId, value }) => next.set(routeId, value));
+      return { ...state, mapRoutes: next, showMapRoutes: true };
+    }
+    case 'clear-map-routes': return {
+      ...state,
+      mapRoutes: new Map(),
+      isolatedRouteId: null,
+      highlightedRoute: null,
+      routeFocusRequest: null,
+    };
+    case 'isolate-route': return {
+      ...state,
+      isolatedRouteId: action.routeId,
+      status: action.routeId ? '仅显示所选路径' : '已恢复全部地图路径',
+      error: '',
+    };
+    case 'highlight-route': return {
+      ...state,
+      highlightedRoute: action.routeId ? { key: action.routeId, seq: (state.highlightedRoute?.seq ?? 0) + 1 } : null,
+    };
+    case 'focus-route': return {
+      ...state,
+      routeFocusRequest: { key: action.routeId, seq: (state.routeFocusRequest?.seq ?? 0) + 1 },
+      showMapRoutes: true,
+      view: action.preserveView ? state.view : 'map',
+      status: '已定位路径',
+      error: '',
+    };
+    case 'fit-map-routes': return {
+      ...state,
+      fitRoutesVersion: state.fitRoutesVersion + 1,
+      showMapRoutes: true,
+      view: action.preserveView ? state.view : 'map',
+      status: '已适配全部地图路径',
+      error: '',
+    };
+    case 'toggle-map-routes-group': return {
+      ...state,
+      showMapRoutes: !state.showMapRoutes,
+      status: state.showMapRoutes ? '已隐藏地图路径图层' : '已显示地图路径图层',
+      error: '',
+    };
+    case 'set-issue-keys': return {
+      ...state,
+      issueKeys: new Set(action.keys),
+    };
     case 'observation-location': return {
       ...state,
       observationLocation: action.value,
@@ -145,6 +230,13 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     try {
       const value = await api.state(options?.signal);
       dispatch({ type: 'loaded', value });
+      if (value.flight_mode) {
+        api.matchIssues(options?.signal).then(res => {
+          dispatch({ type: 'set-issue-keys', keys: res.flight_keys });
+        }).catch(() => {
+          /* ignore non-fatal issue preload error */
+        });
+      }
       if (!options?.preserveStatus) {
         dispatch({ type: 'status', value: value.flight_mode ? '航班工作台' : '查看模式 · 点击图层要素查看详情' });
       }

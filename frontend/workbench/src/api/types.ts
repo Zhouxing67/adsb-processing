@@ -20,4 +20,15 @@ export interface MapFlightEntry {
 }
 export type FlightDetail = FlightApi['schemas']['FlightDetailResponse'];
 export type MatchStatus = FlightApi['schemas']['MatchStatusResponse'];
+export type RouteItem = FlightApi['schemas']['RouteItemResponse'];
+export type RouteList = FlightApi['schemas']['RouteListResponse'];
+export type RouteGeometry = FlightApi['schemas']['RouteGeometryResponse'];
+export type RouteReviewUpdate = FlightApi['schemas']['UpdateRouteReviewRequest'];
+export type ImportRoutesRequest = FlightApi['schemas']['ImportMatchesToRouteLibraryRequest'];
+export type ImportRoutesSummary = FlightApi['schemas']['ImportRoutesSummaryResponse'];
+export type MatchIssueList = FlightApi['schemas']['MatchIssueListResponse'];
+export type MatchIssueMutation = FlightApi['schemas']['MatchIssueMutationResponse'];
+export interface MapRouteEntry {
+  geometry: RouteGeometry; label: string; slot: number; visible: boolean;
+}
 export type SelectedFeature = GeoFeature<PointGeometry, NodeProperties> | GeoFeature<LineGeometry, EdgeProperties>;

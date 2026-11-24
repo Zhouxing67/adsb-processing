@@ -106,6 +106,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/match-issues": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Match Issues List */
+        get: operations["match_issues_list_api_match_issues_get"];
+        put?: never;
+        /** Add Match Issues */
+        post: operations["add_match_issues_api_match_issues_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/match-issues/remove": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Remove Match Issues */
+        post: operations["remove_match_issues_api_match_issues_remove_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/matches": {
         parameters: {
             query?: never;
@@ -118,6 +153,74 @@ export interface paths {
         put?: never;
         /** Match Flights */
         post: operations["match_flights_api_matches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Routes List */
+        get: operations["routes_list_api_routes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/routes/import-matches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Import Matched Routes */
+        post: operations["import_matched_routes_api_routes_import_matches_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/routes/{route_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Update Route Review */
+        patch: operations["update_route_review_api_routes__route_id__patch"];
+        trace?: never;
+    };
+    "/api/routes/{route_id}/geometry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Geometry */
+        get: operations["route_geometry_api_routes__route_id__geometry_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -230,6 +333,13 @@ export interface components {
             flight_number: string | number | boolean | null;
             /** Inconsistent Fields */
             inconsistent_fields: string[];
+            /**
+             * Is Issue
+             * @default false
+             */
+            is_issue: boolean;
+            /** Issue Reason */
+            issue_reason?: string | null;
             match: components["schemas"]["MatchResultResponse"];
             /** Movement Type */
             movement_type: string;
@@ -244,6 +354,11 @@ export interface components {
         };
         /** FlightCatalogueResponse */
         FlightCatalogueResponse: {
+            /**
+             * Can Edit Issues
+             * @default true
+             */
+            can_edit_issues: boolean;
             /** Dataset Max Date */
             dataset_max_date?: string | null;
             /** Dataset Max Points */
@@ -252,6 +367,11 @@ export interface components {
             dataset_min_date?: string | null;
             /** Graph Id */
             graph_id: string;
+            /**
+             * Issue Count
+             * @default 0
+             */
+            issue_count: number;
             /** Items */
             items: components["schemas"]["FlightCatalogueItemResponse"][];
             /** Max Points */
@@ -266,6 +386,8 @@ export interface components {
             stand_options: string[];
             /** Supports Validation Filter */
             supports_validation_filter: boolean;
+            /** Supports Whitelist Filter */
+            supports_whitelist_filter: boolean;
             time: components["schemas"]["TimeDisplayResponse"];
             /** Total */
             total: number;
@@ -332,6 +454,13 @@ export interface components {
             flight_number: string | number | boolean | null;
             /** Inconsistent Fields */
             inconsistent_fields: string[];
+            /**
+             * Is Issue
+             * @default false
+             */
+            is_issue: boolean;
+            /** Issue Reason */
+            issue_reason?: string | null;
             /** Movement Type */
             movement_type: string;
             /** Point Count */
@@ -378,6 +507,35 @@ export interface components {
             /** Uses */
             uses: number;
         };
+        /** ImportMatchesToRouteLibraryRequest */
+        ImportMatchesToRouteLibraryRequest: {
+            /** Flight Keys */
+            flight_keys?: string[] | null;
+            /**
+             * Replace Candidates
+             * @default false
+             */
+            replace_candidates: boolean;
+        };
+        /** ImportRoutesSummaryResponse */
+        ImportRoutesSummaryResponse: {
+            /** Deleted Candidates */
+            deleted_candidates: number;
+            /** Evaluated Flights */
+            evaluated_flights: number;
+            /** Existing Routes */
+            existing_routes: number;
+            /** Graph Id */
+            graph_id: string;
+            /** Inserted Routes */
+            inserted_routes: number;
+            /** Skipped Invalid Path */
+            skipped_invalid_path: number;
+            /** Skipped Missing Stand */
+            skipped_missing_stand: number;
+            /** Unique Routes */
+            unique_routes: number;
+        };
         JsonValue: unknown;
         /** LineStringGeometry */
         LineStringGeometry: {
@@ -402,6 +560,40 @@ export interface components {
              * @default false
              */
             force: boolean;
+        };
+        /** MatchIssueKeysRequest */
+        MatchIssueKeysRequest: {
+            /** Flight Keys */
+            flight_keys?: string[];
+            /** Reason */
+            reason?: string | null;
+        };
+        /** MatchIssueListResponse */
+        MatchIssueListResponse: {
+            /** Count */
+            count: number;
+            /** Flight Keys */
+            flight_keys: string[];
+        };
+        /** MatchIssueMutationResponse */
+        MatchIssueMutationResponse: {
+            /**
+             * Deleted
+             * @default 0
+             */
+            deleted: number;
+            /**
+             * Existing
+             * @default 0
+             */
+            existing: number;
+            /**
+             * Inserted
+             * @default 0
+             */
+            inserted: number;
+            /** Issue Flight Keys */
+            issue_flight_keys: string[];
         };
         /** MatchProgressResponse */
         MatchProgressResponse: {
@@ -590,6 +782,69 @@ export interface components {
              */
             type: "Point";
         };
+        /** RouteGeometryResponse */
+        RouteGeometryResponse: {
+            path: components["schemas"]["GeoJsonFeatureCollection"];
+            route: components["schemas"]["RouteItemResponse"];
+        };
+        /** RouteItemResponse */
+        RouteItemResponse: {
+            /** Created At */
+            created_at: string | null;
+            /** Edge Count */
+            edge_count: number;
+            /** Graph Id */
+            graph_id: string;
+            /** Matches Current Graph */
+            matches_current_graph: boolean;
+            /** Movement */
+            movement: string;
+            /** Note */
+            note: string | null;
+            /** Route Id */
+            route_id: string;
+            /** Runway Interface Node */
+            runway_interface_node: string;
+            /** Runway Ref */
+            runway_ref: string | null;
+            /** Source */
+            source: string;
+            /** Stand Ref */
+            stand_ref: string;
+            /** Status */
+            status: string;
+            /** Total Length M */
+            total_length_m: number;
+            /** Updated At */
+            updated_at: string | null;
+        };
+        /** RouteListResponse */
+        RouteListResponse: {
+            /** Can Edit */
+            can_edit: boolean;
+            /** Current Graph Id */
+            current_graph_id: string;
+            /** Has Route Library */
+            has_route_library: boolean;
+            /** Items */
+            items: components["schemas"]["RouteItemResponse"][];
+            /** Page */
+            page: number;
+            /** Page Size */
+            page_size: number;
+            /** Runway Options */
+            runway_options: string[];
+            /** Stand Options */
+            stand_options: string[];
+            /** Status Counts */
+            status_counts: {
+                [key: string]: number;
+            };
+            /** Total */
+            total: number;
+            /** Total Pages */
+            total_pages: number;
+        };
         /** SpatialStandCandidate */
         SpatialStandCandidate: {
             /** Consecutive Points */
@@ -642,6 +897,13 @@ export interface components {
             parallel_groups: components["schemas"]["ParallelEdgeGroup"][];
             /** Parallel Pair Count */
             parallel_pair_count: number;
+        };
+        /** UpdateRouteReviewRequest */
+        UpdateRouteReviewRequest: {
+            /** Note */
+            note?: string | null;
+            /** Status */
+            status: string;
         };
         /** UpdateStandRequest */
         UpdateStandRequest: {
@@ -703,6 +965,8 @@ export interface operations {
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
+                whitelist_only?: boolean;
+                issues_only?: boolean;
             };
             header?: never;
             path?: never;
@@ -751,6 +1015,8 @@ export interface operations {
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
+                whitelist_only?: boolean;
+                issues_only?: boolean;
                 page?: number;
                 page_size?: number;
             };
@@ -955,10 +1221,134 @@ export interface operations {
             };
         };
     };
+    match_issues_list_api_match_issues_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchIssueListResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    add_match_issues_api_match_issues_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatchIssueKeysRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchIssueMutationResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    remove_match_issues_api_match_issues_remove_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MatchIssueKeysRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MatchIssueMutationResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     match_status_api_matches_get: {
         parameters: {
             query?: {
                 task_id?: string[] | null;
+                include_items?: boolean;
+                flight_key?: string[] | null;
             };
             header?: never;
             path?: never;
@@ -1015,6 +1405,180 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MatchSubmissionResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    routes_list_api_routes_get: {
+        parameters: {
+            query?: {
+                q?: string;
+                movement?: string | null;
+                stand_ref?: string | null;
+                runway_ref?: string | null;
+                runway_is_null?: boolean;
+                status?: string | null;
+                all_graphs?: boolean;
+                page?: number;
+                page_size?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteListResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    import_matched_routes_api_routes_import_matches_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ImportMatchesToRouteLibraryRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ImportRoutesSummaryResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    update_route_review_api_routes__route_id__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                route_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateRouteReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteItemResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    route_geometry_api_routes__route_id__geometry_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                route_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteGeometryResponse"];
                 };
             };
             /** @description Request validation error */

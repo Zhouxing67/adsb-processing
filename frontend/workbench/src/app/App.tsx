@@ -12,6 +12,7 @@ import type { Aeroway } from '@/domain/properties';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
+import { RouteLibraryPanel } from '@/features/routes/RouteLibraryPanel';
 import { FeatureDetails } from '@/features/graph-editor/FeatureDetails';
 import { GraphDialog } from '@/features/graph-editor/GraphDialog';
 import { Inspector } from '@/features/graph-editor/Inspector';
@@ -74,7 +75,9 @@ function Workspace() {
   }, [editor.dialog, wb.selected, wb.detailsOpen]);
 
   const isFullTableView =
-    Boolean(state?.flight_mode) && !splitView && (wb.view === 'flights' || wb.view === 'observations');
+    Boolean(state?.flight_mode) &&
+    !splitView &&
+    (wb.view === 'flights' || wb.view === 'observations' || wb.view === 'routes');
 
   useEffect(() => {
     if (isFullTableView) {
@@ -156,10 +159,17 @@ function Workspace() {
     }
   };
 
-  const visibleMapFlights =
-    wb.isolatedFlightKey && wb.mapFlights.has(wb.isolatedFlightKey)
+  const visibleMapFlights = !wb.showMapFlights
+    ? new Map()
+    : wb.isolatedFlightKey && wb.mapFlights.has(wb.isolatedFlightKey)
       ? new Map([[wb.isolatedFlightKey, wb.mapFlights.get(wb.isolatedFlightKey)!]])
       : wb.mapFlights;
+
+  const visibleMapRoutes = !wb.showMapRoutes
+    ? new Map()
+    : wb.isolatedRouteId && wb.mapRoutes.has(wb.isolatedRouteId)
+      ? new Map([[wb.isolatedRouteId, wb.mapRoutes.get(wb.isolatedRouteId)!]])
+      : wb.mapRoutes;
 
   const startDrag = (event: React.DragEvent, view: MainView) => {
     setDraggedView(view);
@@ -211,6 +221,7 @@ function Workspace() {
       <MapView
         state={state}
         flights={visibleMapFlights}
+        routes={visibleMapRoutes}
         splitValidation={splitValidation}
         baseLayer={layers.base}
         showEdges={layers.edges}
@@ -220,14 +231,20 @@ function Workspace() {
         drawPoints={editor.drawPoints}
         previewGeometry={editor.previewGeometry}
         focusFlightRequest={wb.mapFocusRequest}
+        focusRouteRequest={wb.routeFocusRequest}
         focusFeatureRequest={wb.focusFeatureRequest}
         fitMapVersion={wb.fitMapVersion}
+        fitRoutesVersion={wb.fitRoutesVersion}
         observationLocation={wb.observationLocation}
         onFeature={editor.handleFeature}
         onMapClick={editor.handleMapClick}
         onFlightClick={key => {
           setLeftOpen(true);
           wb.dispatch({ type: 'highlight-flight', key });
+        }}
+        onRouteClick={routeId => {
+          setLeftOpen(true);
+          wb.dispatch({ type: 'highlight-route', routeId });
         }}
       />
       <MapToolbar editing={graphEditing} onEditing={toggleEditing} />
@@ -297,10 +314,13 @@ function Workspace() {
           matchRun={matchRun}
           setMatchRun={setMatchRun}
           submitMatches={submitMatches}
-          active={wb.view === 'flights' || (splitView && wb.view !== 'observations')}
+          active={wb.view === 'flights' || (splitView && wb.view === 'map')}
           splitView={splitView}
           onDetail={setDetail}
         />
+      )}
+      {state.flight_mode && (
+        <RouteLibraryPanel active={wb.view === 'routes'} splitView={splitView} />
       )}
       {state.flight_mode && wb.view === 'observations' && <ObservationView detail={detail} splitView={splitView} />}
     </>
@@ -467,6 +487,7 @@ function Workspace() {
             [
               { key: 'map' as const, label: '地图', visible: true },
               { key: 'flights' as const, label: '航班', visible: true },
+              { key: 'routes' as const, label: '路径库', visible: true },
               { key: 'observations' as const, label: '观测记录', visible: Boolean(detail) },
             ] as const
           )

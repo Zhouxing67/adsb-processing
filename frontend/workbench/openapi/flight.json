@@ -247,6 +247,22 @@
             "title": "Inconsistent Fields",
             "type": "array"
           },
+          "is_issue": {
+            "default": false,
+            "title": "Is Issue",
+            "type": "boolean"
+          },
+          "issue_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Reason"
+          },
           "match": {
             "$ref": "#/components/schemas/MatchResultResponse"
           },
@@ -298,6 +314,11 @@
       "FlightCatalogueResponse": {
         "additionalProperties": false,
         "properties": {
+          "can_edit_issues": {
+            "default": true,
+            "title": "Can Edit Issues",
+            "type": "boolean"
+          },
           "dataset_max_date": {
             "anyOf": [
               {
@@ -327,6 +348,11 @@
           "graph_id": {
             "title": "Graph Id",
             "type": "string"
+          },
+          "issue_count": {
+            "default": 0,
+            "title": "Issue Count",
+            "type": "integer"
           },
           "items": {
             "items": {
@@ -362,6 +388,10 @@
             "title": "Supports Validation Filter",
             "type": "boolean"
           },
+          "supports_whitelist_filter": {
+            "title": "Supports Whitelist Filter",
+            "type": "boolean"
+          },
           "time": {
             "$ref": "#/components/schemas/TimeDisplayResponse"
           },
@@ -378,6 +408,7 @@
           "items",
           "stand_options",
           "supports_validation_filter",
+          "supports_whitelist_filter",
           "total",
           "total_pages",
           "page",
@@ -577,6 +608,22 @@
             "title": "Inconsistent Fields",
             "type": "array"
           },
+          "is_issue": {
+            "default": false,
+            "title": "Is Issue",
+            "type": "boolean"
+          },
+          "issue_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Issue Reason"
+          },
           "movement_type": {
             "title": "Movement Type",
             "type": "string"
@@ -703,6 +750,81 @@
         "title": "HistoricalStandCandidate",
         "type": "object"
       },
+      "ImportMatchesToRouteLibraryRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "flight_keys": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Flight Keys"
+          },
+          "replace_candidates": {
+            "default": false,
+            "title": "Replace Candidates",
+            "type": "boolean"
+          }
+        },
+        "title": "ImportMatchesToRouteLibraryRequest",
+        "type": "object"
+      },
+      "ImportRoutesSummaryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted_candidates": {
+            "title": "Deleted Candidates",
+            "type": "integer"
+          },
+          "evaluated_flights": {
+            "title": "Evaluated Flights",
+            "type": "integer"
+          },
+          "existing_routes": {
+            "title": "Existing Routes",
+            "type": "integer"
+          },
+          "graph_id": {
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "inserted_routes": {
+            "title": "Inserted Routes",
+            "type": "integer"
+          },
+          "skipped_invalid_path": {
+            "title": "Skipped Invalid Path",
+            "type": "integer"
+          },
+          "skipped_missing_stand": {
+            "title": "Skipped Missing Stand",
+            "type": "integer"
+          },
+          "unique_routes": {
+            "title": "Unique Routes",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "graph_id",
+          "evaluated_flights",
+          "unique_routes",
+          "deleted_candidates",
+          "inserted_routes",
+          "existing_routes",
+          "skipped_missing_stand",
+          "skipped_invalid_path"
+        ],
+        "title": "ImportRoutesSummaryResponse",
+        "type": "object"
+      },
       "JsonValue": {},
       "LineStringGeometry": {
         "additionalProperties": false,
@@ -753,6 +875,85 @@
           }
         },
         "title": "MatchFlightsRequest",
+        "type": "object"
+      },
+      "MatchIssueKeysRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "flight_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flight Keys",
+            "type": "array"
+          },
+          "reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Reason"
+          }
+        },
+        "title": "MatchIssueKeysRequest",
+        "type": "object"
+      },
+      "MatchIssueListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "flight_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Flight Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "flight_keys",
+          "count"
+        ],
+        "title": "MatchIssueListResponse",
+        "type": "object"
+      },
+      "MatchIssueMutationResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "deleted": {
+            "default": 0,
+            "title": "Deleted",
+            "type": "integer"
+          },
+          "existing": {
+            "default": 0,
+            "title": "Existing",
+            "type": "integer"
+          },
+          "inserted": {
+            "default": 0,
+            "title": "Inserted",
+            "type": "integer"
+          },
+          "issue_flight_keys": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Issue Flight Keys",
+            "type": "array"
+          }
+        },
+        "required": [
+          "issue_flight_keys"
+        ],
+        "title": "MatchIssueMutationResponse",
         "type": "object"
       },
       "MatchProgressResponse": {
@@ -1291,6 +1492,206 @@
         "title": "PointGeometry",
         "type": "object"
       },
+      "RouteGeometryResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "$ref": "#/components/schemas/GeoJsonFeatureCollection"
+          },
+          "route": {
+            "$ref": "#/components/schemas/RouteItemResponse"
+          }
+        },
+        "required": [
+          "route",
+          "path"
+        ],
+        "title": "RouteGeometryResponse",
+        "type": "object"
+      },
+      "RouteItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "created_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Created At"
+          },
+          "edge_count": {
+            "title": "Edge Count",
+            "type": "integer"
+          },
+          "graph_id": {
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "matches_current_graph": {
+            "title": "Matches Current Graph",
+            "type": "boolean"
+          },
+          "movement": {
+            "title": "Movement",
+            "type": "string"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "route_id": {
+            "title": "Route Id",
+            "type": "string"
+          },
+          "runway_interface_node": {
+            "title": "Runway Interface Node",
+            "type": "string"
+          },
+          "runway_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runway Ref"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          },
+          "stand_ref": {
+            "title": "Stand Ref",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_length_m": {
+            "title": "Total Length M",
+            "type": "number"
+          },
+          "updated_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Updated At"
+          }
+        },
+        "required": [
+          "route_id",
+          "graph_id",
+          "matches_current_graph",
+          "movement",
+          "stand_ref",
+          "runway_ref",
+          "runway_interface_node",
+          "edge_count",
+          "total_length_m",
+          "status",
+          "source",
+          "note",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "RouteItemResponse",
+        "type": "object"
+      },
+      "RouteListResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "can_edit": {
+            "title": "Can Edit",
+            "type": "boolean"
+          },
+          "current_graph_id": {
+            "title": "Current Graph Id",
+            "type": "string"
+          },
+          "has_route_library": {
+            "title": "Has Route Library",
+            "type": "boolean"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RouteItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          },
+          "page": {
+            "title": "Page",
+            "type": "integer"
+          },
+          "page_size": {
+            "title": "Page Size",
+            "type": "integer"
+          },
+          "runway_options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Runway Options",
+            "type": "array"
+          },
+          "stand_options": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stand Options",
+            "type": "array"
+          },
+          "status_counts": {
+            "additionalProperties": {
+              "type": "integer"
+            },
+            "title": "Status Counts",
+            "type": "object"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "total_pages": {
+            "title": "Total Pages",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "items",
+          "has_route_library",
+          "current_graph_id",
+          "can_edit",
+          "stand_options",
+          "runway_options",
+          "status_counts",
+          "total",
+          "total_pages",
+          "page",
+          "page_size"
+        ],
+        "title": "RouteListResponse",
+        "type": "object"
+      },
       "SpatialStandCandidate": {
         "additionalProperties": false,
         "properties": {
@@ -1450,6 +1851,31 @@
           "parallel_groups"
         ],
         "title": "TopologySummary",
+        "type": "object"
+      },
+      "UpdateRouteReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "UpdateRouteReviewRequest",
         "type": "object"
       },
       "UpdateStandRequest": {
@@ -1703,6 +2129,26 @@
               "title": "Validation Only",
               "type": "boolean"
             }
+          },
+          {
+            "in": "query",
+            "name": "whitelist_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Whitelist Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issues_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Issues Only",
+              "type": "boolean"
+            }
           }
         ],
         "responses": {
@@ -1867,6 +2313,26 @@
             "schema": {
               "default": false,
               "title": "Validation Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "whitelist_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Whitelist Only",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "issues_only",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Issues Only",
               "type": "boolean"
             }
           },
@@ -2157,6 +2623,138 @@
         "summary": "Stand Recommendations"
       }
     },
+    "/api/match-issues": {
+      "get": {
+        "operationId": "match_issues_list_api_match_issues_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchIssueListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Match Issues List"
+      },
+      "post": {
+        "operationId": "add_match_issues_api_match_issues_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchIssueKeysRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchIssueMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Add Match Issues"
+      }
+    },
+    "/api/match-issues/remove": {
+      "post": {
+        "operationId": "remove_match_issues_api_match_issues_remove_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MatchIssueKeysRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MatchIssueMutationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Remove Match Issues"
+      }
+    },
     "/api/matches": {
       "get": {
         "operationId": "match_status_api_matches_get",
@@ -2178,6 +2776,35 @@
                 }
               ],
               "title": "Task Id"
+            }
+          },
+          {
+            "in": "query",
+            "name": "include_items",
+            "required": false,
+            "schema": {
+              "default": true,
+              "title": "Include Items",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "flight_key",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Flight Key"
             }
           }
         ],
@@ -2260,6 +2887,319 @@
           }
         },
         "summary": "Match Flights"
+      }
+    },
+    "/api/routes": {
+      "get": {
+        "operationId": "routes_list_api_routes_get",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "required": false,
+            "schema": {
+              "default": "",
+              "title": "Q",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "movement",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Movement"
+            }
+          },
+          {
+            "in": "query",
+            "name": "stand_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Stand Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "runway_ref",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Runway Ref"
+            }
+          },
+          {
+            "in": "query",
+            "name": "runway_is_null",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "Runway Is Null",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "status",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Status"
+            }
+          },
+          {
+            "in": "query",
+            "name": "all_graphs",
+            "required": false,
+            "schema": {
+              "default": false,
+              "title": "All Graphs",
+              "type": "boolean"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "required": false,
+            "schema": {
+              "default": 1,
+              "minimum": 1,
+              "title": "Page",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page_size",
+            "required": false,
+            "schema": {
+              "default": 20,
+              "maximum": 200,
+              "minimum": 1,
+              "title": "Page Size",
+              "type": "integer"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteListResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Routes List"
+      }
+    },
+    "/api/routes/import-matches": {
+      "post": {
+        "operationId": "import_matched_routes_api_routes_import_matches_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ImportMatchesToRouteLibraryRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ImportRoutesSummaryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Import Matched Routes"
+      }
+    },
+    "/api/routes/{route_id}": {
+      "patch": {
+        "operationId": "update_route_review_api_routes__route_id__patch",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "route_id",
+            "required": true,
+            "schema": {
+              "title": "Route Id",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpdateRouteReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteItemResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Update Route Review"
+      }
+    },
+    "/api/routes/{route_id}/geometry": {
+      "get": {
+        "operationId": "route_geometry_api_routes__route_id__geometry_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "route_id",
+            "required": true,
+            "schema": {
+              "title": "Route Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteGeometryResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Route Geometry"
       }
     },
     "/api/state": {
