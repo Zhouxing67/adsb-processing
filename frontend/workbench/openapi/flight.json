@@ -679,6 +679,30 @@
         "title": "GeoJsonFeatureCollection",
         "type": "object"
       },
+      "HistoricalStandCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "stand": {
+            "title": "Stand",
+            "type": "string"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          },
+          "uses": {
+            "title": "Uses",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "stand",
+          "uses",
+          "total"
+        ],
+        "title": "HistoricalStandCandidate",
+        "type": "object"
+      },
       "JsonValue": {},
       "LineStringGeometry": {
         "additionalProperties": false,
@@ -1265,6 +1289,55 @@
           "coordinates"
         ],
         "title": "PointGeometry",
+        "type": "object"
+      },
+      "SpatialStandCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "consecutive_points": {
+            "title": "Consecutive Points",
+            "type": "integer"
+          },
+          "nearest_m": {
+            "title": "Nearest M",
+            "type": "number"
+          },
+          "stand": {
+            "title": "Stand",
+            "type": "string"
+          }
+        },
+        "required": [
+          "stand",
+          "consecutive_points",
+          "nearest_m"
+        ],
+        "title": "SpatialStandCandidate",
+        "type": "object"
+      },
+      "StandRecommendations": {
+        "additionalProperties": false,
+        "properties": {
+          "high": {
+            "items": {
+              "$ref": "#/components/schemas/SpatialStandCandidate"
+            },
+            "title": "High",
+            "type": "array"
+          },
+          "medium": {
+            "items": {
+              "$ref": "#/components/schemas/HistoricalStandCandidate"
+            },
+            "title": "Medium",
+            "type": "array"
+          }
+        },
+        "required": [
+          "high",
+          "medium"
+        ],
+        "title": "StandRecommendations",
         "type": "object"
       },
       "TimeDisplayResponse": {
@@ -2033,6 +2106,55 @@
           }
         },
         "summary": "Update Stand"
+      }
+    },
+    "/api/flights/{flight_key}/stand-recommendations": {
+      "get": {
+        "operationId": "stand_recommendations_api_flights__flight_key__stand_recommendations_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "flight_key",
+            "required": true,
+            "schema": {
+              "title": "Flight Key",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StandRecommendations"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Stand Recommendations"
       }
     },
     "/api/matches": {

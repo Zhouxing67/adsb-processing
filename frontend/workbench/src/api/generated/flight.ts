@@ -89,6 +89,23 @@ export interface paths {
         patch: operations["update_stand_api_flights__flight_key__stand_patch"];
         trace?: never;
     };
+    "/api/flights/{flight_key}/stand-recommendations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Stand Recommendations */
+        get: operations["stand_recommendations_api_flights__flight_key__stand_recommendations_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/matches": {
         parameters: {
             query?: never;
@@ -352,6 +369,15 @@ export interface components {
              */
             type: "FeatureCollection";
         };
+        /** HistoricalStandCandidate */
+        HistoricalStandCandidate: {
+            /** Stand */
+            stand: string;
+            /** Total */
+            total: number;
+            /** Uses */
+            uses: number;
+        };
         JsonValue: unknown;
         /** LineStringGeometry */
         LineStringGeometry: {
@@ -563,6 +589,22 @@ export interface components {
              * @constant
              */
             type: "Point";
+        };
+        /** SpatialStandCandidate */
+        SpatialStandCandidate: {
+            /** Consecutive Points */
+            consecutive_points: number;
+            /** Nearest M */
+            nearest_m: number;
+            /** Stand */
+            stand: string;
+        };
+        /** StandRecommendations */
+        StandRecommendations: {
+            /** High */
+            high: components["schemas"]["SpatialStandCandidate"][];
+            /** Medium */
+            medium: components["schemas"]["HistoricalStandCandidate"][];
         };
         /** TimeDisplayResponse */
         TimeDisplayResponse: {
@@ -852,6 +894,46 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    stand_recommendations_api_flights__flight_key__stand_recommendations_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                flight_key: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StandRecommendations"];
+                };
             };
             /** @description Request validation error */
             422: {

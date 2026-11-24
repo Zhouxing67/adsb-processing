@@ -5,6 +5,7 @@ from __future__ import annotations
 import threading
 from dataclasses import asdict, dataclass, replace
 from datetime import date, datetime
+from functools import cached_property
 from math import ceil
 from typing import Any, Iterable, Sequence
 from zoneinfo import ZoneInfo
@@ -16,8 +17,10 @@ from flight.flight_repository import FlightDatabase, database_flight_key, flight
 from path_map import MatchConfig
 from utils.json_value import to_json_value
 
+from .api_models import HistoricalStandCandidate, StandRecommendations
 from .flight_match_tasks import FlightMatchTasks, MatchResultItem
 from .serializers import flight_geojson, path_geojson
+from .stand_recommendations import StandGeometryIndex
 
 MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed"}
 BUSINESS_FIELD_NAMES = {
@@ -160,6 +163,26 @@ class FlightWorkbench:
 
     def task_status(self, task_ids: Sequence[str] | None = None) -> dict[str, Any]:
         return self.match_tasks.task_status(task_ids)
+
+    @cached_property
+    def _stand_geometry(self) -> StandGeometryIndex:
+        return StandGeometryIndex(self.airport_graph)
+
+    def recommend_stands(self, key: str) -> StandRecommendations:
+        flight = self._flight(key)
+        _, column = STAND_COLUMNS[flight.movement]
+        event = flight.actual_dep if flight.movement == "departure" else flight.actual_arr
+        if flight.stand_ref or (flight.od_error and column in flight.od_error) or event is None:
+            return StandRecommendations(high=[], medium=[])
+        high = self._stand_geometry.candidates(flight, event)
+        history = self.flight_database.stands.historical_candidates(
+            flight.movement, flight.flight_id, flight.number, event, flight.a_num
+        ) if flight.number else []
+        spatial_stands = {candidate.stand for candidate in high}
+        return StandRecommendations(high=high, medium=[
+            HistoricalStandCandidate(stand=stand, uses=uses, total=total)
+            for stand, uses, total in history if stand not in spatial_stands
+        ])
 
     def update_stand(self, key: str, stand: str | None) -> None:
         stand = (stand.strip() or None) if stand is not None else None

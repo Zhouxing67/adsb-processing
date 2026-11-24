@@ -59,6 +59,8 @@ export const api = {
   geometry: (key: string, signal?: AbortSignal) => request<FlightGeometry>(`/api/flights/${encodeURIComponent(key)}/geometry`, { signal }),
   detail: (key: string, page = 1, allFields = false) => request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}&observation_page_size=100&all_fields=${allFields}`),
   updateStand: (key: string, stand_position: string | null) => request<void>(`/api/flights/${encodeURIComponent(key)}/stand`, json('PATCH', { stand_position })),
+  recommendStands: (key: string, signal: AbortSignal) =>
+    request<FlightApi['schemas']['StandRecommendations']>(`/api/flights/${encodeURIComponent(key)}/stand-recommendations`, { signal }),
   submitMatches: (flight_keys: string[], force = false) => request<FlightApi['schemas']['MatchSubmissionResponse']>('/api/matches', json('POST', { flight_keys, force })),
   matchStatus: () => request<MatchStatus>('/api/matches'),
   mergeCandidates: () => request<GraphApi['schemas']['MergeCandidatesResponse']>('/api/merge-candidates'),

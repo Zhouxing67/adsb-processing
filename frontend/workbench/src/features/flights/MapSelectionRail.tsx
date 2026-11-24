@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { Crosshair, Eye, FileText, GripHorizontal, Maximize2, Trash2, X } from 'lucide-react';
+import { Crosshair, Eye, FileText, GripHorizontal, LoaderCircle, Maximize2, Route, Trash2, X } from 'lucide-react';
 import { api } from '@/api/client';
 import type { FlightDetail, MapFlightEntry } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
@@ -23,15 +23,32 @@ function readStoredHeight(): number {
 }
 
 interface MapSelectionRailProps {
+  submitMatches(keys: string[], force: boolean): Promise<void>;
   splitView: boolean;
   onDetail(detail: FlightDetail): void;
 }
 
-export function MapSelectionRail({ splitView, onDetail }: MapSelectionRailProps) {
+export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSelectionRailProps) {
   const wb = useWorkbench();
   const [listHeightPct, setListHeightPct] = useState<number>(readStoredHeight);
   const [flashingKey, setFlashingKey] = useState<string | null>(null);
   const [loadingDetailKey, setLoadingDetailKey] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState<Set<string>>(new Set());
+  const matchFlight = async (key: string, label: string) => {
+    setSubmitting(current => new Set(current).add(key));
+    try {
+      await submitMatches([key], true);
+      wb.dispatch({ type: 'status', value: `已提交 ${label} 的路径匹配` });
+    } catch (failure) {
+      wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '匹配提交失败' });
+    } finally {
+      setSubmitting(current => {
+        const next = new Set(current);
+        next.delete(key);
+        return next;
+      });
+    }
+  };
 
   const railRef = useRef<HTMLElement>(null);
   const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -105,6 +122,9 @@ export function MapSelectionRail({ splitView, onDetail }: MapSelectionRailProps)
             const highlighted = flashingKey === key;
             const slotColor = colors[entry.slot % colors.length];
             const hasPath = Boolean(entry.geometry.path);
+            const match = entry.geometry.match;
+            const matching = submitting.has(key) || match.status === 'queued' || match.status === 'matching';
+            const matchLabel = matching ? '匹配中' : hasPath ? '重新匹配路径' : '匹配路径';
             return (
               <div
                 key={key}
@@ -151,6 +171,17 @@ export function MapSelectionRail({ splitView, onDetail }: MapSelectionRailProps)
                       onClick={() => wb.dispatch({ type: 'isolate-flight', key: isolated ? null : key })}
                     >
                       <Eye className="h-3 w-3" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className={cn('h-5 w-5 text-muted-foreground', match.status === 'failed' && 'text-destructive')}
+                      aria-label={`${matchLabel} ${entry.label}`}
+                      title={match.status === 'failed' && !matching ? `上次匹配失败：${match.error ?? '未生成路径'}。点击重试` : matchLabel}
+                      disabled={matching}
+                      onClick={() => void matchFlight(key, entry.label)}
+                    >
+                      {matching ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Route className="h-3 w-3" />}
                     </Button>
                     <Button
                       variant="ghost"

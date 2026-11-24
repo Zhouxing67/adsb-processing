@@ -344,6 +344,23 @@ class FlightSelectionResponse(ApiModel):
     count: int
 
 
+class SpatialStandCandidate(ApiModel):
+    stand: str
+    consecutive_points: int
+    nearest_m: float
+
+
+class HistoricalStandCandidate(ApiModel):
+    stand: str
+    uses: int
+    total: int
+
+
+class StandRecommendations(ApiModel):
+    high: list[SpatialStandCandidate]
+    medium: list[HistoricalStandCandidate]
+
+
 class FlightDetailResponse(ApiModel):
     summary: FlightSummaryResponse
     fields: dict[str, JsonValue]

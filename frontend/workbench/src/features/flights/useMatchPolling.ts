@@ -4,7 +4,7 @@ import type { MapFlightEntry, MatchStatus } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 
 interface UseMatchPollingOptions {
-  tracking: boolean;
+  matchRun: string;
   onProgress(progress: MatchStatus['progress']): void;
   onComplete(): Promise<unknown>;
   onStop(): void;
@@ -12,7 +12,7 @@ interface UseMatchPollingOptions {
 }
 
 export function useMatchPolling({
-  tracking,
+  matchRun,
   onProgress,
   onComplete,
   onStop,
@@ -28,7 +28,7 @@ export function useMatchPolling({
   const dispatch = wb.dispatch;
 
   useEffect(() => {
-    if (!tracking) return;
+    if (!matchRun) return;
     let cancelled = false;
     let timer = 0;
     let consecutiveErrors = 0;
@@ -38,28 +38,23 @@ export function useMatchPolling({
       try {
         const status = await api.matchStatus();
         if (cancelled) return;
-        consecutiveErrors = 0;
         callbacksRef.current.onProgress(status.progress);
 
-        for (const task of status.tasks) {
-          for (const result of task.items) {
-            const currentFlights = mapFlightsRef.current;
-            if (!currentFlights.has(result.flight_key)) continue;
-            const previous = currentFlights.get(result.flight_key)!;
-            if (
-              previous.geometry.match.status !== result.status ||
-              previous.geometry.match.graph_id !== result.graph_id
-            ) {
-              const geometry = await api.geometry(result.flight_key);
-              if (cancelled) return;
-              const latest = mapFlightsRef.current.get(result.flight_key);
-              if (latest) {
-                dispatch({ type: 'map-flight', key: result.flight_key, value: { ...latest, geometry } });
-              }
-            }
+        const latestResults = new Map(status.tasks.flatMap(task =>
+          task.items.map(result => [result.flight_key, result] as const)));
+        for (const result of latestResults.values()) {
+          const previous = mapFlightsRef.current.get(result.flight_key);
+          if (!previous) continue;
+          if (previous.geometry.match.status === result.status && previous.geometry.match.task_id === result.task_id) continue;
+          const geometry = await api.geometry(result.flight_key);
+          if (cancelled) return;
+          const latest = mapFlightsRef.current.get(result.flight_key);
+          if (latest) {
+            dispatch({ type: 'map-flight', key: result.flight_key, value: { ...latest, geometry } });
           }
         }
 
+        consecutiveErrors = 0;
         if (status.progress.complete) {
           callbacksRef.current.onStop();
           await callbacksRef.current.onComplete();
@@ -91,5 +86,5 @@ export function useMatchPolling({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [tracking, dispatch]);
+  }, [matchRun, dispatch]);
 }

@@ -99,12 +99,15 @@ type ConfirmDialogState =
   | null;
 
 interface FlightPanelProps {
+  matchRun: string;
+  setMatchRun(value: string): void;
+  submitMatches(keys: string[], force: boolean): Promise<void>;
   onDetail(detail: FlightDetail): void;
   active?: boolean;
   splitView?: boolean;
 }
 
-export function FlightPanel({ onDetail, active = true, splitView = false }: FlightPanelProps) {
+export function FlightPanel({ onDetail, active = true, splitView = false, matchRun, setMatchRun, submitMatches }: FlightPanelProps) {
   const wb = useWorkbench();
   const saved = useMemo(readStoredFlightState, []);
   const initialFilters = useMemo(
@@ -121,14 +124,32 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
   const [standSearch, setStandSearch] = useState('');
   const [editingStand, setEditingStand] = useState<{ key: string; value: string } | null>(null);
   const [standEditSearch, setStandEditSearch] = useState('');
+  const [recommendations, setRecommendations] = useState<Awaited<ReturnType<typeof api.recommendStands>> | null>(null);
+  const [recommendationError, setRecommendationError] = useState('');
+  const [showRecommendations, setShowRecommendations] = useState(false);
+  const editingKey = editingStand?.key;
+  useEffect(() => {
+    if (!showRecommendations || !editingKey) return;
+    const controller = new AbortController();
+    setRecommendations(null);
+    setRecommendationError('');
+    api.recommendStands(editingKey, controller.signal).then(result => {
+      if (!controller.signal.aborted) setRecommendations(result);
+    }).catch(failure => {
+      if (!controller.signal.aborted) {
+        setRecommendationError(failure instanceof Error ? failure.message : '推荐读取失败');
+      }
+    });
+    return () => controller.abort();
+  }, [editingKey, showRecommendations]);
   const [loading, setLoading] = useState(false);
   const [addingProgress, setAddingProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [pageError, setPageError] = useState('');
   const [progress, setProgress] = useState<MatchStatus['progress'] | null>(null);
-  const [tracking, setTracking] = useState(false);
+  const tracking = Boolean(matchRun);
   const [allResultsIntent, setAllResultsIntent] = useState<boolean | null>(null);
-  const [filteredKeys, setFilteredKeys] = useState<string[] | null>(null);
+  const [filteredKeys, setFilteredKeys] = useState<{ catalogue: FlightCatalogue; keys: string[] } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
 
   const restored = useRef(false);
@@ -184,7 +205,8 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
   }, [load]);
 
   useEffect(() => {
-    setFilteredKeys(null);
+    toggleFilteredSeqRef.current += 1;
+    setAllResultsIntent(null);
   }, [filters]);
 
   useEffect(() => {
@@ -236,15 +258,15 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
       const status = await api.matchStatus();
       if (!mounted.current) return;
       setProgress(status.progress);
-      if (!status.progress.complete) setTracking(true);
+      if (!status.progress.complete) setMatchRun(status.tasks.at(-1)?.task_id || 'restored');
     })().catch(failure => setError(failure instanceof Error ? failure.message : '会话恢复失败'));
-  }, [saved.displayed, dispatch]);
+  }, [saved.displayed, dispatch, setMatchRun]);
 
   useMatchPolling({
-    tracking,
+    matchRun,
     onProgress: setProgress,
     onComplete: load,
-    onStop: () => setTracking(false),
+    onStop: () => setMatchRun(''),
     onError: setError,
   });
 
@@ -436,7 +458,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
     try {
       const result = await api.filteredFlights(paramsFor(filters));
       if (seq !== toggleFilteredSeqRef.current) return;
-      setFilteredKeys(result.flight_keys);
+      if (catalogue) setFilteredKeys({ catalogue, keys: result.flight_keys });
       dispatch({
         type: checked ? 'merge-match-selection' : 'remove-match-selection',
         keys: result.flight_keys,
@@ -466,8 +488,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
       return;
     }
     try {
-      await api.submitMatches(dialog.keys, dialog.force);
-      setTracking(true);
+      await submitMatches(dialog.keys, dialog.force);
       await load();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '任务提交失败');
@@ -488,12 +509,21 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
     [catalogue, wb.matchSelection],
   );
 
-  const allResultsSelected = useMemo(() => {
-    if (!catalogue?.total || !allPageSelected || wb.matchSelection.size < catalogue.total) return false;
-    if (catalogue.total <= catalogue.items.length) return true;
-    if (filteredKeys) return filteredKeys.every(key => wb.matchSelection.has(key));
-    return wb.matchSelection.size === catalogue.total;
-  }, [catalogue, allPageSelected, filteredKeys, wb.matchSelection]);
+  const needsFilteredKeys = Boolean(catalogue && catalogue.total > catalogue.items.length
+    && allPageSelected && wb.matchSelection.size >= catalogue.total);
+  useEffect(() => {
+    if (!needsFilteredKeys || !catalogue || filteredKeys?.catalogue === catalogue) return;
+    let active = true;
+    api.filteredFlights(paramsFor(filters)).then(result => {
+      if (active) setFilteredKeys({ catalogue, keys: result.flight_keys });
+    }).catch(failure => {
+      if (active) setError(failure instanceof Error ? failure.message : '无法读取筛选结果');
+    });
+    return () => { active = false; };
+  }, [needsFilteredKeys, filters, catalogue, filteredKeys]);
+  const allResultsSelected = allPageSelected && (catalogue?.total === catalogue?.items.length
+    || (needsFilteredKeys && filteredKeys?.catalogue === catalogue
+      && filteredKeys.keys.every(key => wb.matchSelection.has(key))));
 
   const visibleStands = useMemo(
     () => ['', ...(catalogue?.stand_options ?? [])].filter(stand => (stand || '空机位').toLowerCase().includes(standSearch.toLowerCase())),
@@ -989,6 +1019,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
                         open={standOpen}
                         onOpenChange={open => {
                           if (open) {
+                            setShowRecommendations(false);
                             setEditingStand({ key: item.flight_key, value: item.stand_position ?? '' });
                             setStandEditSearch('');
                           } else if (standOpen) {
@@ -1010,13 +1041,20 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
                           aria-label={`编辑 ${item.flight_id} 机位`}
                           className="w-60 space-y-2 p-2.5"
                         >
-                          <Input
+                          {!item.stand_position && !item.inconsistent_fields.includes(
+                            item.movement_type === 'departure' ? 'dep_stand_position' : 'arr_stand_position'
+                          ) && (
+                            <Button variant="outline" size="sm" onClick={() => setShowRecommendations(!showRecommendations)}>
+                              {showRecommendations ? '返回机位搜索' : '推荐机位'}
+                            </Button>
+                          )}
+                          {!showRecommendations && <Input
                             type="search"
                             aria-label="搜索可选机位"
                             placeholder="搜索机位"
                             value={standEditSearch}
                             onChange={event => setStandEditSearch(event.target.value)}
-                          />
+                          />}
                           <ScrollArea className="h-44">
                             <RadioGroup
                               value={editingStand?.value ? editingStand.value : '__empty__'}
@@ -1025,7 +1063,31 @@ export function FlightPanel({ onDetail, active = true, splitView = false }: Flig
                               }
                               className="gap-0.5 pr-2"
                             >
-                              {editableStands.map(stand => {
+                              {showRecommendations && !recommendations && (
+                                <small role="status" className="px-2 text-muted-foreground">{recommendationError || '正在查找推荐机位…'}</small>
+                              )}
+                              {showRecommendations && recommendations && (
+                                recommendations.high.length + recommendations.medium.length === 0
+                                  ? <small role="status" className="px-2 text-muted-foreground">暂无推荐机位</small>
+                                  : (['high', 'medium'] as const).map(group => recommendations[group].length > 0 && (
+                                    <div key={group} className="space-y-1 py-1">
+                                      <Badge variant="secondary">{group === 'high' ? '高置信度' : '中置信度'}</Badge>
+                                      {recommendations[group].map(candidate => (
+                                        <label key={candidate.stand} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent">
+                                          <RadioGroupItem value={candidate.stand} aria-label={candidate.stand} />
+                                          <span>{candidate.stand}
+                                            <small className="block text-muted-foreground">
+                                              {'nearest_m' in candidate
+                                                ? `停靠端 ${candidate.consecutive_points} 个点，最近 ${candidate.nearest_m.toFixed(1)} 米`
+                                                : `近 90 天使用 ${candidate.uses}/${candidate.total} 次，未发现同期占用`}
+                                            </small>
+                                          </span>
+                                        </label>
+                                      ))}
+                                    </div>
+                                  ))
+                              )}
+                              {!showRecommendations && editableStands.map(stand => {
                                 const label = stand || '空机位';
                                 return (
                                   <label

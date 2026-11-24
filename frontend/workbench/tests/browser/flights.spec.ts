@@ -93,6 +93,22 @@ test('map sidebar can isolate one displayed flight and restore all flights', asy
   await expect(page.locator('.flight-map-label')).toHaveCount(2);
 });
 
+test('match one flight directly from the map sidebar', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await page.getByRole('button', { name: '加入地图', exact: true }).first().click();
+  await page.getByRole('button', { name: '地图', exact: true }).click();
+  const chip = page.locator('.selected-chip').first();
+  const match = chip.getByRole('button', { name: /^匹配路径 / });
+  const submitted = page.waitForRequest(request => request.method() === 'POST' && new URL(request.url()).pathname === '/api/matches');
+  await match.click();
+  expect((await submitted).postDataJSON().flight_keys).toHaveLength(1);
+  // The fixture has no runway. The failed result must reach the map and allow retry.
+  await expect(match).toHaveAttribute('title', /上次匹配失败/);
+  await expect(match).toBeEnabled();
+  await expect(page.locator('.map-view')).toBeVisible();
+});
+
 test('all filtered flights can be displayed without a ten-flight cap', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
@@ -106,6 +122,30 @@ test('all filtered flights can be displayed without a ten-flight cap', async ({ 
   await page.getByRole('button', { name: '所选加入地图', exact: true }).click();
   await expect(page.locator('.map-selection .selected-chip')).toHaveCount(18);
   expect(detailRequests).toHaveLength(0);
+});
+
+test('cross-page select all excludes flights outside the filter', async ({ page }) => {
+  const matching = await (await page.request.get('/api/flight-selection?q=F0')).json();
+  const outside = await (await page.request.get('/api/flight-selection?q=F17')).json();
+  const selection = [...matching.flight_keys.slice(0, -1), ...outside.flight_keys];
+  await page.addInitScript(keys => {
+    sessionStorage.setItem('airport-flight-workbench:default', JSON.stringify({
+      filters: { query: 'F0' }, matchSelection: keys,
+    }));
+  }, selection);
+  await page.route('**/api/flights?**', route => {
+    const url = new URL(route.request().url());
+    url.searchParams.set('page_size', '5');
+    return route.continue({ url: url.toString() });
+  });
+  await page.goto('/');
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await expect(page.getByRole('checkbox', { name: '选择本页航班' })).toBeChecked();
+  const selectAll = page.getByRole('checkbox', { name: '选择全部结果' });
+  await expect(selectAll).not.toBeChecked();
+  await selectAll.click();
+  await expect(page.getByText('已选 11 条')).toBeVisible();
+  await expect(selectAll).toBeChecked();
 });
 
 test('selection and map display survive paging and reload', async ({ page }) => {
@@ -156,6 +196,25 @@ test('stand editing only accepts a catalogue option or empty stand', async ({ pa
   await editor.getByRole('radio', { name: 'A01' }).check();
   await editor.getByRole('button', { name: '保存', exact: true }).click();
   await expect(page.locator('.sheet-table tbody tr').first().getByRole('button', { name: 'A01' })).toBeVisible();
+});
+
+test('recommend a stand for an empty arrival and save the selected candidate', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await page.getByPlaceholder('航班号 / ID').fill('F02');
+  await page.getByRole('button', { name: '过滤', exact: true }).click();
+  const row = page.locator('.sheet-table tbody tr').filter({ hasText: 'F02' });
+  await row.getByRole('button', { name: '选择机位', exact: true }).click();
+  const editor = page.getByRole('dialog', { name: '编辑 F02 机位' });
+  await editor.getByRole('button', { name: '推荐机位' }).click();
+  await expect(editor.getByText('高置信度')).toBeVisible();
+  await editor.getByRole('radio', { name: 'A01' }).check();
+  await editor.getByRole('button', { name: '取消' }).click();
+  await row.getByRole('button', { name: '选择机位', exact: true }).click();
+  await editor.getByRole('button', { name: '推荐机位' }).click();
+  await editor.getByRole('radio', { name: 'A01' }).check();
+  await editor.getByRole('button', { name: '保存' }).click();
+  await expect(row.getByRole('button', { name: 'A01', exact: true })).toBeVisible();
 });
 
 test('max points draft does not auto-fetch and advanced popover supports multi-select and chips', async ({ page }) => {

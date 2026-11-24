@@ -37,6 +37,7 @@ flights = [
             {
                 "flight_id": [f"F{i:02}"] * 3,
                 "timestamp": pd.date_range("2024-01-01", periods=3, freq="1min", tz="UTC"),
+                "actual_arr": [pd.Timestamp("2024-01-01 00:02", tz="UTC")] * 3,
                 "longitude": [116.59, 116.592, 116.595],
                 "latitude": [40.07] * 3,
                 "arr_stand_position": ["A01" if i == 0 else None] * 3,

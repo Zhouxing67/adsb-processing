@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
 import type { FlightDetail } from '@/api/types';
+import { api } from '@/api/client';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
@@ -32,6 +33,11 @@ function Workspace() {
   const wb = useWorkbench();
   const state = wb.state;
   const [detail, setDetail] = useState<FlightDetail | null>(null);
+  const [matchRun, setMatchRun] = useState('');
+  const submitMatches = async (keys: string[], force: boolean) => {
+    const result = await api.submitMatches(keys, force);
+    setMatchRun(result.task_id);
+  };
   const [splitValidation, setSplitValidation] = useState(false);
   const [graphEditing, setGraphEditing] = useState(false);
   const [splitView, setSplitView] = useState(false);
@@ -288,6 +294,9 @@ function Workspace() {
     <>
       {state.flight_mode && (
         <FlightPanel
+          matchRun={matchRun}
+          setMatchRun={setMatchRun}
+          submitMatches={submitMatches}
           active={wb.view === 'flights' || (splitView && wb.view !== 'observations')}
           splitView={splitView}
           onDetail={setDetail}
@@ -346,7 +355,7 @@ function Workspace() {
       ) : editorLeft ? (
         <ToolDock />
       ) : (
-        flightLeft && <MapSelectionRail splitView={splitView} onDetail={setDetail} />
+        flightLeft && <MapSelectionRail splitView={splitView} onDetail={setDetail} submitMatches={submitMatches} />
       )}
 
       <main

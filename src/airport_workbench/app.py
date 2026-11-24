@@ -40,6 +40,7 @@ from .api_models import (
     MergeNodesPreviewResponse,
     RestoreOptionsResponse,
     SplitSourcePreviewResponse,
+    StandRecommendations,
     WorkbenchStateResponse,
     error_detail,
     normalize_error_detail,
@@ -440,6 +441,13 @@ def create_app(
             ) from error
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
+
+    @flight_routes.get("/api/flights/{flight_key}/stand-recommendations")
+    def stand_recommendations(flight_key: str) -> StandRecommendations:
+        try:
+            return flight_workbench.recommend_stands(flight_key)
+        except KeyError as error:
+            raise HTTPException(404, "未知 flight_key") from error
 
     @flight_routes.patch(
         "/api/flights/{flight_key}/stand", status_code=204, response_class=Response
