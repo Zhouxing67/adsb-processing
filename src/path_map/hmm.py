@@ -70,6 +70,8 @@ class DirectedNetworkRouter:
         self.max_turn_angle_deg = max_turn_angle_deg
         self.tangent_sample_m = tangent_sample_m
         self.lengths: dict[EdgeId, float] = {}
+        self._directed_edges: dict[EdgeId, DirectedEdge] = {}
+        self._single_edge_tuples: dict[EdgeId, tuple[DirectedEdge, ...]] = {}
         # Node作为终点的所有有向边，即指向该节点的边；
         self.incoming: dict[NodeId, list[EdgeId]] = {}
         # Node作为起点的所有有向边，即从该节点发出的边；
@@ -100,6 +102,9 @@ class DirectedNetworkRouter:
         self.graph = nx.DiGraph()
         self.graph.add_nodes_from(self.lengths)
         for edge in self.lengths:
+            directed = DirectedEdge(*edge)
+            self._directed_edges[edge] = directed
+            self._single_edge_tuples[edge] = (directed,)
             self.outgoing.setdefault(edge[0], []).append(edge)
             self.incoming.setdefault(edge[1], []).append(edge)
         for edge in self.lengths:
@@ -189,27 +194,39 @@ class DirectedNetworkRouter:
         return list(directed.values())
 
     @lru_cache(maxsize=100_000)
-    def _route(self, source: EdgeId, target: EdgeId) -> tuple[EdgeId, ...]:
+    def _route(
+        self, source: EdgeId, target: EdgeId
+    ) -> tuple[float, tuple[DirectedEdge, ...], tuple[DirectedEdge, ...]] | None:
         try:
-            return tuple(nx.shortest_path(self.graph, source, target, weight="length"))
+            route = nx.shortest_path(self.graph, source, target, weight="length")
         except nx.NetworkXNoPath:
-            return ()
+            return None
+        middle_distance = 0.0
+        for index in range(1, len(route) - 1):
+            middle_distance += self.lengths[route[index]]
+        full_edges = tuple(self._directed_edges[edge] for edge in route)
+        return middle_distance, full_edges, full_edges[1:]
+
+    def _transition_from_edge(
+        self, start: EdgeId, start_offset: float, target: Candidate
+    ) -> Transition | None:
+        end = target.edge_id
+        if start == end:
+            if target.offset < start_offset:
+                return None
+            distance = target.offset - start_offset
+            return Transition(distance, self._single_edge_tuples[start] if distance else ())
+
+        cached = self._route(start, end)
+        if cached is None:
+            return None
+        middle_distance, full_edges, tail_edges = cached
+        remaining = self.lengths[start] - start_offset
+        distance = remaining + middle_distance + target.offset
+        return Transition(distance, full_edges if remaining > 0 else tail_edges)
 
     def transition(self, source: Candidate, target: Candidate) -> Transition | None:
-        start, end = source.edge_id, target.edge_id
-        if start == end:
-            if target.offset < source.offset:
-                return None
-            distance = target.offset - source.offset
-            return Transition(distance, (DirectedEdge(*start),) if distance else ())
-
-        route = self._route(start, end)
-        if not route:
-            return None
-        remaining = self.lengths[start] - source.offset
-        distance = remaining + sum(self.lengths[edge] for edge in route[1:-1]) + target.offset
-        traversed = route if remaining > 0 else route[1:]
-        return Transition(distance, tuple(DirectedEdge(*edge) for edge in traversed))
+        return self._transition_from_edge(source.edge_id, source.offset, target)
 
     def reversed_transition(self, source: Candidate, target: Candidate) -> Transition | None:
         """Transition after reversing travel direction in place at ``source`` (pushback)."""
@@ -217,13 +234,7 @@ class DirectedNetworkRouter:
             return None
         u, v, key = source.edge_id
         length = self.lengths[source.edge_id]
-        flipped = replace(
-            source,
-            edge_id=(v, u, key),
-            offset=length - source.offset,
-            fraction=1.0 - source.fraction,
-        )
-        return self.transition(flipped, target)
+        return self._transition_from_edge((v, u, key), length - source.offset, target)
 
 
 def observation_log_score(distance: float, sigma: float) -> float:
@@ -327,13 +338,12 @@ def viterbi(
                     0,
                     reversal_penalty,
                 )
-                choices.append(
-                    max(
-                        (item for item in (stay, reverse_now) if item is not None),
-                        key=lambda item: item[0],
-                        default=None,
-                    )
-                )
+                if stay is None:
+                    choices.append(reverse_now)
+                elif reverse_now is None or stay[0] >= reverse_now[0]:
+                    choices.append(stay)
+                else:
+                    choices.append(reverse_now)
 
             for phase, best in enumerate(choices):
                 if best is None:
@@ -345,15 +355,15 @@ def viterbi(
         scores = next_scores
         backrefs.append(step_refs)
 
-    max_score, phase, current = max(
-        (
-            (score, phase, index)
-            for phase, phase_scores in enumerate(scores)
-            for index, score in enumerate(phase_scores)
-        ),
-        key=lambda item: item[0],
-        default=(-inf, 0, -1),
-    )
+    max_score = -inf
+    phase = 0
+    current = -1
+    for phase_index, phase_scores in enumerate(scores):
+        for index, score in enumerate(phase_scores):
+            if score > max_score:
+                max_score = score
+                phase = phase_index
+                current = index
     if max_score == -inf:
         raise nx.NetworkXNoPath("No reachable candidate sequence")
     # back_trace
