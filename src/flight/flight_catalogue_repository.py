@@ -6,7 +6,8 @@ from datetime import date
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
-from .duckdb_connection import DuckDBConnection
+from db import DuckDBConnection
+
 from .models import FlightSummary, utc_timestamp
 
 STAND_COLUMNS = {
@@ -142,3 +143,11 @@ class FlightCatalogueRepository:
                 parameters * len(queries),
             )
             return [dict(row) for row in rows.mappings()]
+
+    def whitelist_flights(self) -> set[tuple[str, str]]:
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                "SELECT movement, flight_id FROM main.flight_whitelist "
+                "WHERE movement IS NOT NULL AND flight_id IS NOT NULL"
+            ).fetchall()
+            return {(str(movement), str(flight_id)) for movement, flight_id in rows}

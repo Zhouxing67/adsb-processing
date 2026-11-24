@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Sequence
 
 from config import load_settings
-from flight.flight_repository import open_flight_database
+from db import DuckDBConnection
 
 from .importer import import_batch_run
+from .repository import RouteLibraryRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -41,15 +42,20 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         settings = load_settings()
-        database = open_flight_database(settings.database, read_only=False)
+        connection = DuckDBConnection(
+            settings.database.path,
+            read_only=False,
+            quack_uri=settings.database.quack_uri,
+        )
+        repository = RouteLibraryRepository(connection)
         if args.command == "import":
             try:
                 summary = import_batch_run(
                     args.run_dir,
-                    database.routes,
+                    repository,
                     replace_candidates=not args.append,
                 )
-            except database.database_error as error:
+            except connection.database_error as error:
                 parser.error(f"DuckDB: {error}")
             print(
                 f"Imported route library for graph {summary.graph_id}: "

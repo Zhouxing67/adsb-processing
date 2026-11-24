@@ -15,6 +15,7 @@ from shapely.geometry import LineString
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
+from db import apply_core_schema
 from flight.flight_repository import FlightDatabase
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,20 +40,13 @@ def _flight_database(path: Path) -> FlightDatabase:
     import duckdb
 
     with duckdb.connect(str(path)) as connection:
+        apply_core_schema(connection)
         connection.execute("""
-            CREATE TABLE adsb_dep (
-                flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
-                longitude DOUBLE, latitude DOUBLE, dep_stand_position VARCHAR,
-                org_runway VARCHAR
-            );
-            INSERT INTO adsb_dep VALUES
+            INSERT INTO main.adsb_dep (
+                flight_id, number, timestamp, longitude, latitude, dep_stand_position, org_runway
+            ) VALUES
                 ('OPENAPI', 'OPENAPI', '2024-01-01 00:00:00', 116.59, 40.07, 'A01', NULL),
                 ('OPENAPI', 'OPENAPI', '2024-01-01 00:01:00', 116.595, 40.07, 'A01', NULL);
-            CREATE TABLE adsb_arr (
-                flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
-                longitude DOUBLE, latitude DOUBLE, arr_stand_position VARCHAR,
-                dst_runway VARCHAR
-            );
         """)
     return FlightDatabase(path)
 

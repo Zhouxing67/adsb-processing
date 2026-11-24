@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from datetime import datetime
 from itertools import groupby
 from typing import Any, Iterator
 from zoneinfo import ZoneInfo
 
-from .duckdb_connection import DuckDBConnection
+from db import DuckDBConnection
+
 from .flight_catalogue_repository import BEIJING, STAND_COLUMNS
 from .models import Flight, utc_timestamp
 
@@ -30,6 +32,26 @@ class FlightObservationRepository:
                 parameters,
             )
             return Flight(cursor.mappings(), movement=movement, input_zone=ZoneInfo(BEIJING))
+
+    def flights_batch(self, movement: str, identifiers: Sequence[str]) -> dict[str, Flight]:
+        """Load multiple flights for one movement in a single query/connection."""
+        unique_ids = list(dict.fromkeys(identifiers))
+        if not unique_ids:
+            return {}
+        table, _ = STAND_COLUMNS[movement]
+        with self._database.connection() as connection:
+            (id_list,), parameters = self._database.bind(connection, unique_ids)
+            cursor = connection.execute(
+                f"SELECT * FROM main.{table} "
+                f"WHERE flight_id = ANY({id_list}::VARCHAR[]) "
+                "ORDER BY flight_id, timestamp, rowid",
+                parameters,
+            )
+            input_zone = ZoneInfo(BEIJING)
+            result: dict[str, Flight] = {}
+            for fid, rows in groupby(cursor.mappings(), key=lambda row: row["flight_id"]):
+                result[str(fid)] = Flight(rows, movement=movement, input_zone=input_zone)
+            return result
 
     def detail(
         self,

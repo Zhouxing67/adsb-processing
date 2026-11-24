@@ -163,14 +163,10 @@ def build_whitelist(thresholds: QualityThresholds) -> None:
     stand_distance, runway_distance = _build_graph_distance_helpers(ag)
     db = open_flight_database(settings.database, read_only=False)
 
-    with db.observations._database.connection(write=True) as conn:
+    with db.connection(write=True) as conn:
         prefix, source_tables = _resolve_prefix(conn)
         metrics_tbl = f"{prefix}.flight_quality_metrics"
         whitelist_tbl = f"{prefix}.flight_whitelist"
-
-        # Clean up temporary ref tables if created by an earlier failed run
-        conn.execute(f"DROP TABLE IF EXISTS {prefix}.graph_stand_refs")
-        conn.execute(f"DROP TABLE IF EXISTS {prefix}.graph_runway_refs")
 
         metrics_rows: list[tuple] = []
         whitelist_rows: list[tuple] = []
@@ -231,37 +227,10 @@ def build_whitelist(thresholds: QualityThresholds) -> None:
                 ):
                     whitelist_rows.append((movement, flight_id, stand_ref, runway_ref))
 
-        conn.execute(f"DROP TABLE IF EXISTS {metrics_tbl}")
-        conn.execute(
-            f"""
-            CREATE TABLE {metrics_tbl} (
-                movement VARCHAR,
-                flight_id VARCHAR,
-                stand_ref VARCHAR,
-                runway_ref VARCHAR,
-                stand_distinct INTEGER,
-                point_count INTEGER,
-                max_step_m DOUBLE,
-                avg_step_m DOUBLE,
-                total_track_m DOUBLE,
-                stand_dist_m DOUBLE,
-                runway_dist_m DOUBLE
-            )
-            """
-        )
+        conn.execute(f"DELETE FROM {metrics_tbl}")
         _insert_rows(conn, metrics_tbl, metrics_rows)
 
-        conn.execute(f"DROP TABLE IF EXISTS {whitelist_tbl}")
-        conn.execute(
-            f"""
-            CREATE TABLE {whitelist_tbl} (
-                movement VARCHAR,
-                flight_id VARCHAR,
-                stand_ref VARCHAR,
-                runway_ref VARCHAR
-            )
-            """
-        )
+        conn.execute(f"DELETE FROM {whitelist_tbl}")
         _insert_rows(conn, whitelist_tbl, whitelist_rows)
 
         summary = conn.execute(

@@ -107,7 +107,6 @@ def import_batch_run(
     if replace_candidates:
         deleted, inserted, existing = repository.replace_candidates(graph_identity, entries)
     else:
-        repository.ensure_schema()
         deleted = 0
         inserted, existing = repository.upsert_routes(entries)
     return ImportSummary(

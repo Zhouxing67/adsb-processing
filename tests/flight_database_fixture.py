@@ -7,6 +7,7 @@ from typing import Sequence
 
 import pandas as pd
 
+from db import apply_core_schema
 from flight import Flight
 from flight.flight_repository import FlightDatabase
 
@@ -37,6 +38,7 @@ def create_flight_database(
         "latitude": pd.Series(dtype="float64"),
     }
     with duckdb.connect(str(destination)) as connection:
+        apply_core_schema(connection)
         for movement, suffix, stand, runway in (
             ("arrival", "arr", "arr_stand_position", "dst_runway"),
             ("departure", "dep", "dep_stand_position", "org_runway"),
@@ -50,8 +52,9 @@ def create_flight_database(
                 if name.casefold() not in existing_columns:
                     frame[name] = pd.Series(dtype="string")
             connection.register("fixture_rows", frame)
+            connection.execute(f"DROP TABLE main.adsb_{suffix}")
             connection.execute(
-                f"CREATE TABLE adsb_{suffix} AS SELECT * FROM fixture_rows"
+                f"CREATE TABLE main.adsb_{suffix} AS SELECT * FROM fixture_rows"
             )
             connection.unregister("fixture_rows")
     return FlightDatabase(destination)

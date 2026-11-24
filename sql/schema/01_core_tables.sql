@@ -77,3 +77,54 @@ CREATE TABLE IF NOT EXISTS main.ingest_batches (
     dep_flights  BIGINT NOT NULL,
     note         VARCHAR
 );
+
+CREATE TABLE IF NOT EXISTS main.match_issues (
+    issue_id   VARCHAR PRIMARY KEY,
+    movement   VARCHAR NOT NULL,
+    flight_id  VARCHAR NOT NULL,
+    reason     VARCHAR,
+    graph_id   VARCHAR,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT current_timestamp,
+    UNIQUE (movement, flight_id)
+);
+
+CREATE TABLE IF NOT EXISTS main.route_library (
+    route_id              VARCHAR PRIMARY KEY,
+    graph_id              VARCHAR NOT NULL,
+    movement              VARCHAR NOT NULL,
+    stand_ref             VARCHAR NOT NULL,
+    runway_ref            VARCHAR,
+    runway_interface_node VARCHAR NOT NULL,
+    edges_json            VARCHAR NOT NULL,
+    edge_count            INTEGER NOT NULL,
+    total_length_m        DOUBLE  NOT NULL,
+    status                VARCHAR NOT NULL DEFAULT 'candidate',
+    source                VARCHAR NOT NULL DEFAULT 'matched',
+    note                  VARCHAR,
+    created_at            TIMESTAMPTZ NOT NULL,
+    updated_at            TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_route_library_od
+ON main.route_library (graph_id, movement, stand_ref, runway_ref);
+
+CREATE TABLE IF NOT EXISTS main.flight_quality_metrics (
+    movement       VARCHAR NOT NULL,
+    flight_id      VARCHAR NOT NULL,
+    stand_ref      VARCHAR,
+    runway_ref     VARCHAR,
+    stand_distinct INTEGER NOT NULL,
+    point_count    INTEGER NOT NULL,
+    max_step_m     DOUBLE NOT NULL,
+    avg_step_m     DOUBLE NOT NULL,
+    total_track_m  DOUBLE NOT NULL,
+    stand_dist_m   DOUBLE,
+    runway_dist_m  DOUBLE
+);
+
+CREATE TABLE IF NOT EXISTS main.flight_whitelist (
+    movement   VARCHAR NOT NULL,
+    flight_id  VARCHAR NOT NULL,
+    stand_ref  VARCHAR,
+    runway_ref VARCHAR
+);

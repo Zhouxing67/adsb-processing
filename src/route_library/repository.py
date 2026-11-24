@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from flight.duckdb_connection import DuckDBConnection
+from db import DuckDBConnection
 
 from .models import (
     RouteEntry,
@@ -36,30 +36,6 @@ ROUTE_LIBRARY_COLUMNS = (
     "updated_at",
 )
 
-CREATE_TABLE_SQL = f"""
-CREATE TABLE IF NOT EXISTS {ROUTE_LIBRARY_TABLE} (
-    route_id              VARCHAR PRIMARY KEY,
-    graph_id              VARCHAR NOT NULL,
-    movement              VARCHAR NOT NULL,
-    stand_ref             VARCHAR NOT NULL,
-    runway_ref            VARCHAR,
-    runway_interface_node VARCHAR NOT NULL,
-    edges_json            VARCHAR NOT NULL,
-    edge_count            INTEGER NOT NULL,
-    total_length_m        DOUBLE  NOT NULL,
-    status                VARCHAR NOT NULL DEFAULT 'candidate',
-    source                VARCHAR NOT NULL DEFAULT 'matched',
-    note                  VARCHAR,
-    created_at            TIMESTAMPTZ NOT NULL,
-    updated_at            TIMESTAMPTZ NOT NULL
-)
-"""
-
-CREATE_OD_INDEX_SQL = f"""
-CREATE INDEX IF NOT EXISTS idx_route_library_od
-ON {ROUTE_LIBRARY_TABLE} (graph_id, movement, stand_ref, runway_ref)
-"""
-
 
 def _row_to_entry(row: Mapping[str, Any]) -> RouteEntry:
     return RouteEntry(
@@ -81,16 +57,10 @@ def _row_to_entry(row: Mapping[str, Any]) -> RouteEntry:
 
 
 class RouteLibraryRepository:
-    """Own schema management, idempotent inserts, and OD-indexed lookups."""
+    """Own idempotent inserts, review updates, and OD-indexed lookups."""
 
     def __init__(self, database: DuckDBConnection) -> None:
         self._database = database
-
-    def ensure_schema(self) -> None:
-        """Create the route_library table and OD index if they do not exist."""
-        with self._database.connection(write=True) as connection:
-            connection.execute(CREATE_TABLE_SQL)
-            connection.execute(CREATE_OD_INDEX_SQL)
 
     def _insert_entries(
         self,
@@ -145,8 +115,6 @@ class RouteLibraryRepository:
         if not entries:
             return 0, 0
         with self._database.connection(write=True) as connection:
-            connection.execute(CREATE_TABLE_SQL)
-            connection.execute(CREATE_OD_INDEX_SQL)
             return self._insert_entries(connection, entries)
 
     def replace_candidates(
@@ -160,8 +128,6 @@ class RouteLibraryRepository:
         ``(deleted_candidates, inserted_count, existing_count)``.
         """
         with self._database.connection(write=True) as connection:
-            connection.execute(CREATE_TABLE_SQL)
-            connection.execute(CREATE_OD_INDEX_SQL)
             (graph_val, status_val), parameters = self._database.bind(
                 connection, graph_id, RouteStatus.CANDIDATE.value
             )

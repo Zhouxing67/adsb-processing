@@ -5,16 +5,18 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import Protocol
 
-from route_library.repository import RouteLibraryRepository
+from db import DuckDBConnection
 
-from .duckdb_connection import DuckDBConnection
 from .flight_catalogue_repository import STAND_COLUMNS, FlightCatalogueRepository
 from .flight_observation_repository import FlightObservationRepository
+from .match_issue_repository import MatchIssueRepository
 
-if TYPE_CHECKING:
-    from config import DatabaseSettings
+
+class DatabaseConfig(Protocol):
+    path: Path
+    quack_uri: str | None
 
 
 def database_flight_key(movement: str, flight_id: str) -> str:
@@ -135,7 +137,14 @@ class FlightDatabase:
         self.catalogue = FlightCatalogueRepository(self._database)
         self.observations = FlightObservationRepository(self._database)
         self.stands = StandRepository(self._database)
-        self.routes = RouteLibraryRepository(self._database)
+        self.issues = MatchIssueRepository(self._database)
+
+    @property
+    def duckdb(self) -> DuckDBConnection:
+        return self._database
+
+    def connection(self, *, write: bool = False):
+        return self._database.connection(write=write)
 
     @property
     def read_only(self) -> bool:
@@ -146,5 +155,5 @@ class FlightDatabase:
         return self._database.database_error
 
 
-def open_flight_database(settings: DatabaseSettings, *, read_only: bool = False) -> FlightDatabase:
+def open_flight_database(settings: DatabaseConfig, *, read_only: bool = False) -> FlightDatabase:
     return FlightDatabase(settings.path, read_only=read_only, quack_uri=settings.quack_uri)

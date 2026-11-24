@@ -1,11 +1,16 @@
 """DuckDB connections to a local file or a Quack server."""
 
+from __future__ import annotations
+
 import secrets
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Any
 
-STATE_DIR = Path(__file__).resolve().parents[2] / "outputs"
+REPO_ROOT = Path(__file__).resolve().parents[2]
+STATE_DIR = REPO_ROOT / "outputs"
 TOKEN_FILE = STATE_DIR / "quack.token"
+CORE_SCHEMA_SQL = REPO_ROOT / "sql" / "schema" / "01_core_tables.sql"
 
 
 def get_token() -> str:
@@ -26,16 +31,22 @@ def attach_sql(uri: str, token: str, read_only: bool = False) -> str:
     return f"ATTACH {sql_literal(uri)} AS adsb (TOKEN {sql_literal(token)}{access}); "
 
 
+def apply_core_schema(connection: Any, schema_path: Path = CORE_SCHEMA_SQL) -> None:
+    """Apply the canonical SQL DDL file to an open DuckDB connection."""
+    sql = schema_path.read_text(encoding="utf-8")
+    connection.execute(sql)
+
+
 class DuckDBSession:
-    def __init__(self, connection):
+    def __init__(self, connection: Any) -> None:
         self._connection = connection
 
-    def execute(self, sql, parameters=()):
+    def execute(self, sql: str, parameters: Any = ()) -> Any:
         return self._connection.exec_driver_sql(sql, parameters)
 
 
 class DuckDBConnection:
-    def __init__(self, database: str | Path, *, read_only: bool, quack_uri: str | None):
+    def __init__(self, database: str | Path, *, read_only: bool, quack_uri: str | None) -> None:
         try:
             import duckdb_engine  # noqa: F401
             from sqlalchemy import URL, create_engine, event
@@ -58,7 +69,7 @@ class DuckDBConnection:
         if quack_uri:
             event.listen(self._engine, "connect", self._initialize_quack)
 
-    def _initialize_quack(self, connection, _record):
+    def _initialize_quack(self, connection: Any, _record: Any) -> None:
         connection.execute("LOAD quack")
         connection.execute(attach_sql(self._quack_uri, get_token(), self.read_only))
         connection.execute("USE adsb.main")
@@ -69,7 +80,7 @@ class DuckDBConnection:
         with scope as connection:
             yield DuckDBSession(connection)
 
-    def bind(self, connection, *values):
+    def bind(self, connection: Any, *values: Any) -> tuple[tuple[str, ...], tuple[Any, ...]]:
         """Return SQL placeholders and parameters for this connection."""
         if not self._quack_uri:
             return ("?",) * len(values), values
