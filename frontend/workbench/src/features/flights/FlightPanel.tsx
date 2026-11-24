@@ -1,63 +1,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar as CalendarIcon, Crosshair, Filter, Flag, FlagOff, MapPinPlus, RotateCcw, Search, X } from 'lucide-react';
-import { format, isValid, parseISO } from 'date-fns';
-import type { DateRange } from 'react-day-picker';
+import { Crosshair, FileText, MapPinOff, MapPinPlus, RotateCw } from 'lucide-react';
 import { ApiError, api } from '@/api/client';
 import type { FlightCatalogueQuery } from '@/api/client';
-import type { FlightCatalogue, FlightDetail, FlightItem, MapFlightEntry, MatchStatus } from '@/api/types';
+import type { FlightCatalogue, FlightItem, MatchStatus } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog';
+import type { MapFlightInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Calendar } from '@/components/ui/calendar';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
-import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Separator } from '@/components/ui/separator';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import {
+  DataTableContainer,
+  IconActionButton,
+  PaginationFooter,
+  ViewHeader,
+} from '@/components/ui/workbench-shell';
 import { MATCH_STATUS_LABELS as statusLabels, MOVEMENT_LABELS as movementLabels } from '@/domain/palette';
+import { runWithConcurrency } from '@/lib/async';
 import { cn } from '@/lib/utils';
-import { RouteImportPopover } from './RouteImportPopover';
+import { FlightBulkBar } from './FlightBulkBar';
+import { FlightConfirmDialog } from './FlightConfirmDialog';
+import type { ConfirmDialogState } from './FlightConfirmDialog';
+import { FlightFilterBar } from './FlightFilterBar';
+import type { DraftFilters } from './FlightFilterBar';
 import { StandEditorCell } from './StandEditorCell';
-import { defaultFlightFilters, readStoredFlightState, writeStoredFlightState } from './storage';
+import { defaultFlightFilters, patchStoredFlightState, readStoredFlightState } from './storage';
 import type { FlightFilters } from './storage';
-import { useMatchPolling } from './useMatchPolling';
-
-const ALL_VALUE = '__all__';
-
-function toDate(value: string): Date | undefined {
-  if (!value) return undefined;
-  const parsed = parseISO(value);
-  return isValid(parsed) ? parsed : undefined;
-}
-
-function toIsoDate(value?: Date): string {
-  return value && isValid(value) ? format(value, 'yyyy-MM-dd') : '';
-}
-
-interface DraftFilters {
-  query: string;
-  movement: string;
-  status: string;
-  minimum: string;
-  maximum: string;
-  stands: string[];
-  start: string;
-  end: string;
-  validation: boolean;
-  whitelist: boolean;
-  issues: boolean;
-}
 
 function toDraft(value: FlightFilters): DraftFilters {
   return {
@@ -85,22 +55,34 @@ function paramsFor(filters: FlightFilters, page?: number): FlightCatalogueQuery 
   };
 }
 
-type ConfirmDialogState =
-  | { kind: 'match'; keys: string[]; force: boolean }
-  | { kind: 'bulk-map'; pending: string[] }
-  | null;
-
-interface FlightPanelProps {
-  matchRun: string;
-  setMatchRun(value: string): void;
-  submitMatches(keys: string[], force: boolean): Promise<void>;
-  onDetail(detail: FlightDetail): void;
-  active?: boolean;
-  splitView?: boolean;
+function statusBadgeVariant(status: string) {
+  if (status === 'success') return 'success' as const;
+  if (status === 'failed') return 'destructive' as const;
+  if (status === 'matching' || status === 'queued') return 'warning' as const;
+  return 'secondary' as const;
 }
 
-export function FlightPanel({ onDetail, active = true, splitView = false, matchRun, setMatchRun, submitMatches }: FlightPanelProps) {
+interface FlightPanelProps {
+  tracking: boolean;
+  progress: MatchStatus['progress'] | null;
+  submitMatches(keys: string[], force: boolean): Promise<void>;
+  onOpenDetail(flightKey: string, onError?: (message: string) => void): Promise<void>;
+  active?: boolean;
+  splitView?: boolean;
+  activeDetailKey?: string | null;
+}
+
+export function FlightPanel({
+  tracking,
+  progress,
+  submitMatches,
+  onOpenDetail,
+  active = true,
+  splitView = false,
+  activeDetailKey = null,
+}: FlightPanelProps) {
   const wb = useWorkbench();
+  const dispatch = wb.dispatch;
   const saved = useMemo(readStoredFlightState, []);
   const initialFilters = useMemo(
     () => ({ ...defaultFlightFilters, ...saved.filters, stands: saved.filters?.stands ?? [] }),
@@ -111,63 +93,18 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
   const [catalogue, setCatalogue] = useState<FlightCatalogue | null>(null);
   const [page, setPage] = useState(Number.isInteger(saved.page) && saved.page! > 0 ? saved.page! : 1);
   const [pageDraft, setPageDraft] = useState(String(page));
-  const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [datePickerOpen, setDatePickerOpen] = useState(false);
-  const [standSearch, setStandSearch] = useState('');
   const [loading, setLoading] = useState(false);
   const [addingProgress, setAddingProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [pageError, setPageError] = useState('');
-  const [progress, setProgress] = useState<MatchStatus['progress'] | null>(null);
-  const tracking = Boolean(matchRun);
   const [allResultsIntent, setAllResultsIntent] = useState<boolean | null>(null);
   const [filteredKeys, setFilteredKeys] = useState<{ catalogue: FlightCatalogue; keys: string[] } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [mutatingIssues, setMutatingIssues] = useState(false);
 
-  const archiveSelectedIssues = async () => {
-    const keys = [...wb.matchSelection];
-    if (!keys.length) return;
-    setMutatingIssues(true);
-    try {
-      const res = await api.addMatchIssues(keys);
-      dispatch({ type: 'set-issue-keys', keys: res.issue_flight_keys });
-      dispatch({
-        type: 'status',
-        value: `异常归档完成：新增 ${res.inserted} 条，已存在 ${res.existing} 条`,
-      });
-      await load();
-    } catch (failure) {
-      dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '加入异常归档失败' });
-    } finally {
-      setMutatingIssues(false);
-    }
-  };
-
-  const removeSelectedIssues = async () => {
-    const keys = [...wb.matchSelection];
-    if (!keys.length) return;
-    setMutatingIssues(true);
-    try {
-      const res = await api.removeMatchIssues(keys);
-      dispatch({ type: 'set-issue-keys', keys: res.issue_flight_keys });
-      dispatch({
-        type: 'status',
-        value: `已从异常归档移出 ${res.deleted} 条航班`,
-      });
-      await load();
-    } catch (failure) {
-      dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '移出异常归档失败' });
-    } finally {
-      setMutatingIssues(false);
-    }
-  };
-
-  const restored = useRef(false);
   const mounted = useRef(true);
   const addAbortRef = useRef<AbortController | null>(null);
   const toggleFilteredSeqRef = useRef(0);
-  const dispatch = wb.dispatch;
 
   useEffect(() => {
     mounted.current = true;
@@ -213,7 +150,7 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     const controller = new AbortController();
     void load(controller.signal);
     return () => controller.abort();
-  }, [load]);
+  }, [load, wb.flightCatalogueVersion]);
 
   useEffect(() => {
     toggleFilteredSeqRef.current += 1;
@@ -221,65 +158,33 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
   }, [filters]);
 
   useEffect(() => {
-    const displayed = [...wb.mapFlights].map(([key, entry]) => ({
-      key,
-      label: entry.label,
-      slot: entry.slot,
-      trajectoryVisible: entry.trajectoryVisible,
-      pathVisible: entry.pathVisible,
-    }));
-    writeStoredFlightState({ filters, page, matchSelection: [...wb.matchSelection], displayed });
-  }, [filters, page, wb.mapFlights, wb.matchSelection]);
+    patchStoredFlightState({ filters, page });
+  }, [filters, page]);
 
-  useEffect(() => {
-    if (restored.current) return;
-    restored.current = true;
-    void (async () => {
-      const valid = new Set((await api.filteredFlights({})).flight_keys);
-      dispatch({ type: 'prune-match-selection', keys: [...valid] });
-      const displayed = (saved.displayed ?? []).filter(item => valid.has(item.key));
-      const concurrency = 5;
-      let cursor = 0;
-      const restoredEntries: Array<{ key: string; value: MapFlightEntry }> = [];
-      const worker = async () => {
-        while (cursor < displayed.length && mounted.current) {
-          const item = displayed[cursor++];
-          try {
-            const geometry = await api.geometry(item.key);
-            if (!mounted.current) return;
-            restoredEntries.push({
-              key: item.key,
-              value: {
-                geometry,
-                label: item.label || geometry.flight_id,
-                slot: item.slot,
-                trajectoryVisible: item.trajectoryVisible,
-                pathVisible: item.pathVisible,
-              },
-            });
-          } catch {
-            /* stale saved selection */
-          }
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(concurrency, displayed.length) }, worker));
-      if (mounted.current && restoredEntries.length) {
-        dispatch({ type: 'map-flights-batch', entries: restoredEntries });
-      }
-      const status = await api.matchStatus();
-      if (!mounted.current) return;
-      setProgress(status.progress);
-      if (!status.progress.complete) setMatchRun(status.tasks.at(-1)?.task_id || 'restored');
-    })().catch(failure => setError(failure instanceof Error ? failure.message : '会话恢复失败'));
-  }, [saved.displayed, dispatch, setMatchRun]);
-
-  useMatchPolling({
-    matchRun,
-    onProgress: setProgress,
-    onComplete: load,
-    onStop: () => setMatchRun(''),
-    onError: setError,
-  });
+  const mutateIssues = async (mode: 'add' | 'remove') => {
+    const keys = [...wb.matchSelection];
+    if (!keys.length) return;
+    setMutatingIssues(true);
+    try {
+      const res = mode === 'add' ? await api.addMatchIssues(keys) : await api.removeMatchIssues(keys);
+      dispatch({ type: 'set-issue-keys', keys: res.issue_flight_keys });
+      dispatch({
+        type: 'status',
+        value:
+          mode === 'add'
+            ? `异常归档完成：新增 ${res.inserted} 条，已存在 ${res.existing} 条`
+            : `已从异常归档移出 ${res.deleted} 条航班`,
+      });
+      await load();
+    } catch (failure) {
+      dispatch({
+        type: 'error',
+        value: failure instanceof Error ? failure.message : mode === 'add' ? '加入异常归档失败' : '移出异常归档失败',
+      });
+    } finally {
+      setMutatingIssues(false);
+    }
+  };
 
   const validateAndApply = () => {
     const minText = draft.minimum.trim();
@@ -329,25 +234,23 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     setError('');
   };
 
-  const applyFilterPatch = (patch: Partial<FlightFilters>) => {
-    const next = { ...filters, ...patch };
-    setFilters(next);
-    const nextDraft = toDraft(next);
-    if (!nextDraft.start && !nextDraft.end && catalogue?.dataset_min_date && catalogue?.dataset_max_date) {
-      nextDraft.start = catalogue.dataset_min_date;
-      nextDraft.end = catalogue.dataset_max_date;
-    }
-    setDraft(nextDraft);
-    setPage(1);
-    setError('');
-  };
-
-  const nextSlot = () => {
-    const used = new Set([...wb.mapFlights.values()].map(entry => entry.slot));
-    let slot = 0;
-    while (used.has(slot)) slot += 1;
-    return slot;
-  };
+  const applyFilterPatch = useCallback(
+    (patch: Partial<FlightFilters>) => {
+      setFilters(current => {
+        const next = { ...current, ...patch };
+        const nextDraft = toDraft(next);
+        if (!nextDraft.start && !nextDraft.end && catalogue?.dataset_min_date && catalogue?.dataset_max_date) {
+          nextDraft.start = catalogue.dataset_min_date;
+          nextDraft.end = catalogue.dataset_max_date;
+        }
+        setDraft(nextDraft);
+        return next;
+      });
+      setPage(1);
+      setError('');
+    },
+    [catalogue?.dataset_min_date, catalogue?.dataset_max_date],
+  );
 
   const toggleMap = async (item: FlightItem) => {
     if (wb.mapFlights.has(item.flight_key)) {
@@ -355,38 +258,29 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     }
     try {
       const geometry = await api.geometry(item.flight_key);
+      if (!mounted.current) return;
       dispatch({
         type: 'map-flight',
         key: item.flight_key,
         value: {
           geometry,
           label: item.flight_id || geometry.flight_id,
-          slot: nextSlot(),
           trajectoryVisible: true,
           pathVisible: true,
         },
       });
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : '轨迹加载失败');
+      if (mounted.current) setError(failure instanceof Error ? failure.message : '轨迹加载失败');
     }
   };
 
   const runAddSelectedToMap = async (pending: string[]) => {
-    const used = new Set([...wb.mapFlights.values()].map(entry => entry.slot));
-    const slots = pending.map(() => {
-      let slot = 0;
-      while (used.has(slot)) slot += 1;
-      used.add(slot);
-      return slot;
-    });
     const controller = new AbortController();
     addAbortRef.current?.abort();
     addAbortRef.current = controller;
-    const concurrency = 5;
     const batchSize = 10;
-    let cursor = 0;
     let done = 0;
-    let buffer: Array<{ key: string; value: MapFlightEntry }> = [];
+    let buffer: Array<{ key: string; value: MapFlightInput }> = [];
     const flush = () => {
       if (!buffer.length || !mounted.current) return;
       const entries = buffer;
@@ -394,22 +288,16 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
       dispatch({ type: 'map-flights-batch', entries });
     };
     setAddingProgress({ done: 0, total: pending.length });
-    const worker = async () => {
-      while (cursor < pending.length && mounted.current && !controller.signal.aborted) {
-        const index = cursor++;
-        const key = pending[index];
+    await runWithConcurrency(
+      pending,
+      5,
+      async key => {
         try {
           const geometry = await api.geometry(key, controller.signal);
           if (!mounted.current || controller.signal.aborted) return;
           buffer.push({
             key,
-            value: {
-              geometry,
-              label: geometry.flight_id,
-              slot: slots[index],
-              trajectoryVisible: true,
-              pathVisible: true,
-            },
+            value: { geometry, label: geometry.flight_id, trajectoryVisible: true, pathVisible: true },
           });
           if (buffer.length >= batchSize) flush();
         } catch (failure) {
@@ -422,9 +310,9 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
             setAddingProgress({ done, total: pending.length });
           }
         }
-      }
-    };
-    await Promise.all(Array.from({ length: Math.min(concurrency, pending.length) }, worker));
+      },
+      controller.signal,
+    );
     flush();
     if (addAbortRef.current === controller) addAbortRef.current = null;
     if (mounted.current) {
@@ -441,15 +329,6 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
       return;
     }
     void runAddSelectedToMap(pending);
-  };
-
-  const showDetail = async (item: FlightItem) => {
-    try {
-      onDetail(await api.detail(item.flight_key));
-      dispatch({ type: 'view', value: 'observations' });
-    } catch (failure) {
-      setError(failure instanceof Error ? failure.message : '详情加载失败');
-    }
   };
 
   const saveStand = async (flightKey: string, standValue: string | null) => {
@@ -517,26 +396,31 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
     [catalogue, wb.matchSelection],
   );
 
-  const needsFilteredKeys = Boolean(catalogue && catalogue.total > catalogue.items.length
-    && allPageSelected && wb.matchSelection.size >= catalogue.total);
+  const needsFilteredKeys = Boolean(
+    catalogue && catalogue.total > catalogue.items.length && allPageSelected && wb.matchSelection.size >= catalogue.total,
+  );
   useEffect(() => {
     if (!needsFilteredKeys || !catalogue || filteredKeys?.catalogue === catalogue) return;
-    let active = true;
-    api.filteredFlights(paramsFor(filters)).then(result => {
-      if (active) setFilteredKeys({ catalogue, keys: result.flight_keys });
-    }).catch(failure => {
-      if (active) setError(failure instanceof Error ? failure.message : '无法读取筛选结果');
-    });
-    return () => { active = false; };
+    let live = true;
+    api
+      .filteredFlights(paramsFor(filters))
+      .then(result => {
+        if (live) setFilteredKeys({ catalogue, keys: result.flight_keys });
+      })
+      .catch(failure => {
+        if (live) setError(failure instanceof Error ? failure.message : '无法读取筛选结果');
+      });
+    return () => {
+      live = false;
+    };
   }, [needsFilteredKeys, filters, catalogue, filteredKeys]);
-  const allResultsSelected = allPageSelected && (catalogue?.total === catalogue?.items.length
-    || (needsFilteredKeys && filteredKeys?.catalogue === catalogue
-      && filteredKeys.keys.every(key => wb.matchSelection.has(key))));
 
-  const visibleStands = useMemo(
-    () => ['', ...(catalogue?.stand_options ?? [])].filter(stand => (stand || '空机位').toLowerCase().includes(standSearch.toLowerCase())),
-    [catalogue, standSearch],
-  );
+  const allResultsSelected =
+    allPageSelected &&
+    (catalogue?.total === catalogue?.items.length ||
+      (needsFilteredKeys &&
+        filteredKeys?.catalogue === catalogue &&
+        filteredKeys.keys.every(key => wb.matchSelection.has(key))));
 
   const datasetMax = catalogue?.dataset_max_points ?? null;
   const advancedActiveCount = useMemo(() => {
@@ -553,86 +437,28 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
 
   const activeChips = useMemo(() => {
     const chips: Array<{ id: string; label: string; clear: () => void }> = [];
-    if (filters.query) {
-      chips.push({ id: 'q', label: `搜索: ${filters.query}`, clear: () => applyFilterPatch({ query: '' }) });
-    }
+    if (filters.query) chips.push({ id: 'q', label: `搜索: ${filters.query}`, clear: () => applyFilterPatch({ query: '' }) });
     if (filters.movement) {
-      chips.push({
-        id: 'movement',
-        label: `进出港: ${movementLabels[filters.movement] ?? filters.movement}`,
-        clear: () => applyFilterPatch({ movement: '' }),
-      });
+      chips.push({ id: 'movement', label: `进出港: ${movementLabels[filters.movement] ?? filters.movement}`, clear: () => applyFilterPatch({ movement: '' }) });
     }
     if (filters.status) {
-      chips.push({
-        id: 'status',
-        label: `状态: ${statusLabels[filters.status] ?? filters.status}`,
-        clear: () => applyFilterPatch({ status: '' }),
-      });
+      chips.push({ id: 'status', label: `状态: ${statusLabels[filters.status] ?? filters.status}`, clear: () => applyFilterPatch({ status: '' }) });
     }
     if (filters.stands.length) {
-      const standText = filters.stands.map(s => s || '空机位').join(', ');
-      chips.push({
-        id: 'stands',
-        label: `机位: ${standText}`,
-        clear: () => applyFilterPatch({ stands: [] }),
-      });
+      chips.push({ id: 'stands', label: `机位: ${filters.stands.map(s => s || '空机位').join(', ')}`, clear: () => applyFilterPatch({ stands: [] }) });
     }
-    if (filters.minimum > 0) {
-      chips.push({
-        id: 'min',
-        label: `观测点 ≥ ${filters.minimum}`,
-        clear: () => applyFilterPatch({ minimum: 0 }),
-      });
-    }
+    if (filters.minimum > 0) chips.push({ id: 'min', label: `观测点 ≥ ${filters.minimum}`, clear: () => applyFilterPatch({ minimum: 0 }) });
     if (filters.maximum !== null && datasetMax !== null && filters.maximum < datasetMax) {
-      chips.push({
-        id: 'max',
-        label: `观测点 ≤ ${filters.maximum}`,
-        clear: () => applyFilterPatch({ maximum: datasetMax }),
-      });
+      chips.push({ id: 'max', label: `观测点 ≤ ${filters.maximum}`, clear: () => applyFilterPatch({ maximum: datasetMax }) });
     }
     if (filters.start || filters.end) {
-      chips.push({
-        id: 'date',
-        label: `日期: ${filters.start || '不限'} ~ ${filters.end || '不限'}`,
-        clear: () => applyFilterPatch({ start: '', end: '' }),
-      });
+      chips.push({ id: 'date', label: `日期: ${filters.start || '不限'} ~ ${filters.end || '不限'}`, clear: () => applyFilterPatch({ start: '', end: '' }) });
     }
-    if (filters.validation) {
-      chips.push({
-        id: 'validation',
-        label: '仅验证航班',
-        clear: () => applyFilterPatch({ validation: false }),
-      });
-    }
-    if (filters.whitelist) {
-      chips.push({
-        id: 'whitelist',
-        label: '仅白名单航班',
-        clear: () => applyFilterPatch({ whitelist: false }),
-      });
-    }
-    if (filters.issues) {
-      chips.push({
-        id: 'issues',
-        label: '仅异常归档航班',
-        clear: () => applyFilterPatch({ issues: false }),
-      });
-    }
+    if (filters.validation) chips.push({ id: 'validation', label: '仅验证航班', clear: () => applyFilterPatch({ validation: false }) });
+    if (filters.whitelist) chips.push({ id: 'whitelist', label: '仅白名单航班', clear: () => applyFilterPatch({ whitelist: false }) });
+    if (filters.issues) chips.push({ id: 'issues', label: '仅异常归档航班', clear: () => applyFilterPatch({ issues: false }) });
     return chips;
-  }, [filters, datasetMax]);
-
-  const hasProgressActivity = Boolean(
-    progress && progress.waiting + progress.running + progress.success + progress.failed > 0,
-  );
-
-  const statusBadgeVariant = (status: string) => {
-    if (status === 'success') return 'success' as const;
-    if (status === 'failed') return 'destructive' as const;
-    if (status === 'matching' || status === 'queued') return 'warning' as const;
-    return 'secondary' as const;
-  };
+  }, [filters, datasetMax, applyFilterPatch]);
 
   return (
     <section
@@ -642,444 +468,73 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
         !active && 'hidden',
       )}
     >
-      <header className="flex h-14 shrink-0 items-center justify-between border-b border-border px-4">
+      <ViewHeader>
         <h2 className="m-0 text-[15px] font-semibold text-foreground">航班</h2>
-        <span className="text-[11px] text-muted-foreground tabular-nums">
-          {catalogue ? `第 ${catalogue.page || 0} / ${catalogue.total_pages} 页（${catalogue.total} 条）` : ''}
-        </span>
-      </header>
+      </ViewHeader>
 
-      <div className="shrink-0 space-y-2 border-b border-border bg-muted/60 px-4 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <div className="relative min-w-[140px] max-w-[240px] flex-1">
-            <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              value={draft.query}
-              placeholder="航班号 / ID"
-              className="pl-8"
-              onChange={event => setDraft({ ...draft, query: event.target.value })}
-              onKeyDown={event => {
-                if (event.key === 'Enter') validateAndApply();
-              }}
-            />
-          </div>
+      <FlightFilterBar
+        draft={draft}
+        catalogue={catalogue}
+        issueCount={wb.issueKeys.size || catalogue?.issue_count || 0}
+        advancedActiveCount={advancedActiveCount}
+        activeChips={activeChips}
+        error={error}
+        onDraftChange={setDraft}
+        onValidateAndApply={validateAndApply}
+        onReset={resetFilters}
+      />
 
-          <Select
-            value={draft.movement || ALL_VALUE}
-            onValueChange={value => setDraft({ ...draft, movement: value === ALL_VALUE ? '' : value })}
-          >
-            <SelectTrigger aria-label="进出港" className="w-[104px] shrink-0">
-              <SelectValue placeholder="进出港" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>全部进出港</SelectItem>
-              <SelectItem value="arrival">进港</SelectItem>
-              <SelectItem value="departure">离港</SelectItem>
-              <SelectItem value="unknown">未知</SelectItem>
-            </SelectContent>
-          </Select>
+      <FlightBulkBar
+        selectedCount={wb.matchSelection.size}
+        allPageSelected={allPageSelected}
+        allResultsChecked={allResultsIntent ?? allResultsSelected}
+        canEditIssues={Boolean(catalogue?.can_edit_issues)}
+        mutatingIssues={mutatingIssues}
+        addingProgress={addingProgress}
+        tracking={tracking}
+        progress={progress}
+        onTogglePage={() =>
+          catalogue?.items.forEach(item =>
+            dispatch({ type: 'toggle-match', key: item.flight_key, checked: !allPageSelected }),
+          )
+        }
+        onToggleAllResults={next => {
+          setAllResultsIntent(next);
+          void toggleFiltered(next);
+        }}
+        onClearSelection={() => dispatch({ type: 'set-match-selection', keys: [] })}
+        onArchiveIssues={() => void mutateIssues('add')}
+        onRemoveIssues={() => void mutateIssues('remove')}
+        onAddSelectedToMap={addSelectedToMap}
+        onCancelAddToMap={() => addAbortRef.current?.abort()}
+        onRequestSubmit={() => requestSubmit()}
+      />
 
-          <Select
-            value={draft.status || ALL_VALUE}
-            onValueChange={value => setDraft({ ...draft, status: value === ALL_VALUE ? '' : value })}
-          >
-            <SelectTrigger aria-label="匹配状态" className="w-[104px] shrink-0">
-              <SelectValue placeholder="匹配状态" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ALL_VALUE}>全部状态</SelectItem>
-              {Object.entries(statusLabels).map(([key, label]) => (
-                <SelectItem key={key} value={key}>
-                  {label}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-
-          <Popover open={advancedOpen} onOpenChange={setAdvancedOpen}>
-            <PopoverTrigger asChild>
-              <Button variant="outline" size="default" className="shrink-0">
-                <Filter className="h-3.5 w-3.5 text-muted-foreground" />
-                更多筛选
-                {advancedActiveCount > 0 && (
-                  <Badge variant="default" className="ml-0.5 rounded-full px-1.5 py-0 text-[10px]">
-                    {advancedActiveCount}
-                  </Badge>
-                )}
-              </Button>
-            </PopoverTrigger>
-            <PopoverContent align="start" className="w-80 space-y-3 p-3.5">
-              <div className="space-y-1.5">
-                <span className="text-xs font-medium text-foreground">机位筛选</span>
-                <Input
-                  type="search"
-                  aria-label="搜索机位"
-                  placeholder="搜索机位…"
-                  value={standSearch}
-                  onChange={event => setStandSearch(event.target.value)}
-                />
-                <ScrollArea className="h-32 rounded-md border border-border bg-muted/30 p-1">
-                  <div className="space-y-0.5">
-                    {visibleStands.map(stand => {
-                      const checked = draft.stands.includes(stand);
-                      const label = stand || '空机位';
-                      return (
-                        <label
-                          key={stand || '__empty'}
-                          className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-foreground hover:bg-accent"
-                        >
-                          <Checkbox
-                            aria-label={label}
-                            checked={checked}
-                            onCheckedChange={next => {
-                              const isChecked = next === true;
-                              setDraft(value => ({
-                                ...value,
-                                stands: isChecked
-                                  ? [...value.stands, stand]
-                                  : value.stands.filter(item => item !== stand),
-                              }));
-                            }}
-                          />
-                          <span>{label}</span>
-                        </label>
-                      );
-                    })}
-                  </div>
-                </ScrollArea>
-              </div>
-
-              <Separator />
-
-              <div className="grid grid-cols-2 gap-2">
-                <label className="space-y-1">
-                  <span className="text-xs text-muted-foreground">最小观测点数</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    aria-label="最小观测点数"
-                    placeholder="最小值"
-                    value={draft.minimum}
-                    onChange={event => setDraft({ ...draft, minimum: event.target.value })}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && validateAndApply()) setAdvancedOpen(false);
-                    }}
-                  />
-                </label>
-                <label className="space-y-1">
-                  <span className="text-xs text-muted-foreground">最大观测点数</span>
-                  <Input
-                    type="number"
-                    min={0}
-                    aria-label="最大观测点数"
-                    placeholder="最大值"
-                    value={draft.maximum}
-                    onChange={event => setDraft({ ...draft, maximum: event.target.value })}
-                    onKeyDown={event => {
-                      if (event.key === 'Enter' && validateAndApply()) setAdvancedOpen(false);
-                    }}
-                  />
-                </label>
-              </div>
-
-              <div className="space-y-1">
-                <span className="text-xs text-muted-foreground">日期范围</span>
-                <Popover open={datePickerOpen} onOpenChange={setDatePickerOpen}>
-                  <PopoverTrigger asChild>
-                    <Button
-                      variant="outline"
-                      size="default"
-                      aria-label="日期范围"
-                      className="w-full justify-start gap-2 font-normal text-foreground tabular-nums"
-                    >
-                      <CalendarIcon className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="truncate">
-                        {draft.start && draft.end
-                          ? `${draft.start} 至 ${draft.end}`
-                          : draft.start
-                            ? `${draft.start} 起`
-                            : draft.end
-                              ? `至 ${draft.end}`
-                              : '选择日期范围'}
-                      </span>
-                    </Button>
-                  </PopoverTrigger>
-                  <PopoverContent align="start" className="w-auto p-0">
-                    <Calendar
-                      mode="range"
-                      defaultMonth={toDate(draft.start) ?? toDate(catalogue?.dataset_min_date ?? '')}
-                      selected={{ from: toDate(draft.start), to: toDate(draft.end) } as DateRange}
-                      onSelect={range => {
-                        setDraft(current => ({
-                          ...current,
-                          start: toIsoDate(range?.from),
-                          end: toIsoDate(range?.to ?? range?.from),
-                        }));
-                      }}
-                    />
-                    <div className="flex items-center justify-between border-t border-border px-3 py-2">
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => {
-                          setDraft(current => ({
-                            ...current,
-                            start: catalogue?.dataset_min_date ?? '',
-                            end: catalogue?.dataset_max_date ?? '',
-                          }));
-                        }}
-                      >
-                        恢复全部日期
-                      </Button>
-                      <Button variant="default" size="xs" onClick={() => setDatePickerOpen(false)}>
-                        确定
-                      </Button>
-                    </div>
-                  </PopoverContent>
-                </Popover>
-              </div>
-
-              {catalogue?.supports_validation_filter && (
-                <label className="flex cursor-pointer items-center gap-2 text-xs text-foreground">
-                  <Checkbox
-                    checked={draft.validation}
-                    onCheckedChange={checked => setDraft({ ...draft, validation: checked === true })}
-                  />
-                  <span>验证航班（≥30 点）</span>
-                </label>
-              )}
-
-              {catalogue && (
-                <label
-                  className={cn(
-                    'flex items-center gap-2 text-xs',
-                    catalogue.supports_whitelist_filter
-                      ? 'cursor-pointer text-foreground'
-                      : 'cursor-not-allowed text-muted-foreground',
-                  )}
-                  title={
-                    catalogue.supports_whitelist_filter
-                      ? '仅显示通过轨迹质量白名单筛选的航班'
-                      : '当前数据库尚无 flight_whitelist 表，请先运行 scripts/build_flight_whitelist.py'
-                  }
-                >
-                  <Checkbox
-                    disabled={!catalogue.supports_whitelist_filter}
-                    checked={draft.whitelist && catalogue.supports_whitelist_filter}
-                    onCheckedChange={checked => setDraft({ ...draft, whitelist: checked === true })}
-                  />
-                  <span>
-                    白名单航班
-                    {!catalogue.supports_whitelist_filter && '（未生成）'}
-                  </span>
-                </label>
-              )}
-
-              {catalogue && (
-                <label
-                  className="flex cursor-pointer items-center gap-2 text-xs text-foreground"
-                  title="仅显示已归档到 match_issues 表的异常航班"
-                >
-                  <Checkbox
-                    checked={draft.issues}
-                    onCheckedChange={checked => setDraft({ ...draft, issues: checked === true })}
-                  />
-                  <span>异常归档航班（{wb.issueKeys.size || catalogue.issue_count}）</span>
-                </label>
-              )}
-
-              <div className="flex items-center justify-end gap-1.5 border-t border-border pt-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => {
-                    resetFilters();
-                    setAdvancedOpen(false);
-                  }}
-                >
-                  重置
-                </Button>
-                <Button
-                  variant="default"
-                  size="sm"
-                  onClick={() => {
-                    if (validateAndApply()) setAdvancedOpen(false);
-                  }}
-                >
-                  应用
-                </Button>
-              </div>
-            </PopoverContent>
-          </Popover>
-
-          <Button variant="default" size="default" className="shrink-0" onClick={validateAndApply}>
-            过滤
-          </Button>
-        </div>
-
-        {activeChips.length > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5">
-            {activeChips.map(chip => (
-              <Badge key={chip.id} variant="outline" className="gap-1 bg-background pr-1 text-[11px] font-normal">
-                <span>{chip.label}</span>
-                <button
-                  type="button"
-                  aria-label={`移除筛选 ${chip.label}`}
-                  className="inline-flex h-3.5 w-3.5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground cursor-pointer"
-                  onClick={chip.clear}
-                >
-                  <X className="h-2.5 w-2.5" />
-                </button>
-              </Badge>
-            ))}
-            <Button variant="ghost" size="xs" className="h-5 px-1.5 text-[11px] text-muted-foreground" onClick={resetFilters}>
-              <RotateCcw className="h-3 w-3" />
-              重置
-            </Button>
-          </div>
-        )}
-
-        {error && (
-          <p className="m-0 text-xs font-medium text-destructive" role="alert">
-            {error}
-          </p>
-        )}
-      </div>
-
-      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-1.5">
-        <div className="flex flex-wrap items-center gap-3">
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-foreground">
-            <Checkbox
-              aria-label="选择本页航班"
-              checked={allPageSelected}
-              onCheckedChange={() =>
-                catalogue?.items.forEach(item =>
-                  dispatch({ type: 'toggle-match', key: item.flight_key, checked: !allPageSelected }),
-                )
-              }
-            />
-            <span>选择本页</span>
-          </label>
-          <label className="inline-flex cursor-pointer items-center gap-1.5 text-xs text-foreground">
-            <Checkbox
-              aria-label="选择全部结果"
-              checked={allResultsIntent ?? allResultsSelected}
-              onCheckedChange={checked => {
-                const next = checked === true;
-                setAllResultsIntent(next);
-                void toggleFiltered(next);
-              }}
-            />
-            <span>选择全部结果</span>
-          </label>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            aria-label="清空所选航班"
-            title="清空所选航班"
-            disabled={!wb.matchSelection.size}
-            onClick={() => dispatch({ type: 'set-match-selection', keys: [] })}
-          >
-            <X className="h-3.5 w-3.5" />
-          </Button>
-          <span className="text-[11px] text-muted-foreground tabular-nums">已选 {wb.matchSelection.size} 条</span>
-        </div>
-
-        <div className="flex flex-wrap items-center gap-1.5">
-          {catalogue?.can_edit_issues && (
-            <>
-              <Button
-                variant="outline"
-                size="sm"
-                disabled={!wb.matchSelection.size || mutatingIssues}
-                title="将当前已勾选航班归档到 match_issues 表"
-                onClick={() => void archiveSelectedIssues()}
-              >
-                <Flag className="h-3.5 w-3.5" />
-                加入异常
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                disabled={!wb.matchSelection.size || mutatingIssues}
-                title="将当前已勾选航班从 match_issues 表移出（不删除航班本身）"
-                onClick={() => void removeSelectedIssues()}
-              >
-                <FlagOff className="h-3.5 w-3.5" />
-                移出异常
-              </Button>
-            </>
-          )}
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!wb.matchSelection.size || Boolean(addingProgress)}
-            onClick={addSelectedToMap}
-          >
-            <MapPinPlus className="h-3.5 w-3.5" />
-            {addingProgress ? `加入中 (${addingProgress.done}/${addingProgress.total})` : '所选加入地图'}
-          </Button>
-          {addingProgress && (
-            <Button variant="ghost" size="sm" onClick={() => addAbortRef.current?.abort()}>
-              取消加入
-            </Button>
-          )}
-          <Button
-            variant="default"
-            size="sm"
-            disabled={!wb.matchSelection.size || tracking}
-            onClick={() => requestSubmit()}
-          >
-            {tracking ? '匹配中…' : '匹配所选航班'}
-          </Button>
-          <RouteImportPopover disabled={tracking} />
-        </div>
-      </div>
-
-      {hasProgressActivity && progress && (
-        <section className="flex shrink-0 items-center gap-4 border-b border-border bg-muted/70 px-4 py-1.5 text-[11px]">
-          <strong className="font-medium text-foreground">批量任务</strong>
-          <dl className="m-0 flex items-center gap-4 tabular-nums">
-            <div className="flex items-baseline gap-1">
-              <dt className="text-muted-foreground">等待</dt>
-              <dd className="m-0 font-semibold text-foreground">{progress.waiting}</dd>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <dt className="text-muted-foreground">运行</dt>
-              <dd className="m-0 font-semibold text-amber-700">{progress.running}</dd>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <dt className="text-muted-foreground">成功</dt>
-              <dd className="m-0 font-semibold text-emerald-700">{progress.success}</dd>
-            </div>
-            <div className="flex items-baseline gap-1">
-              <dt className="text-muted-foreground">失败</dt>
-              <dd className="m-0 font-semibold text-destructive">{progress.failed}</dd>
-            </div>
-          </dl>
-        </section>
-      )}
-
-      <div className="relative min-h-0 flex-1 overflow-auto">
-        <table className="sheet-table w-full min-w-[740px] border-collapse text-left">
-          <thead>
-            <tr className="border-b border-border bg-muted text-xs font-medium text-muted-foreground">
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">选择</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">航班</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">进出港</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">机位</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">状态</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">观测点</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">开始时间</th>
-              <th className="sticky top-0 z-[2] bg-muted px-3 py-2 whitespace-nowrap">操作</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border/70">
+      <DataTableContainer loading={loading}>
+        <Table className="min-w-[740px]">
+          <TableHeader>
+            <TableRow className="bg-muted hover:bg-muted">
+              <TableHead>选择</TableHead>
+              <TableHead>航班</TableHead>
+              <TableHead>进出港</TableHead>
+              <TableHead>机位</TableHead>
+              <TableHead>状态</TableHead>
+              <TableHead>观测点</TableHead>
+              <TableHead>开始时间</TableHead>
+              <TableHead>操作</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
             {catalogue?.items.map(item => {
               const onMap = wb.mapFlights.has(item.flight_key);
+              const isInspecting = activeDetailKey === item.flight_key;
               return (
-                <tr key={item.flight_key} className="transition-colors hover:bg-muted/40">
-                  <td className="px-3 py-2 align-middle">
+                <TableRow
+                  key={item.flight_key}
+                  data-state={onMap ? 'selected' : undefined}
+                  className={cn('group', isInspecting && 'bg-primary/5 shadow-[inset_3px_0_0_0_var(--primary)]')}
+                >
+                  <TableCell>
                     <Checkbox
                       aria-label={`选择航班 ${item.flight_id}`}
                       checked={wb.matchSelection.has(item.flight_key)}
@@ -1087,33 +542,35 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
                         dispatch({ type: 'toggle-match', key: item.flight_key, checked: checked === true })
                       }
                     />
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-1.5">
-                      <strong className="font-medium text-foreground">{item.flight_number || item.flight_id}</strong>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <strong className="cursor-default font-medium text-foreground">
+                            {item.flight_number || item.flight_id}
+                          </strong>
+                        </TooltipTrigger>
+                        <TooltipContent side="right" className="font-mono text-[11px]">
+                          {item.flight_id}
+                        </TooltipContent>
+                      </Tooltip>
                       {(wb.issueKeys.has(item.flight_key) || item.is_issue) && (
                         <Badge
                           variant="destructive"
-                          className="h-4 px-1.5 text-[10px]"
+                          className="h-4 px-1.5 text-[11px]"
                           title={item.issue_reason || '已归档到 match_issues'}
                         >
                           异常
                         </Badge>
                       )}
                     </div>
-                    <small className="block text-[11px] text-muted-foreground">{item.flight_id}</small>
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap text-foreground">
-                    {movementLabels[item.movement_type] ?? '未知'}
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap">
-                    <StandEditorCell
-                      item={item}
-                      standOptions={catalogue?.stand_options ?? []}
-                      onSave={saveStand}
-                    />
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap">
+                  </TableCell>
+                  <TableCell className="text-foreground">{movementLabels[item.movement_type] ?? '未知'}</TableCell>
+                  <TableCell>
+                    <StandEditorCell item={item} standOptions={catalogue?.stand_options ?? []} onSave={saveStand} />
+                  </TableCell>
+                  <TableCell>
                     <Badge variant={statusBadgeVariant(item.match.status)}>
                       {statusLabels[item.match.status] || item.match.status}
                     </Badge>
@@ -1122,108 +579,98 @@ export function FlightPanel({ onDetail, active = true, splitView = false, matchR
                         {item.match.failure_type}
                       </small>
                     )}
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap tabular-nums text-foreground">
-                    {item.point_count}
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap tabular-nums text-muted-foreground">
+                  </TableCell>
+                  <TableCell className="tabular-nums text-foreground">{item.point_count}</TableCell>
+                  <TableCell className="tabular-nums text-muted-foreground">
                     {item.start_time.replace('T', ' ').slice(0, 19)}
-                  </td>
-                  <td className="px-3 py-2 align-middle whitespace-nowrap">
+                  </TableCell>
+                  <TableCell>
                     <div className="flex items-center gap-0.5">
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => void showDetail(item)}>
-                        详情
-                      </Button>
-                      <Button variant="ghost" size="sm" className="h-7 px-2" onClick={() => void toggleMap(item)}>
-                        {onMap ? '移出地图' : '加入地图'}
-                      </Button>
+                      <IconActionButton
+                        reveal="table"
+                        label="详情"
+                        tooltip="查看观测记录"
+                        onClick={() => void onOpenDetail(item.flight_key, setError)}
+                      >
+                        <FileText className="h-3.5 w-3.5" />
+                      </IconActionButton>
+                      <IconActionButton
+                        variant={onMap ? 'secondary' : 'ghost'}
+                        reveal={!onMap ? 'table' : undefined}
+                        label={onMap ? '移出地图' : '加入地图'}
+                        onClick={() => void toggleMap(item)}
+                      >
+                        {onMap ? <MapPinOff className="h-3.5 w-3.5" /> : <MapPinPlus className="h-3.5 w-3.5" />}
+                      </IconActionButton>
                       {onMap && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="flight-locate-action h-7 px-2"
+                        <IconActionButton
+                          reveal="table"
+                          className="flight-locate-action"
+                          label="定位"
+                          tooltip="在地图中定位"
                           onClick={() => dispatch({ type: 'focus-flight', key: item.flight_key, preserveView: splitView })}
                         >
                           <Crosshair className="h-3.5 w-3.5" />
-                          定位
-                        </Button>
+                        </IconActionButton>
                       )}
                       {item.match.status === 'failed' && (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="h-7 px-2 text-destructive hover:text-destructive"
+                        <IconActionButton
+                          className="text-destructive hover:text-destructive"
+                          label="重试"
+                          tooltip="重新匹配"
                           onClick={() => requestSubmit([item.flight_key], true)}
                         >
-                          重试
-                        </Button>
+                          <RotateCw className="h-3.5 w-3.5" />
+                        </IconActionButton>
                       )}
                     </div>
-                  </td>
-                </tr>
+                  </TableCell>
+                </TableRow>
               );
             })}
-          </tbody>
-        </table>
-        {loading && (
-          <div className="absolute inset-0 z-10 grid cursor-wait place-items-center bg-white/40">
-            <span className="h-6 w-6 animate-spin rounded-full border-[3px] border-zinc-200 border-t-zinc-900" />
-          </div>
-        )}
-      </div>
+          </TableBody>
+        </Table>
+      </DataTableContainer>
 
-      <footer className="flex shrink-0 flex-wrap items-center justify-center gap-2 border-t border-border bg-background px-4 py-2">
-        <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>
-          上一页
-        </Button>
+      <PaginationFooter>
         <span className="text-xs text-muted-foreground tabular-nums">
-          {catalogue ? `${catalogue.page || 0}/${catalogue.total_pages}` : '—'}
+          {catalogue ? `共 ${catalogue.total} 条 · 第 ${catalogue.page || 0} / ${catalogue.total_pages} 页` : '—'}
         </span>
-        <Input
-          type="number"
-          min={1}
-          value={pageDraft}
-          aria-label="跳转页码"
-          className="h-7 w-16 text-center text-xs tabular-nums"
-          onChange={event => setPageDraft(event.target.value)}
-          onKeyDown={event => {
-            if (event.key === 'Enter') jump();
-          }}
-        />
-        <Button variant="outline" size="sm" onClick={jump}>
-          跳转
-        </Button>
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={!catalogue || page >= catalogue.total_pages}
-          onClick={() => setPage(value => value + 1)}
-        >
-          下一页
-        </Button>
-        {pageError && <p className="m-0 text-xs text-destructive">{pageError}</p>}
-      </footer>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>
+            上一页
+          </Button>
+          <Input
+            type="number"
+            min={1}
+            value={pageDraft}
+            aria-label="跳转页码"
+            className="h-7 w-16 text-center text-xs tabular-nums"
+            onChange={event => setPageDraft(event.target.value)}
+            onKeyDown={event => {
+              if (event.key === 'Enter') jump();
+            }}
+          />
+          <Button variant="outline" size="sm" onClick={jump}>
+            跳转
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!catalogue || page >= catalogue.total_pages}
+            onClick={() => setPage(value => value + 1)}
+          >
+            下一页
+          </Button>
+          {pageError && <p className="m-0 text-xs text-destructive">{pageError}</p>}
+        </div>
+      </PaginationFooter>
 
-      <AlertDialog open={confirmDialog !== null} onOpenChange={open => { if (!open) setConfirmDialog(null); }}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              {confirmDialog?.kind === 'bulk-map' ? '批量加入地图确认' : '提交航班匹配'}
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              {confirmDialog?.kind === 'bulk-map'
-                ? `即将向地图加入 ${confirmDialog.pending.length} 架航班，数量较大可能影响地图流畅度，是否继续？`
-                : `确认提交 ${confirmDialog?.keys.length ?? 0} 条航班进行路径匹配？`}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={() => void executeConfirm()}>
-              {confirmDialog?.kind === 'bulk-map' ? '继续加入' : '确认提交'}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+      <FlightConfirmDialog
+        dialog={confirmDialog}
+        onClose={() => setConfirmDialog(null)}
+        onConfirm={() => void executeConfirm()}
+      />
     </section>
   );
 }

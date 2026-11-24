@@ -21,28 +21,37 @@
   --color-card: var(--card);
   --color-card-foreground: var(--card-foreground);
   --color-brand-red: var(--brand-red);
+  --color-accent-amber: var(--accent-amber);
+  --color-accent-teal: var(--accent-teal);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
 }
 
 :root {
+  --radius: 0.5rem;
   --background: #ffffff;
-  --foreground: #18181b;
+  --foreground: #0f172a;
   --card: #ffffff;
-  --card-foreground: #18181b;
+  --card-foreground: #0f172a;
   --popover: #ffffff;
-  --popover-foreground: #18181b;
-  --primary: #18181b;
+  --popover-foreground: #0f172a;
+  --primary: #1d5fa7;
   --primary-foreground: #ffffff;
-  --secondary: #f4f4f5;
-  --secondary-foreground: #18181b;
+  --secondary: #f1f5f9;
+  --secondary-foreground: #0f172a;
   --muted: #f8fafc;
   --muted-foreground: #64748b;
-  --accent: #f4f4f5;
-  --accent-foreground: #18181b;
+  --accent: #f1f5f9;
+  --accent-foreground: #0f172a;
+  --accent-amber: #c86428;
+  --accent-teal: #147a6e;
   --destructive: #dc2626;
   --destructive-foreground: #ffffff;
   --border: #e2e8f0;
   --input: #e2e8f0;
-  --ring: #18181b;
+  --ring: #1d5fa7;
   --canvas: #eef2f6;
   --brand-red: #dc2626;
 
@@ -126,13 +135,14 @@
 .business-node-icon {
   display: grid !important;
   place-items: center;
-  border: 2px solid #ffffff;
+  border: 1.5px solid #ffffff;
   border-radius: 4px;
   color: #ffffff;
   background: #d78816;
-  font-size: 11px;
-  font-weight: 800;
-  box-shadow: 0 1px 4px rgba(23, 38, 56, 0.27);
+  font-size: 10px;
+  font-weight: 700;
+  opacity: 0.9;
+  box-shadow: 0 1px 3px rgba(23, 38, 56, 0.24);
 }
 
 /* Dragging protection during rail/split resize */

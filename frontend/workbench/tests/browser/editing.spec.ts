@@ -57,3 +57,17 @@ test('editing auto-opens collapsed right rail on selection and guards empty sear
   await expect(page.locator('.details')).toBeVisible();
   await expect(page.locator('.property-form').getByRole('combobox')).toBeVisible();
 });
+
+test('direct map click selects both edges and top-pane nodes without pointer interception', async ({ page }) => {
+  await page.goto('/');
+  await page.getByRole('checkbox', { name: /图节点/ }).click();
+  const nodePath = page.locator('.leaflet-nodes-pane svg path.leaflet-interactive').first();
+  await expect(nodePath).toBeVisible();
+  await nodePath.click();
+  await expect(page.locator('.details')).toBeVisible();
+  await page.getByRole('button', { name: '关闭要素详情' }).click();
+  const mapBox = await page.locator('#map').boundingBox();
+  expect(mapBox).not.toBeNull();
+  await page.mouse.click(mapBox!.x + mapBox!.width / 2, mapBox!.y + mapBox!.height / 2);
+  await expect(page.locator('.details')).toContainText('1—2 · 0');
+});

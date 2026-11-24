@@ -59,7 +59,8 @@ export const api = {
   catalogue: (params: FlightCatalogueQuery, signal?: AbortSignal) => request<FlightCatalogue>(`/api/flights?${queryString(params)}`, { signal }),
   filteredFlights: (params: FlightSelectionQuery) => request<FlightApi['schemas']['FlightSelectionResponse']>(`/api/flight-selection?${queryString(params)}`),
   geometry: (key: string, signal?: AbortSignal) => request<FlightGeometry>(`/api/flights/${encodeURIComponent(key)}/geometry`, { signal }),
-  detail: (key: string, page = 1, allFields = false) => request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}&observation_page_size=100&all_fields=${allFields}`),
+  detail: (key: string, page = 1, allFields = false, signal?: AbortSignal) =>
+    request<FlightDetail>(`/api/flights/${encodeURIComponent(key)}?observation_page=${page}&observation_page_size=100&all_fields=${allFields}`, { signal }),
   updateStand: (key: string, stand_position: string | null) => request<void>(`/api/flights/${encodeURIComponent(key)}/stand`, json('PATCH', { stand_position })),
   recommendStands: (key: string, signal: AbortSignal) =>
     request<FlightApi['schemas']['StandRecommendations']>(`/api/flights/${encodeURIComponent(key)}/stand-recommendations`, { signal }),
@@ -71,7 +72,8 @@ export const api = {
   routes: (params: RouteListQuery, signal?: AbortSignal) => request<RouteList>(`/api/routes?${queryString(params)}`, { signal }),
   routeGeometry: (routeId: string, signal?: AbortSignal) => request<RouteGeometry>(`/api/routes/${encodeURIComponent(routeId)}/geometry`, { signal }),
   updateRouteReview: (routeId: string, body: RouteReviewUpdate) => request<RouteItem>(`/api/routes/${encodeURIComponent(routeId)}`, json('PATCH', body)),
-  importMatchedRoutes: (body: ImportRoutesRequest = { replace_candidates: false }) => request<ImportRoutesSummary>('/api/routes/import-matches', json('POST', body)),
+  importMatchedRoutes: (body: ImportRoutesRequest = { replace_candidates: false }, signal?: AbortSignal) =>
+    request<ImportRoutesSummary>('/api/routes/import-matches', { ...json('POST', body), signal }),
   matchIssues: (signal?: AbortSignal) => request<MatchIssueList>('/api/match-issues', { signal }),
   addMatchIssues: (flight_keys: string[], reason?: string | null) => request<MatchIssueMutation>('/api/match-issues', json('POST', { flight_keys, reason: reason ?? null })),
   removeMatchIssues: (flight_keys: string[]) => request<MatchIssueMutation>('/api/match-issues/remove', json('POST', { flight_keys })),

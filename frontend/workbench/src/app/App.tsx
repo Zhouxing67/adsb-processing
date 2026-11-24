@@ -1,18 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import type { FlightDetail } from '@/api/types';
-import { api } from '@/api/client';
+import type { MapFlightEntry, MapRouteEntry } from '@/api/types';
+import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { aerowayTypes } from '@/domain/properties';
-import type { Aeroway } from '@/domain/properties';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
+import { useFlightSession } from '@/features/flights/useFlightSession';
 import { RouteLibraryPanel } from '@/features/routes/RouteLibraryPanel';
+import { EditorToolOverlay } from '@/features/graph-editor/EditorToolOverlay';
 import { FeatureDetails } from '@/features/graph-editor/FeatureDetails';
 import { GraphDialog } from '@/features/graph-editor/GraphDialog';
 import { Inspector } from '@/features/graph-editor/Inspector';
@@ -30,20 +29,19 @@ import { ErrorBoundary } from './ErrorBoundary';
 import { WorkbenchProvider, useWorkbench } from './WorkbenchContext';
 import type { MainView } from './WorkbenchContext';
 
+const EMPTY_FLIGHTS: Map<string, MapFlightEntry> = new Map();
+const EMPTY_ROUTES: Map<string, MapRouteEntry> = new Map();
+
 function Workspace() {
   const wb = useWorkbench();
   const state = wb.state;
-  const [detail, setDetail] = useState<FlightDetail | null>(null);
-  const [matchRun, setMatchRun] = useState('');
-  const submitMatches = async (keys: string[], force: boolean) => {
-    const result = await api.submitMatches(keys, force);
-    setMatchRun(result.task_id);
-  };
+  const flightMode = Boolean(state?.flight_mode);
+  const session = useFlightSession(flightMode);
   const [splitValidation, setSplitValidation] = useState(false);
   const [graphEditing, setGraphEditing] = useState(false);
-  const [splitView, setSplitView] = useState(false);
-  const [mapRight, setMapRight] = useState(false);
-  const [mapSize, setMapSize] = useState(() => {
+  const [splitViews, setSplitViews] = useState<[MainView, MainView] | null>(null);
+  const splitView = splitViews !== null;
+  const [splitLeftSize, setSplitLeftSize] = useState(() => {
     try {
       const value = Number(localStorage.getItem('airport-workbench.map-split-width'));
       return value >= 25 && value <= 75 ? value : 50;
@@ -56,41 +54,82 @@ function Workspace() {
   const [splitterResizing, setSplitterResizing] = useState(false);
   const [leftOpen, setLeftOpen] = useState(true);
   const [rightOpen, setRightOpen] = useState(true);
-  const [layers, setLayers] = useState<LayerSettings>({ base: 'none', edges: true, parking: true, nodes: false });
+  const [layers, setLayers] = useState<LayerSettings>({
+    base: 'none',
+    edges: true,
+    parking: true,
+    nodes: false,
+    spreadRoutes: true,
+  });
+  const [flightMapOverlayRoutes, setFlightMapOverlayRoutes] = useState(false);
+  const [routeMapOverlayFlights, setRouteMapOverlayFlights] = useState(false);
 
   const workspaceRef = useRef<HTMLElement>(null);
-  const rightOpenRef = useRef(rightOpen);
-  rightOpenRef.current = rightOpen;
-  const rightBeforeFullTableRef = useRef<boolean | null>(null);
-
   const editor = useGraphEditorMachine();
+
+  const hasRightContext = Boolean(editor.dialog || (wb.selected && wb.detailsOpen));
+  const dualMap = flightMode && wb.mapFlights.size > 0 && wb.mapRoutes.size > 0;
+  const showRightRail = flightMode ? rightOpen && hasRightContext : rightOpen;
+
+  const visibleMapFlights = useMemo(() => {
+    if (!wb.showMapFlights) return EMPTY_FLIGHTS;
+    if (wb.isolatedFlightKey && wb.mapFlights.has(wb.isolatedFlightKey)) {
+      return new Map([[wb.isolatedFlightKey, wb.mapFlights.get(wb.isolatedFlightKey)!]]);
+    }
+    return wb.mapFlights;
+  }, [wb.showMapFlights, wb.isolatedFlightKey, wb.mapFlights]);
+
+  const visibleMapRoutes = useMemo(() => {
+    if (!wb.showMapRoutes) return EMPTY_ROUTES;
+    if (wb.isolatedRouteId && wb.mapRoutes.has(wb.isolatedRouteId)) {
+      return new Map([[wb.isolatedRouteId, wb.mapRoutes.get(wb.isolatedRouteId)!]]);
+    }
+    return wb.mapRoutes;
+  }, [wb.showMapRoutes, wb.isolatedRouteId, wb.mapRoutes]);
+
+  const selectedFeatures = useMemo(
+    () => (wb.selected ? [...editor.selection, wb.selected] : editor.selection),
+    [editor.selection, wb.selected],
+  );
+
+  useEffect(() => {
+    if (!dualMap) {
+      if (wb.view === 'route-map') wb.dispatch({ type: 'view', value: 'map' });
+      setSplitViews(current => (current && current.includes('route-map') ? null : current));
+    }
+  }, [dualMap, wb.view, wb.dispatch]);
 
   useEffect(() => {
     const frame = window.requestAnimationFrame(() => window.dispatchEvent(new Event('resize')));
     return () => window.cancelAnimationFrame(frame);
-  }, [splitView, leftOpen, rightOpen, state?.flight_mode]);
+  }, [splitView, leftOpen, showRightRail, flightMode]);
 
   useEffect(() => {
-    if (editor.dialog || (wb.selected && wb.detailsOpen)) setRightOpen(true);
-  }, [editor.dialog, wb.selected, wb.detailsOpen]);
-
-  const isFullTableView =
-    Boolean(state?.flight_mode) &&
-    !splitView &&
-    (wb.view === 'flights' || wb.view === 'observations' || wb.view === 'routes');
-
-  useEffect(() => {
-    if (isFullTableView) {
-      if (rightBeforeFullTableRef.current === null) {
-        rightBeforeFullTableRef.current = rightOpenRef.current;
-        setRightOpen(false);
-      }
-    } else if (rightBeforeFullTableRef.current !== null) {
-      const restore = rightBeforeFullTableRef.current;
-      rightBeforeFullTableRef.current = null;
-      setRightOpen(restore);
+    if (hasRightContext) {
+      setRightOpen(true);
+    } else if (flightMode) {
+      setRightOpen(false);
     }
-  }, [isFullTableView]);
+  }, [hasRightContext, flightMode]);
+
+  useEffect(() => {
+    if (!flightMode || wb.error || !wb.status || wb.status === '航班工作台') return;
+    const timer = window.setTimeout(() => {
+      wb.dispatch({ type: 'status', value: '航班工作台' });
+    }, 3500);
+    return () => window.clearTimeout(timer);
+  }, [flightMode, wb.error, wb.status, wb.dispatch]);
+
+  useEffect(() => {
+    if (!splitViews) return;
+    if (!splitViews.includes(wb.view)) {
+      setSplitViews(current => {
+        if (!current || current.includes(wb.view)) return current;
+        const [left, right] = current;
+        return left === 'map' ? [left, wb.view] : right === 'map' ? [wb.view, right] : [left, wb.view];
+      });
+    }
+  }, [wb.view, splitViews]);
 
   useEffect(() => {
     if (!splitView) setSplitterResizing(false);
@@ -113,7 +152,7 @@ function Workspace() {
     const observer = new ResizeObserver(entries => {
       const width = entries[0]?.contentRect.width ?? 0;
       if (width > 0 && width < 640) {
-        setSplitView(false);
+        setSplitViews(null);
         setSplitterResizing(false);
       }
     });
@@ -159,18 +198,6 @@ function Workspace() {
     }
   };
 
-  const visibleMapFlights = !wb.showMapFlights
-    ? new Map()
-    : wb.isolatedFlightKey && wb.mapFlights.has(wb.isolatedFlightKey)
-      ? new Map([[wb.isolatedFlightKey, wb.mapFlights.get(wb.isolatedFlightKey)!]])
-      : wb.mapFlights;
-
-  const visibleMapRoutes = !wb.showMapRoutes
-    ? new Map()
-    : wb.isolatedRouteId && wb.mapRoutes.has(wb.isolatedRouteId)
-      ? new Map([[wb.isolatedRouteId, wb.mapRoutes.get(wb.isolatedRouteId)!]])
-      : wb.mapRoutes;
-
   const startDrag = (event: React.DragEvent, view: MainView) => {
     setDraggedView(view);
     event.dataTransfer.effectAllowed = 'move';
@@ -182,9 +209,19 @@ function Workspace() {
     event.preventDefault();
     const rect = event.currentTarget.getBoundingClientRect();
     const side = event.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
-    setSplitView(true);
-    setMapRight(draggedView === 'map' ? side === 'right' : side === 'left');
-    wb.dispatch({ type: 'view', value: draggedView === 'map' ? (wb.view === 'map' ? 'flights' : wb.view) : draggedView });
+    setSplitViews(current => {
+      if (current) {
+        const [left, right] = current;
+        if (side === 'left') {
+          return draggedView === right ? [right, left] : [draggedView, right];
+        }
+        return draggedView === left ? [right, left] : [left, draggedView];
+      }
+      const other: MainView =
+        wb.view !== draggedView ? wb.view : draggedView === 'map' ? 'flights' : 'map';
+      return side === 'left' ? [draggedView, other] : [other, draggedView];
+    });
+    wb.dispatch({ type: 'view', value: draggedView });
     setDraggedView(null);
     setDropSide(null);
   };
@@ -192,17 +229,16 @@ function Workspace() {
   const returnToSingleView = (event: React.DragEvent) => {
     if (!draggedView) return;
     event.preventDefault();
-    setSplitView(false);
-    setMapRight(false);
+    setSplitViews(null);
     wb.dispatch({ type: 'view', value: draggedView });
     setDraggedView(null);
     setDropSide(null);
   };
 
   const handleSplitLayoutChange = (layout: Record<string, number>) => {
-    const next = layout.map;
+    const next = layout.left;
     if (typeof next === 'number' && Number.isFinite(next) && next >= 25 && next <= 75) {
-      setMapSize(next);
+      setSplitLeftSize(next);
       try {
         localStorage.setItem('airport-workbench.map-split-width', String(next));
       } catch {
@@ -211,148 +247,121 @@ function Workspace() {
     }
   };
 
-  const mapContent = (
-    <section
-      className={cn(
-        'main-view map-view absolute inset-0 h-full w-full',
-        wb.view !== 'map' && !splitView && 'hidden',
-      )}
-    >
-      <MapView
-        state={state}
-        flights={visibleMapFlights}
-        routes={visibleMapRoutes}
-        splitValidation={splitValidation}
-        baseLayer={layers.base}
-        showEdges={layers.edges}
-        showParking={layers.parking}
-        showNodes={layers.nodes || wb.topologyOpen || graphEditing}
-        selected={[...editor.selection, ...(wb.selected ? [wb.selected] : [])]}
-        drawPoints={editor.drawPoints}
-        previewGeometry={editor.previewGeometry}
-        focusFlightRequest={wb.mapFocusRequest}
-        focusRouteRequest={wb.routeFocusRequest}
-        focusFeatureRequest={wb.focusFeatureRequest}
-        fitMapVersion={wb.fitMapVersion}
-        fitRoutesVersion={wb.fitRoutesVersion}
-        observationLocation={wb.observationLocation}
-        onFeature={editor.handleFeature}
-        onMapClick={editor.handleMapClick}
-        onFlightClick={key => {
-          setLeftOpen(true);
-          wb.dispatch({ type: 'highlight-flight', key });
-        }}
-        onRouteClick={routeId => {
-          setLeftOpen(true);
-          wb.dispatch({ type: 'highlight-route', routeId });
-        }}
-      />
-      <MapToolbar editing={graphEditing} onEditing={toggleEditing} />
-      <div className="pointer-events-none absolute left-[172px] top-3.5 z-[700] flex max-w-[calc(100%-190px)] flex-wrap items-start gap-2">
-        {wb.tool === 'merge' && (
-          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-background/95 p-1.5 shadow-sm">
-            <Button variant="outline" size="sm" onClick={() => void editor.openMergeCandidates()}>
-              重复节点候选
-            </Button>
-            <Button
-              variant="default"
-              size="sm"
-              disabled={editor.mergeNodeIds.length < 2}
-              onClick={() => void editor.previewMerge(editor.mergeNodeIds, state.revision)}
-            >
-              检查并合并（{editor.mergeNodeIds.length}）
-            </Button>
-            <Button variant="ghost" size="sm" onClick={editor.reset}>
-              清空选择
-            </Button>
-          </div>
+  const renderMapView = (kind: 'flight' | 'route', active: boolean) => {
+    const isRouteMap = kind === 'route';
+    const mapFlightsForKind = !dualMap
+      ? visibleMapFlights
+      : isRouteMap
+        ? routeMapOverlayFlights
+          ? visibleMapFlights
+          : EMPTY_FLIGHTS
+        : visibleMapFlights;
+    const mapRoutesForKind = !dualMap
+      ? visibleMapRoutes
+      : isRouteMap
+        ? visibleMapRoutes
+        : flightMapOverlayRoutes
+          ? visibleMapRoutes
+          : EMPTY_ROUTES;
+    return (
+      <section
+        className={cn(
+          'main-view absolute inset-0 h-full w-full',
+          isRouteMap ? 'route-map-view' : 'map-view',
+          !active && 'hidden',
         )}
-        {wb.tool === 'draw' && (
-          <div className="pointer-events-auto flex flex-wrap items-center gap-1.5 rounded-lg border border-border bg-background/95 p-1.5 shadow-sm">
-            <Select
-              value={editor.drawAeroway}
-              onValueChange={value => editor.setDrawAeroway(value as Aeroway)}
-            >
-              <SelectTrigger aria-label="绘制边类型" className="h-7 w-[140px] text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {aerowayTypes.map(item => (
-                  <SelectItem key={item} value={item}>
-                    {item}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Input
-              aria-label="绘制边编号"
-              placeholder="编号 ref（可选）"
-              className="h-7 w-32 text-xs"
-              value={editor.drawRef}
-              onChange={event => editor.setDrawRef(event.target.value)}
-            />
-            {editor.selection.length > 0 && (
-              <Button variant="outline" size="sm" onClick={editor.undoDrawPoint}>
-                撤销形状点
-              </Button>
-            )}
-            {editor.selection.length > 0 && (
-              <Button variant="ghost" size="sm" onClick={editor.reset}>
-                取消
-              </Button>
-            )}
-          </div>
-        )}
-      </div>
-    </section>
-  );
-
-  const secondaryContent = (
-    <>
-      {state.flight_mode && (
-        <FlightPanel
-          matchRun={matchRun}
-          setMatchRun={setMatchRun}
-          submitMatches={submitMatches}
-          active={wb.view === 'flights' || (splitView && wb.view === 'map')}
-          splitView={splitView}
-          onDetail={setDetail}
+      >
+        <MapView
+          mapId={isRouteMap ? 'route-map' : 'map'}
+          state={state}
+          flights={mapFlightsForKind}
+          routes={mapRoutesForKind}
+          splitValidation={splitValidation}
+          baseLayer={layers.base}
+          showEdges={layers.edges}
+          showParking={layers.parking}
+          showNodes={layers.nodes || wb.topologyOpen || graphEditing}
+          spreadRoutes={layers.spreadRoutes}
+          selected={selectedFeatures}
+          drawPoints={editor.drawPoints}
+          previewGeometry={editor.previewGeometry}
+          focusFlightRequest={!dualMap || !isRouteMap || routeMapOverlayFlights ? wb.mapFocusRequest : null}
+          focusRouteRequest={!dualMap || isRouteMap || flightMapOverlayRoutes ? wb.routeFocusRequest : null}
+          focusFeatureRequest={wb.focusFeatureRequest}
+          fitMapVersion={!dualMap || !isRouteMap || routeMapOverlayFlights ? wb.fitMapVersion : 0}
+          fitRoutesVersion={!dualMap || isRouteMap || flightMapOverlayRoutes ? wb.fitRoutesVersion : 0}
+          observationLocation={!isRouteMap ? wb.observationLocation : null}
+          onFeature={editor.handleFeature}
+          onMapClick={editor.handleMapClick}
+          onFlightClick={key => {
+            setLeftOpen(true);
+            wb.dispatch({ type: 'highlight-flight', key });
+          }}
+          onRouteClick={routeId => {
+            setLeftOpen(true);
+            wb.dispatch({ type: 'highlight-route', routeId });
+          }}
         />
-      )}
-      {state.flight_mode && (
-        <RouteLibraryPanel active={wb.view === 'routes'} splitView={splitView} />
-      )}
-      {state.flight_mode && wb.view === 'observations' && <ObservationView detail={detail} splitView={splitView} />}
-    </>
-  );
+        <MapToolbar
+          editing={graphEditing}
+          onEditing={toggleEditing}
+          dualMap={dualMap}
+          mapKind={kind}
+          overlayOther={isRouteMap ? routeMapOverlayFlights : flightMapOverlayRoutes}
+          onToggleOverlayOther={() =>
+            isRouteMap
+              ? setRouteMapOverlayFlights(value => !value)
+              : setFlightMapOverlayRoutes(value => !value)
+          }
+          spreadRoutes={layers.spreadRoutes}
+          onToggleSpreadRoutes={() => setLayers(current => ({ ...current, spreadRoutes: !current.spreadRoutes }))}
+        />
+        <EditorToolOverlay
+          revision={state.revision}
+          mergeNodeIds={editor.mergeNodeIds}
+          selectionCount={editor.selection.length}
+          drawAeroway={editor.drawAeroway}
+          drawRef={editor.drawRef}
+          onDrawAerowayChange={editor.setDrawAeroway}
+          onDrawRefChange={editor.setDrawRef}
+          onOpenMergeCandidates={editor.openMergeCandidates}
+          onPreviewMerge={editor.previewMerge}
+          onUndoDrawPoint={editor.undoDrawPoint}
+          onReset={editor.reset}
+        />
+      </section>
+    );
+  };
 
-  const mapPanel = (
-    <ResizablePanel id="map" defaultSize={`${mapSize}%`} minSize="25%" maxSize="75%" className="workspace-pane relative h-full">
-      {mapContent}
-    </ResizablePanel>
-  );
-
-  const secondaryPanel = (
-    <ResizablePanel
-      id="secondary"
-      defaultSize={`${100 - mapSize}%`}
-      minSize="25%"
-      maxSize="75%"
-      className="workspace-pane relative h-full"
-    >
-      {secondaryContent}
-    </ResizablePanel>
-  );
+  const renderSplitPane = (view: MainView) => {
+    if (view === 'map') return renderMapView('flight', true);
+    if (view === 'route-map') return renderMapView('route', true);
+    if (view === 'flights') {
+      return (
+        <FlightPanel
+          tracking={session.tracking}
+          progress={session.progress}
+          submitMatches={session.submitMatches}
+          active
+          splitView
+          activeDetailKey={session.detail?.summary.flight_key ?? null}
+          onOpenDetail={session.openFlightDetail}
+        />
+      );
+    }
+    if (view === 'routes') return <RouteLibraryPanel active splitView />;
+    return <ObservationView detail={session.detail} splitView />;
+  };
 
   const showFlightBanner = state.flight_mode && (Boolean(wb.error) || (Boolean(wb.status) && wb.status !== '航班工作台'));
   const tabTitle = splitView ? '拖回标签栏退出分屏，或拖到内容区切换左右分屏' : '拖到内容区左侧或右侧分屏';
 
   const gridTemplateColumns =
-    shellLeft && rightOpen
+    shellLeft && showRightRail
       ? 'var(--left-sidebar-width, var(--sidebar-width)) minmax(0, 1fr) var(--right-sidebar-width, var(--sidebar-width))'
       : shellLeft
         ? 'var(--left-sidebar-width, var(--sidebar-width)) minmax(0, 1fr)'
-        : rightOpen
+        : showRightRail
           ? 'minmax(0, 1fr) var(--right-sidebar-width, var(--sidebar-width))'
           : 'minmax(0, 1fr)';
 
@@ -365,7 +374,8 @@ function Workspace() {
       <Header
         editing={graphEditing}
         leftOpen={leftOpen}
-        rightOpen={rightOpen}
+        rightOpen={showRightRail}
+        showRightToggle={!flightMode || hasRightContext}
         onLeft={() => setLeftOpen(value => !value)}
         onRight={() => setRightOpen(value => !value)}
       />
@@ -375,7 +385,16 @@ function Workspace() {
       ) : editorLeft ? (
         <ToolDock />
       ) : (
-        flightLeft && <MapSelectionRail splitView={splitView} onDetail={setDetail} submitMatches={submitMatches} />
+        flightLeft && (
+          <MapSelectionRail
+            state={state}
+            layers={layers}
+            onLayers={setLayers}
+            splitView={splitView}
+            onOpenDetail={session.openFlightDetail}
+            submitMatches={session.submitMatches}
+          />
+        )
       )}
 
       <main
@@ -396,32 +415,60 @@ function Workspace() {
         }}
         onDrop={dropIntoWorkspace}
       >
-        {state.flight_mode && splitView ? (
+        {state.flight_mode && splitViews ? (
           <ResizablePanelGroup
-            key={mapRight ? 'map-right' : 'map-left'}
             orientation="horizontal"
             onLayoutChanged={handleSplitLayoutChange}
             className="h-full w-full"
           >
-            {mapRight ? secondaryPanel : mapPanel}
+            <ResizablePanel
+              id="left"
+              defaultSize={`${splitLeftSize}%`}
+              minSize="25%"
+              maxSize="75%"
+              className="workspace-pane relative h-full"
+            >
+              {renderSplitPane(splitViews[0])}
+            </ResizablePanel>
             <ResizableHandle
               withHandle
               data-testid="workspace-split-handle"
               onPointerDown={() => setSplitterResizing(true)}
             />
-            {mapRight ? mapPanel : secondaryPanel}
+            <ResizablePanel
+              id="right"
+              defaultSize={`${100 - splitLeftSize}%`}
+              minSize="25%"
+              maxSize="75%"
+              className="workspace-pane relative h-full"
+            >
+              {renderSplitPane(splitViews[1])}
+            </ResizablePanel>
           </ResizablePanelGroup>
         ) : (
           <>
-            {mapContent}
-            {secondaryContent}
+            {renderMapView('flight', wb.view === 'map')}
+            {dualMap && renderMapView('route', wb.view === 'route-map')}
+            {state.flight_mode && (
+              <FlightPanel
+                tracking={session.tracking}
+                progress={session.progress}
+                submitMatches={session.submitMatches}
+                active={wb.view === 'flights'}
+                splitView={false}
+                activeDetailKey={session.detail?.summary.flight_key ?? null}
+                onOpenDetail={session.openFlightDetail}
+              />
+            )}
+            {state.flight_mode && <RouteLibraryPanel active={wb.view === 'routes'} splitView={false} />}
+            {state.flight_mode && wb.view === 'observations' && <ObservationView detail={session.detail} splitView={false} />}
           </>
         )}
 
         {dropSide && (
           <div
             className={cn(
-              'pointer-events-none absolute bottom-3 top-3 z-[1400] grid w-[calc(50%-18px)] place-items-center rounded-lg border-2 border-dashed border-zinc-500 bg-zinc-900/10 text-sm font-semibold text-zinc-800 backdrop-blur-[1px]',
+              'pointer-events-none absolute bottom-3 top-3 z-[1400] grid w-[calc(50%-18px)] place-items-center rounded-lg border-2 border-dashed border-muted-foreground bg-primary/10 text-sm font-semibold text-foreground backdrop-blur-[1px]',
               dropSide === 'left' ? 'left-3' : 'right-3',
             )}
           >
@@ -430,13 +477,9 @@ function Workspace() {
         )}
 
         {showFlightBanner && (
-          <div
-            className={cn(
-              'flight-status-toast absolute bottom-3.5 right-3.5 z-[1350] flex max-w-[min(420px,calc(100%-28px))] items-center gap-2 rounded-lg border px-3 py-1.5 text-xs shadow-md',
-              wb.error
-                ? 'border-red-200 bg-red-50 text-red-700'
-                : 'border-border bg-background/95 text-foreground',
-            )}
+          <Alert
+            variant={wb.error ? 'destructive' : 'default'}
+            className="flight-status-toast absolute left-1/2 top-3 z-[1350] w-auto max-w-[min(420px,calc(100%-28px))] -translate-x-1/2 bg-background/95 py-1.5 shadow-md backdrop-blur-xs"
             role={wb.error ? 'alert' : 'status'}
           >
             <span>{wb.error || wb.status}</span>
@@ -449,13 +492,13 @@ function Workspace() {
             >
               <X className="h-3.5 w-3.5" />
             </Button>
-          </div>
+          </Alert>
         )}
       </main>
 
-      <SearchPanel />
+      <SearchPanel leftOffset={shellLeft} />
 
-      {rightOpen && (
+      {showRightRail && (
         <div
           className={cn(
             'right-rail row-start-2 min-h-0 min-w-0 overflow-hidden border-l border-border bg-background',
@@ -468,14 +511,14 @@ function Workspace() {
       )}
 
       {shellLeft && <RailResizer side="left" />}
-      {rightOpen && <RailResizer side="right" />}
+      {showRightRail && <RailResizer side="right" />}
 
       {state.flight_mode ? (
         <nav
           className={cn(
             'main-tabs relative z-[1300] row-start-3 flex h-[34px] items-stretch justify-center border-t border-border bg-muted transition-colors',
             shellLeft ? 'col-start-2' : 'col-start-1',
-            splitView && draggedView && 'tabs-drop-target bg-zinc-200/80 ring-2 ring-inset ring-zinc-500',
+            splitView && draggedView && 'tabs-drop-target bg-accent ring-2 ring-inset ring-muted-foreground',
           )}
           aria-label="航班主视图"
           onDragOver={event => {
@@ -485,10 +528,11 @@ function Workspace() {
         >
           {(
             [
-              { key: 'map' as const, label: '地图', visible: true },
+              { key: 'map' as const, label: dualMap ? '航班地图' : '地图', visible: true },
               { key: 'flights' as const, label: '航班', visible: true },
+              { key: 'route-map' as const, label: '路径地图', visible: dualMap },
               { key: 'routes' as const, label: '路径库', visible: true },
-              { key: 'observations' as const, label: '观测记录', visible: Boolean(detail) },
+              { key: 'observations' as const, label: '观测记录', visible: Boolean(session.detail) },
             ] as const
           )
             .filter(tab => tab.visible)
@@ -499,9 +543,9 @@ function Workspace() {
                 draggable
                 title={tabTitle}
                 className={cn(
-                  'min-w-[88px] cursor-grab border-x border-border/70 px-5 text-xs font-medium transition-colors active:cursor-grabbing',
-                  wb.view === tab.key
-                    ? 'bg-background text-foreground shadow-[inset_0_-2px_0_0_#18181b]'
+                  'min-w-[88px] cursor-grab border-x border-border/70 px-5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/30 active:cursor-grabbing',
+                  (splitViews ? splitViews.includes(tab.key) : wb.view === tab.key)
+                    ? 'bg-background text-foreground shadow-[inset_0_-2px_0_0_var(--primary)]'
                     : 'bg-transparent text-muted-foreground hover:bg-background/60 hover:text-foreground',
                 )}
                 onDragStart={event => startDrag(event, tab.key)}
@@ -520,7 +564,7 @@ function Workspace() {
           className={cn(
             'status relative z-[1150] col-span-full row-start-3 flex h-[34px] items-center justify-center gap-2 border-t border-border px-3.5 text-[11px]',
             wb.error
-              ? 'bg-red-50 text-red-700'
+              ? 'bg-red-50 text-destructive'
               : 'pointer-events-none bg-background text-muted-foreground',
           )}
         >
@@ -529,7 +573,7 @@ function Workspace() {
             <Button
               variant="ghost"
               size="icon-xs"
-              className="h-5 w-5 text-red-700 hover:bg-red-100"
+              className="h-5 w-5 text-destructive hover:bg-destructive/10"
               aria-label="清除错误"
               onClick={() => wb.dispatch({ type: 'clear-error' })}
             >
@@ -540,8 +584,8 @@ function Workspace() {
       )}
 
       {wb.busy && (
-        <div className="absolute inset-0 z-[1500] grid cursor-wait place-items-center bg-white/30">
-          <span className="h-7 w-7 animate-spin rounded-full border-[3px] border-zinc-200 border-t-zinc-900" />
+        <div className="absolute inset-0 z-[1500] grid cursor-wait place-items-center bg-background/35">
+          <Spinner className="h-7 w-7" />
         </div>
       )}
     </div>

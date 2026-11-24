@@ -1,21 +1,16 @@
 import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
-import type { GeoFeature, NodeProperties, PointGeometry, SelectedFeature } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
+import { Alert, AlertDescription } from '@/components/ui/alert';
+import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { formatEdgeId, isNodeFeature } from '@/domain/features';
 import { aerowayTypes, propertyPatch } from '@/domain/properties';
 import type { Aeroway } from '@/domain/properties';
-
-function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, NodeProperties> {
-  return feature.geometry.type === 'Point';
-}
-
-function edgeLabel(id: { u: string; v: string; key: number }) {
-  return `${id.u}—${id.v} · ${id.key}`;
-}
 
 const fieldLabels: Record<string, string> = {
   aeroway: '类型',
@@ -53,7 +48,7 @@ export function FeatureDetails() {
 
   if (!feature || !wb.detailsOpen) return null;
 
-  const node = isNode(feature);
+  const node = isNodeFeature(feature);
   const entries = Object.entries(feature.properties).filter(([key]) => !['editable_attributes', 'id'].includes(key));
   const basicEntries = entries.filter(([key]) => basicKeys.has(key));
   const topologyEntries = entries.filter(([key]) => topologyKeys.has(key));
@@ -78,7 +73,7 @@ export function FeatureDetails() {
             <div key={key} className="grid grid-cols-[minmax(90px,40%)_minmax(0,1fr)] gap-2 py-1.5">
               <dt className="text-muted-foreground">
                 <span className="block">{fieldLabels[key] ?? key}</span>
-                {fieldLabels[key] && <small className="block text-[10px] text-zinc-400">{key}</small>}
+                {fieldLabels[key] && <small className="block text-[11px] text-muted-foreground/75">{key}</small>}
               </dt>
               <dd className="m-0 flex items-center gap-1.5 break-words text-foreground tabular-nums">
                 {key === 'validation_color' && typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value) && (
@@ -113,11 +108,13 @@ export function FeatureDetails() {
   return (
     <aside className="details relative flex h-full min-h-0 w-full flex-col bg-background">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-5">
-        <div className="min-w-0">
-          <small className="block text-[11px] leading-tight text-muted-foreground">图要素详情 · {node ? '节点' : '边'}</small>
-          <h2 className="m-0 truncate text-[15px] leading-tight font-semibold text-foreground" title={node ? feature.properties.id : edgeLabel(feature.properties.id)}>
-            {node ? feature.properties.id : edgeLabel(feature.properties.id)}
+        <div className="flex min-w-0 items-center gap-2">
+          <h2 className="m-0 truncate text-[15px] font-semibold text-foreground" title={node ? feature.properties.id : formatEdgeId(feature.properties.id)}>
+            {node ? feature.properties.id : formatEdgeId(feature.properties.id)}
           </h2>
+          <Badge variant="secondary" className="shrink-0">
+            {node ? '节点' : '边'}
+          </Badge>
         </div>
         <Button
           variant="ghost"
@@ -140,7 +137,7 @@ export function FeatureDetails() {
             <h3 className="m-0 text-xs font-semibold text-foreground">可编辑属性</h3>
             <div className="grid gap-1 text-xs text-muted-foreground">
               <span className="flex items-baseline gap-1">
-                类型 <small className="text-[10px] text-zinc-400">aeroway</small>
+                类型 <small className="text-[11px] text-muted-foreground/75">aeroway</small>
               </span>
               <Select
                 value={aeroway || '__empty__'}
@@ -163,22 +160,22 @@ export function FeatureDetails() {
                 </SelectContent>
               </Select>
             </div>
-            <label className="grid gap-1 text-xs text-muted-foreground">
+            <Label className="grid gap-1 font-normal text-muted-foreground">
               <span className="flex items-baseline gap-1">
-                名称 <small className="text-[10px] text-zinc-400">name</small>
+                名称 <small className="text-[11px] text-muted-foreground/75">name</small>
               </span>
               <Input value={name} onChange={event => setName(event.target.value)} />
-            </label>
-            <label className="grid gap-1 text-xs text-muted-foreground">
+            </Label>
+            <Label className="grid gap-1 font-normal text-muted-foreground">
               <span className="flex items-baseline gap-1">
-                编号 <small className="text-[10px] text-zinc-400">ref</small>
+                编号 <small className="text-[11px] text-muted-foreground/75">ref</small>
               </span>
               <Input value={ref} onChange={event => setRef(event.target.value)} />
-            </label>
+            </Label>
             {validationError && (
-              <p className="m-0 text-xs text-destructive" role="alert">
-                {validationError}
-              </p>
+              <Alert variant="destructive">
+                <AlertDescription>{validationError}</AlertDescription>
+              </Alert>
             )}
             <Button variant="default" onClick={() => void save()}>
               保存属性

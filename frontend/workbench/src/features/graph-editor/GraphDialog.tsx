@@ -4,7 +4,9 @@ import type { GraphPostInput, GraphPostPath } from '@/api/client';
 import type { LineGeometry, NodeId } from '@/api/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import type { GraphDialogState } from './types';
@@ -124,7 +126,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
         <ScrollArea className="min-h-0 flex-1">
           <div className="space-y-2.5 p-4">
             {dialog.preview.candidates.map((candidate, index) => (
-              <div key={index} className="space-y-2 rounded-lg border border-border bg-muted/40 p-3 text-xs">
+              <Card key={index} className="space-y-2 bg-muted/40 p-3 text-xs shadow-none">
                 <strong className="block font-medium text-foreground tabular-nums">
                   候选 {index + 1} · 最大距离 {candidate.max_distance_m.toFixed(3)} m
                 </strong>
@@ -138,7 +140,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                 >
                   检查并合并
                 </Button>
-              </div>
+              </Card>
             ))}
           </div>
         </ScrollArea>
@@ -179,20 +181,20 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                 className="gap-2"
               >
                 {dialog.preview.candidates.map((candidate, index) => (
-                  <label
+                  <Label
                     key={candidate.candidate_id}
-                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 font-normal hover:bg-accent/50"
                     onMouseEnter={() => onPreview(candidate.geometry)}
                   >
                     <RadioGroupItem value={String(index)} className="mt-0.5" />
-                    <span className="min-w-0 break-words text-foreground tabular-nums">
+                    <span className="min-w-0 break-words leading-normal text-foreground tabular-nums">
                       {candidate.source_ids.join(' + ')}
                       <br />
                       <span className="text-muted-foreground">
                         OSM way {candidate.osm_way_ids.join(' + ')} · {candidate.length_m.toFixed(2)} m
                       </span>
                     </span>
-                  </label>
+                  </Label>
                 ))}
               </RadioGroup>
             </>
@@ -213,15 +215,15 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
               <h3 className="m-0 pt-2 text-xs font-semibold text-foreground">选择规范节点</h3>
               <RadioGroup value={String(choice)} onValueChange={value => setChoice(Number(value))} className="gap-2">
                 {dialog.preview.nodes.map((node, index) => (
-                  <label
+                  <Label
                     key={node.node_id}
-                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                    className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 font-normal hover:bg-accent/50"
                   >
                     <RadioGroupItem value={String(index)} className="mt-0.5" />
-                    <span className="min-w-0 break-words">
+                    <span className="min-w-0 break-words leading-normal">
                       {node.node_id} · {node.manual ? '人工图节点' : 'OSM 图节点'} · 度 {node.degree}
                     </span>
-                  </label>
+                  </Label>
                 ))}
               </RadioGroup>
               {dialog.preview.warnings.map(item => (
@@ -259,9 +261,9 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                 {dialog.preview.pair_candidates.map(pair => {
                   const checked = pairs.has(pair.pair_id);
                   return (
-                    <label
+                    <Label
                       key={pair.pair_id}
-                      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 text-xs transition-colors ${
+                      className={`flex cursor-pointer items-start gap-2.5 rounded-lg border p-2.5 font-normal transition-colors ${
                         checked
                           ? 'border-primary/40 bg-background shadow-2xs'
                           : 'border-border bg-muted/35 hover:bg-accent/50'
@@ -295,7 +297,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                       />
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
-                          <strong className="truncate text-[12px] font-semibold text-foreground tabular-nums">
+                          <strong className="truncate text-xs font-semibold text-foreground tabular-nums">
                             {pair.endpoints.join(' ↔ ')}
                           </strong>
                           <span className="shrink-0 text-[11px] font-medium text-foreground tabular-nums">
@@ -308,13 +310,13 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                           </span>
                           <Badge
                             variant={pair.same_source ? 'secondary' : 'outline'}
-                            className="shrink-0 px-1.5 py-0 text-[10px] font-normal"
+                            className="shrink-0 px-1.5 py-0 text-[11px] font-normal"
                           >
                             {pair.same_source ? '同源' : '跨来源'}
                           </Badge>
                         </div>
                       </div>
-                    </label>
+                    </Label>
                   );
                 })}
               </div>
@@ -323,10 +325,10 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                 <span>未配对：{unpaired.length ? unpaired.join(', ') : '无'}</span>
               </div>
               {unpaired.length > 0 && (
-                <label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs">
+                <Label className="flex cursor-pointer items-center gap-2 rounded-lg border border-border bg-muted/40 p-2.5 font-normal">
                   <Checkbox checked={discard} onCheckedChange={checked => setDiscard(checked === true)} />
                   <span>明确删除未配对半边</span>
-                </label>
+                </Label>
               )}
             </>
           )}
@@ -337,15 +339,15 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
               {dialog.preview.candidates.length ? (
                 <RadioGroup value={String(choice)} onValueChange={value => setChoice(Number(value))} className="gap-2">
                   {dialog.preview.candidates.map((candidate, index) => (
-                    <label
+                    <Label
                       key={candidate.id}
-                      className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 text-xs hover:bg-accent/50"
+                      className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 font-normal hover:bg-accent/50"
                     >
                       <RadioGroupItem value={String(index)} className="mt-0.5" />
-                      <span className="tabular-nums">
+                      <span className="leading-normal tabular-nums">
                         OSM Node {candidate.id} · 距离 {candidate.distance_m.toFixed(2)} m
                       </span>
-                    </label>
+                    </Label>
                   ))}
                 </RadioGroup>
               ) : (

@@ -254,13 +254,17 @@ test('locating an observation in split view preserves the observation table', as
   await expect(zoomOut).not.toHaveClass(/leaflet-disabled/);
 });
 
-test('full-screen flight table auto-collapses right rail and restores it on map view', async ({ page }) => {
+test('flight mode keeps right rail on-demand, hosts layers in left rail, and supports flights+routes split', async ({ page }) => {
   await page.goto('/');
-  await expect(page.locator('.right-rail')).toBeVisible();
-  await page.getByRole('button', { name: '航班', exact: true }).click();
   await expect(page.locator('.right-rail')).toHaveCount(0);
-  await page.getByRole('button', { name: '地图', exact: true }).click();
-  await expect(page.locator('.right-rail')).toBeVisible();
+  await page.getByRole('tab', { name: '图层' }).click();
+  await expect(page.getByText('图层与底图')).toBeVisible();
+  await page.getByRole('button', { name: '航班', exact: true }).click();
+  await page.getByRole('button', { name: '路径库', exact: true }).dragTo(page.locator('.workspace'), { targetPosition: { x: 700, y: 240 } });
+  await expect(page.locator('#flight-sheet')).toBeVisible();
+  await expect(page.locator('.route-library-panel')).toBeVisible();
+  await expect(page.getByTestId('workspace-split-handle')).toBeVisible();
+  await expect(page.getByRole('button', { name: '路径地图', exact: true })).toHaveCount(0);
 });
 
 test('split view keeps filter controls unclipped within narrow pane', async ({ page }) => {
@@ -275,17 +279,15 @@ test('split view keeps filter controls unclipped within narrow pane', async ({ p
   expect(btnBox!.x + btnBox!.width).toBeLessThanOrEqual(sheetBox!.x + sheetBox!.width + 1);
 });
 
-test('clicking a flight on map highlights sidebar item, opens detail from sidebar, and resizes list height', async ({ page }) => {
+test('clicking a flight on map highlights sidebar item, switches left rail tabs, and opens detail from sidebar', async ({ page }) => {
   await page.goto('/');
   await page.getByRole('button', { name: '航班', exact: true }).click();
   await page.getByRole('button', { name: '加入地图', exact: true }).first().click();
   await page.getByRole('button', { name: '地图', exact: true }).click();
+  await page.getByRole('tab', { name: '路径' }).click();
+  await expect(page.getByText('尚无地图展示路径')).toBeVisible();
   await page.locator('.flight-map-label').first().click();
   await expect(page.locator('.map-selection .selected-chip').first()).toHaveAttribute('data-highlighted', 'true');
-  const listResizer = page.getByRole('separator', { name: '调整地图展示列表高度' });
-  await listResizer.focus();
-  await listResizer.press('ArrowDown');
-  await expect(listResizer).toHaveAttribute('aria-valuenow', '63');
   await page.locator('.map-selection .selected-chip').first().getByRole('button', { name: '详情', exact: true }).click();
   await expect(page.locator('.observations-view')).toBeVisible();
 });

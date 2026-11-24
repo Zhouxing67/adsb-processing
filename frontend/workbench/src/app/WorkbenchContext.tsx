@@ -6,9 +6,20 @@ import type { MapFlightEntry, MapRouteEntry, SelectedFeature, WorkbenchState } f
 import { readStoredFlightState } from '../features/flights/storage';
 
 export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'delete';
-export type MainView = 'map' | 'flights' | 'observations' | 'routes';
+export type MainView = 'map' | 'route-map' | 'flights' | 'observations' | 'routes';
 export interface FocusFlightRequest { key: string; seq: number }
 export interface FocusFeatureRequest { feature: SelectedFeature; seq: number }
+export type MapFlightInput = Omit<MapFlightEntry, 'slot'> & { slot?: number };
+export type MapRouteInput = Omit<MapRouteEntry, 'slot'> & { slot?: number };
+
+function allocateFreeSlot(map: Map<string, { slot: number }>): number {
+  const used = new Set<number>();
+  map.forEach(entry => used.add(entry.slot));
+  let slot = 0;
+  while (used.has(slot)) slot += 1;
+  return slot;
+}
+
 interface UiState {
   state: WorkbenchState | null; loading: boolean; busy: boolean; error: string;
   status: string; tool: EditorTool; view: MainView; selected: SelectedFeature | null;
@@ -22,6 +33,8 @@ interface UiState {
   highlightedRoute: FocusFlightRequest | null;
   routeFocusRequest: FocusFlightRequest | null; fitRoutesVersion: number;
   showMapRoutes: boolean;
+  flightCatalogueVersion: number;
+  routeLibraryVersion: number;
   issueKeys: Set<string>;
   topologyOpen: boolean; searchOpen: boolean; detailsOpen: boolean;
 }
@@ -41,22 +54,24 @@ type Action =
   | { type: 'merge-match-selection'; keys: string[] }
   | { type: 'remove-match-selection'; keys: string[] }
   | { type: 'prune-match-selection'; keys: string[] }
-  | { type: 'map-flight'; key: string; value: MapFlightEntry | null }
-  | { type: 'map-flights-batch'; entries: Array<{ key: string; value: MapFlightEntry }> }
+  | { type: 'map-flight'; key: string; value: MapFlightInput | null }
+  | { type: 'map-flights-batch'; entries: Array<{ key: string; value: MapFlightInput }> }
   | { type: 'clear-map-flights' }
   | { type: 'isolate-flight'; key: string | null }
   | { type: 'highlight-flight'; key: string | null }
   | { type: 'focus-flight'; key: string; preserveView?: boolean }
   | { type: 'fit-map-flights'; preserveView?: boolean }
   | { type: 'toggle-map-flights-group' }
-  | { type: 'map-route'; routeId: string; value: MapRouteEntry | null }
-  | { type: 'map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteEntry }> }
+  | { type: 'map-route'; routeId: string; value: MapRouteInput | null }
+  | { type: 'map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteInput }> }
   | { type: 'clear-map-routes' }
   | { type: 'isolate-route'; routeId: string | null }
   | { type: 'highlight-route'; routeId: string | null }
   | { type: 'focus-route'; routeId: string; preserveView?: boolean }
   | { type: 'fit-map-routes'; preserveView?: boolean }
   | { type: 'toggle-map-routes-group' }
+  | { type: 'flights-updated' }
+  | { type: 'routes-updated' }
   | { type: 'set-issue-keys'; keys: string[] }
   | { type: 'observation-location'; value: [number, number] | null; preserveView?: boolean }
   | { type: 'panel'; panel: 'topologyOpen' | 'searchOpen' | 'detailsOpen'; value: boolean };
@@ -70,6 +85,8 @@ const initial: UiState = {
   showMapFlights: true,
   mapRoutes: new Map(), isolatedRouteId: null, highlightedRoute: null,
   routeFocusRequest: null, fitRoutesVersion: 0, showMapRoutes: true,
+  flightCatalogueVersion: 0,
+  routeLibraryVersion: 0,
   issueKeys: new Set(),
   topologyOpen: false, searchOpen: false, detailsOpen: false,
 };
@@ -112,13 +129,24 @@ function reducer(state: UiState, action: Action): UiState {
       return { ...state, matchSelection: new Set([...state.matchSelection].filter(key => valid.has(key))) };
     }
     case 'map-flight': {
-      const next = new Map(state.mapFlights); action.value ? next.set(action.key, action.value) : next.delete(action.key);
+      const next = new Map(state.mapFlights);
+      if (action.value) {
+        const existing = next.get(action.key);
+        const slot = action.value.slot ?? existing?.slot ?? allocateFreeSlot(next);
+        next.set(action.key, { ...action.value, slot });
+      } else {
+        next.delete(action.key);
+      }
       return { ...state, mapFlights: next, isolatedFlightKey: !action.value && state.isolatedFlightKey === action.key ? null : state.isolatedFlightKey };
     }
     case 'map-flights-batch': {
       if (!action.entries.length) return state;
       const next = new Map(state.mapFlights);
-      action.entries.forEach(({ key, value }) => next.set(key, value));
+      action.entries.forEach(({ key, value }) => {
+        const existing = next.get(key);
+        const slot = value.slot ?? existing?.slot ?? allocateFreeSlot(next);
+        next.set(key, { ...value, slot });
+      });
       return { ...state, mapFlights: next };
     }
     case 'clear-map-flights': return { ...state, mapFlights: new Map(), isolatedFlightKey: null, highlightedFlight: null, mapFocusRequest: null };
@@ -149,7 +177,13 @@ function reducer(state: UiState, action: Action): UiState {
     };
     case 'map-route': {
       const next = new Map(state.mapRoutes);
-      action.value ? next.set(action.routeId, action.value) : next.delete(action.routeId);
+      if (action.value) {
+        const existing = next.get(action.routeId);
+        const slot = action.value.slot ?? existing?.slot ?? allocateFreeSlot(next);
+        next.set(action.routeId, { ...action.value, slot });
+      } else {
+        next.delete(action.routeId);
+      }
       return {
         ...state,
         mapRoutes: next,
@@ -160,7 +194,11 @@ function reducer(state: UiState, action: Action): UiState {
     case 'map-routes-batch': {
       if (!action.entries.length) return state;
       const next = new Map(state.mapRoutes);
-      action.entries.forEach(({ routeId, value }) => next.set(routeId, value));
+      action.entries.forEach(({ routeId, value }) => {
+        const existing = next.get(routeId);
+        const slot = value.slot ?? existing?.slot ?? allocateFreeSlot(next);
+        next.set(routeId, { ...value, slot });
+      });
       return { ...state, mapRoutes: next, showMapRoutes: true };
     }
     case 'clear-map-routes': return {
@@ -184,7 +222,7 @@ function reducer(state: UiState, action: Action): UiState {
       ...state,
       routeFocusRequest: { key: action.routeId, seq: (state.routeFocusRequest?.seq ?? 0) + 1 },
       showMapRoutes: true,
-      view: action.preserveView ? state.view : 'map',
+      view: action.preserveView ? state.view : state.mapFlights.size > 0 && state.mapRoutes.size > 0 ? 'route-map' : 'map',
       status: '已定位路径',
       error: '',
     };
@@ -192,7 +230,7 @@ function reducer(state: UiState, action: Action): UiState {
       ...state,
       fitRoutesVersion: state.fitRoutesVersion + 1,
       showMapRoutes: true,
-      view: action.preserveView ? state.view : 'map',
+      view: action.preserveView ? state.view : state.mapFlights.size > 0 && state.mapRoutes.size > 0 ? 'route-map' : 'map',
       status: '已适配全部地图路径',
       error: '',
     };
@@ -201,6 +239,14 @@ function reducer(state: UiState, action: Action): UiState {
       showMapRoutes: !state.showMapRoutes,
       status: state.showMapRoutes ? '已隐藏地图路径图层' : '已显示地图路径图层',
       error: '',
+    };
+    case 'flights-updated': return {
+      ...state,
+      flightCatalogueVersion: state.flightCatalogueVersion + 1,
+    };
+    case 'routes-updated': return {
+      ...state,
+      routeLibraryVersion: state.routeLibraryVersion + 1,
     };
     case 'set-issue-keys': return {
       ...state,

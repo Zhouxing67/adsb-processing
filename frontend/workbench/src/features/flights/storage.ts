@@ -61,3 +61,8 @@ export function writeStoredFlightState(value: StoredFlightState): void {
     /* storage is optional */
   }
 }
+
+export function patchStoredFlightState(patch: Partial<StoredFlightState>): void {
+  const current = readStoredFlightState();
+  writeStoredFlightState({ ...current, ...patch });
+}

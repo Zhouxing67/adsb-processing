@@ -25,7 +25,7 @@ export function ResizableHandle({
   return (
     <Separator
       className={cn(
-        'relative flex w-1.5 items-center justify-center bg-border/70 transition-colors hover:bg-zinc-400/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[separator=active]:bg-zinc-500 cursor-col-resize',
+        'relative flex w-1.5 items-center justify-center bg-border/70 transition-colors hover:bg-slate-400/70 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring data-[separator=active]:bg-slate-500 cursor-col-resize',
         className,
       )}
       {...props}

@@ -28,6 +28,11 @@ All changes must preserve the 4-layer unidirectional architecture (enforced by `
 - **L3 Frontend (`frontend/workbench/src/`)**:
   - Layering: `components/ui/` ← `domain/` (shared palettes/labels/geometry) ← `api/` (sole `fetch` & generated types) ← `features/<domain>/` ← `app/`.
   - Never call `fetch()` directly outside `src/api/client.ts`; never duplicate color palettes or status label maps across components.
+  - **Shadcn & Design-System Discipline** (enforced by `tests/test_architecture.py`):
+    - Always compose UI from `src/components/ui/` primitives (`Button`, `Table`, `Card`, `Label`, `Alert`, `Toggle`, `Empty`, `Spinner`, etc.) and `workbench-shell.tsx` (`ViewHeader`, `FilterBar`, `DataTableContainer`, `PaginationFooter`, `PopoverFooter`, `InlineEditTrigger`, `IconActionButton`); never hand-roll raw `<table>`, `<label>`, `<input>`, `<select>`, `<textarea>`, or `<button>` in `app/` or `features/`.
+    - Every data-table view must use `ViewHeader`, `DataTableContainer`, and `PaginationFooter` (never wrap `<Table>` in Radix `ScrollArea`).
+    - Use semantic CSS tokens (`bg-primary`, `bg-muted`, `bg-accent`, `text-accent-amber`, `text-accent-teal`, `text-foreground`, `border-border`) from `src/styles/index.css` (Slate + 3-color semantic accents: cobalt `#1d5fa7`, amber `#c86428`, teal `#147a6e`); never introduce off-theme `zinc-*`/`gray-*`/`violet-*` classes or fragmented arbitrary font sizes (`text-[10px]`/`text-[12px]`/`text-[14px]`).
+    - Use `InlineEditTrigger` for inline-editable table cells and `IconActionButton` for icon-only actions (enforcing `aria-label` + shadcn `Tooltip`).
   - Keep individual `.tsx` feature components focused (target ≤ 500 lines; split filter bars, popovers, editors, and tables into dedicated subcomponents).
 - **Database DDL Single Source of Truth**:
   - All DuckDB `CREATE TABLE` / `CREATE INDEX` / schema migrations live exclusively in `sql/schema/` and `sql/migrations/`.

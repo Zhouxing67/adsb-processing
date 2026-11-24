@@ -1,39 +1,59 @@
 import { useEffect, useRef, useState } from 'react';
-import { Crosshair, Eye, EyeOff, FileText, Flag, GripHorizontal, LoaderCircle, Maximize2, Route, Trash2, X } from 'lucide-react';
+import {
+  Crosshair,
+  Eye,
+  EyeOff,
+  FileText,
+  Flag,
+  Layers,
+  LoaderCircle,
+  Maximize2,
+  Plane,
+  Route,
+  Trash2,
+  X,
+} from 'lucide-react';
 import { api } from '@/api/client';
-import type { FlightDetail, MapFlightEntry } from '@/api/types';
+import type { MapFlightEntry, WorkbenchState } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
+import { Empty, EmptyDescription } from '@/components/ui/empty';
 import { ScrollArea } from '@/components/ui/scroll-area';
-import { FLIGHT_COLORS as colors, ROUTE_COLORS as routeColors, ROUTE_STATUS_LABELS as routeStatusLabels } from '@/domain/palette';
+import { Toggle } from '@/components/ui/toggle';
+import { IconActionButton, RAIL_ACTION_REVEAL } from '@/components/ui/workbench-shell';
+import { FLIGHT_COLORS as colors } from '@/domain/palette';
+import { Inspector } from '@/features/graph-editor/Inspector';
+import type { LayerSettings } from '@/features/graph-editor/Inspector';
 import { cn } from '@/lib/utils';
-const HEIGHT_STORAGE_KEY = 'airport-workbench.map-list-height';
-const DEFAULT_HEIGHT_PCT = 58;
-const MIN_HEIGHT_PCT = 20;
-const MAX_HEIGHT_PCT = 85;
+import { MapRouteList } from './MapRouteList';
 
-function readStoredHeight(): number {
-  try {
-    const value = Number(localStorage.getItem(HEIGHT_STORAGE_KEY));
-    return Number.isFinite(value) && value >= MIN_HEIGHT_PCT && value <= MAX_HEIGHT_PCT ? value : DEFAULT_HEIGHT_PCT;
-  } catch {
-    return DEFAULT_HEIGHT_PCT;
-  }
-}
+type RailTab = 'flights' | 'routes' | 'layers';
 
 interface MapSelectionRailProps {
+  state: WorkbenchState;
+  layers: LayerSettings;
+  onLayers(value: LayerSettings): void;
   submitMatches(keys: string[], force: boolean): Promise<void>;
   splitView: boolean;
-  onDetail(detail: FlightDetail): void;
+  onOpenDetail(flightKey: string): Promise<void>;
 }
 
-export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSelectionRailProps) {
+export function MapSelectionRail({
+  state,
+  layers,
+  onLayers,
+  splitView,
+  onOpenDetail,
+  submitMatches,
+}: MapSelectionRailProps) {
   const wb = useWorkbench();
-  const [listHeightPct, setListHeightPct] = useState<number>(readStoredHeight);
+  const [tab, setTab] = useState<RailTab>('flights');
   const [flashingKey, setFlashingKey] = useState<string | null>(null);
   const [loadingDetailKey, setLoadingDetailKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const [togglingIssue, setTogglingIssue] = useState<Set<string>>(new Set());
+  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+
   const toggleIssue = async (key: string, label: string, reason?: string | null) => {
     const archived = wb.issueKeys.has(key);
     setTogglingIssue(current => new Set(current).add(key));
@@ -56,6 +76,7 @@ export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSele
       });
     }
   };
+
   const matchFlight = async (key: string, label: string) => {
     setSubmitting(current => new Set(current).add(key));
     try {
@@ -72,31 +93,31 @@ export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSele
     }
   };
 
-  const railRef = useRef<HTMLElement>(null);
-  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const dragRef = useRef<{ startY: number; startPct: number; railHeight: number } | null>(null);
-
-  const updateHeight = (next: number) => {
-    const clamped = Math.round(Math.max(MIN_HEIGHT_PCT, Math.min(MAX_HEIGHT_PCT, next)));
-    setListHeightPct(clamped);
-    try {
-      localStorage.setItem(HEIGHT_STORAGE_KEY, String(clamped));
-    } catch {
-      /* storage is optional */
-    }
-  };
-
   useEffect(() => {
     const highlighted = wb.highlightedFlight;
     if (!highlighted) return;
+    setTab('flights');
     setFlashingKey(highlighted.key);
-    const node = itemRefs.current.get(highlighted.key);
-    node?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    const frame = window.requestAnimationFrame(() => {
+      itemRefs.current.get(highlighted.key)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    });
     const timer = window.setTimeout(() => {
       setFlashingKey(current => (current === highlighted.key ? null : current));
     }, 1800);
-    return () => window.clearTimeout(timer);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.clearTimeout(timer);
+    };
   }, [wb.highlightedFlight]);
+
+  useEffect(() => {
+    if (wb.highlightedRoute) setTab('routes');
+  }, [wb.highlightedRoute]);
+
+  useEffect(() => {
+    if (wb.view === 'route-map') setTab('routes');
+    else if (wb.view === 'map') setTab('flights');
+  }, [wb.view]);
 
   const updateMapEntry = (key: string, patch: Partial<MapFlightEntry>) => {
     const entry = wb.mapFlights.get(key);
@@ -106,11 +127,7 @@ export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSele
   const openDetail = async (key: string) => {
     setLoadingDetailKey(key);
     try {
-      const detail = await api.detail(key);
-      onDetail(detail);
-      wb.dispatch({ type: 'view', value: 'observations' });
-    } catch (failure) {
-      wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '详情加载失败' });
+      await onOpenDetail(key);
     } finally {
       setLoadingDetailKey(current => (current === key ? null : current));
     }
@@ -119,395 +136,281 @@ export function MapSelectionRail({ splitView, onDetail, submitMatches }: MapSele
   const sortedFlights = [...wb.mapFlights].sort((a, b) => a[1].slot - b[1].slot);
   const sortedRoutes = [...wb.mapRoutes].sort((a, b) => a[1].slot - b[1].slot);
 
+  const tabTitle = tab === 'flights' ? '地图航班' : tab === 'routes' ? '地图路径' : '机场网络与图层';
+
   return (
-    <aside
-      ref={railRef}
-      className="map-selection relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted"
-    >
+    <aside className="map-selection relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted">
       <div className="flex h-14 shrink-0 items-center justify-between gap-2 border-b border-border px-4">
-        <div>
-          <small className="block text-[11px] leading-tight font-medium text-muted-foreground">地图内容</small>
-          <strong className="block text-[15px] leading-tight font-semibold text-foreground">地图展示</strong>
-        </div>
-        <div className="flex items-center gap-1">
-          <span className="text-[11px] text-muted-foreground tabular-nums">{wb.mapFlights.size} 架航班</span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="h-6 w-6 text-muted-foreground hover:text-foreground"
-            title={wb.showMapFlights ? '隐藏全部地图航班图层' : '显示全部地图航班图层'}
-            aria-label={wb.showMapFlights ? '隐藏地图航班图层' : '显示地图航班图层'}
-            aria-pressed={wb.showMapFlights}
-            onClick={() => wb.dispatch({ type: 'toggle-map-flights-group' })}
-          >
-            {wb.showMapFlights ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 opacity-60" />}
-          </Button>
-        </div>
+        <strong className="truncate text-[15px] font-semibold text-foreground">{tabTitle}</strong>
+        {tab === 'flights' && (
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground tabular-nums">{wb.mapFlights.size}</span>
+            <IconActionButton
+              size="icon-xs"
+              className="text-muted-foreground hover:text-foreground"
+              label={wb.showMapFlights ? '隐藏地图航班图层' : '显示地图航班图层'}
+              tooltip={wb.showMapFlights ? '隐藏全部地图航班图层' : '显示全部地图航班图层'}
+              aria-pressed={wb.showMapFlights}
+              onClick={() => wb.dispatch({ type: 'toggle-map-flights-group' })}
+            >
+              {wb.showMapFlights ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 opacity-60" />}
+            </IconActionButton>
+          </div>
+        )}
+        {tab === 'routes' && (
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground tabular-nums">{wb.mapRoutes.size}</span>
+            <IconActionButton
+              size="icon-xs"
+              className="text-muted-foreground hover:text-foreground"
+              label={wb.showMapRoutes ? '隐藏地图路径图层' : '显示地图路径图层'}
+              tooltip={wb.showMapRoutes ? '隐藏全部地图路径图层' : '显示全部地图路径图层'}
+              aria-pressed={wb.showMapRoutes}
+              onClick={() => wb.dispatch({ type: 'toggle-map-routes-group' })}
+            >
+              {wb.showMapRoutes ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 opacity-60" />}
+            </IconActionButton>
+          </div>
+        )}
       </div>
 
-      <ScrollArea
-        className="min-h-0 shrink-0 bg-background/55"
-        style={{ height: `${listHeightPct}%` }}
-      >
-        <div className="divide-y divide-border/60 px-2 py-1">
-          {wb.mapFlights.size === 0 && (
-            <p className="px-2 py-6 text-center text-xs text-muted-foreground">尚无地图展示航班</p>
-          )}
-          {sortedFlights.map(([key, entry]) => {
-            const isolated = wb.isolatedFlightKey === key;
-            const highlighted = flashingKey === key;
-            const slotColor = colors[entry.slot % colors.length];
-            const hasPath = Boolean(entry.geometry.path);
-            const match = entry.geometry.match;
-            const matching = submitting.has(key) || match.status === 'queued' || match.status === 'matching';
-            const matchLabel = matching ? '匹配中' : hasPath ? '重新匹配路径' : '匹配路径';
-            return (
-              <div
-                key={key}
-                ref={element => {
-                  if (element) itemRefs.current.set(key, element);
-                  else itemRefs.current.delete(key);
-                }}
-                data-highlighted={highlighted ? 'true' : undefined}
-                className={cn(
-                  'selected-chip group relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-1.5 transition-all hover:bg-background',
-                  isolated && 'bg-background shadow-2xs',
-                  highlighted && 'bg-accent/80 ring-2 ring-primary/45',
-                )}
-              >
-                <span
-                  aria-hidden="true"
-                  className="absolute bottom-1.5 left-1 top-1.5 w-[3px] rounded-full"
-                  style={{ backgroundColor: slotColor }}
-                />
-
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="w-4 shrink-0 text-[11px] font-medium text-muted-foreground tabular-nums">
-                    {entry.slot + 1}
-                  </span>
-                  <span
-                    className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground"
-                    title={entry.label}
+      {tab === 'flights' && (
+        <>
+          <ScrollArea className="min-h-0 flex-1 bg-background/60">
+            <div className="divide-y divide-border/60 px-2 py-1">
+              {wb.mapFlights.size === 0 && (
+                <Empty className="py-12">
+                  <EmptyDescription>尚无地图展示航班</EmptyDescription>
+                </Empty>
+              )}
+              {sortedFlights.map(([key, entry]) => {
+                const isolated = wb.isolatedFlightKey === key;
+                const highlighted = flashingKey === key;
+                const slotColor = colors[entry.slot % colors.length];
+                const hasPath = Boolean(entry.geometry.path);
+                const match = entry.geometry.match;
+                const matching = submitting.has(key) || match.status === 'queued' || match.status === 'matching';
+                const matchLabel = matching ? '匹配中' : hasPath ? '重新匹配路径' : '匹配路径';
+                return (
+                  <div
+                    key={key}
+                    ref={element => {
+                      if (element) itemRefs.current.set(key, element);
+                      else itemRefs.current.delete(key);
+                    }}
+                    data-highlighted={highlighted ? 'true' : undefined}
+                    className={cn(
+                      'selected-chip group relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-1.5 transition-all hover:bg-background',
+                      isolated && 'bg-background shadow-2xs',
+                      highlighted && 'bg-accent/80 ring-2 ring-primary/45',
+                    )}
                   >
-                    {entry.label}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className={cn(
-                        'flight-isolate-action h-5 w-5',
-                        isolated
-                          ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                      aria-label={isolated ? '恢复全部航班' : `仅显示 ${entry.label}`}
-                      aria-pressed={isolated}
-                      title={isolated ? '恢复全部地图航班' : '仅显示此航班'}
-                      onClick={() => wb.dispatch({ type: 'isolate-flight', key: isolated ? null : key })}
-                    >
-                      <Eye className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className={cn('h-5 w-5 text-muted-foreground', match.status === 'failed' && 'text-destructive')}
-                      aria-label={`${matchLabel} ${entry.label}`}
-                      title={match.status === 'failed' && !matching ? `上次匹配失败：${match.error ?? '未生成路径'}。点击重试` : matchLabel}
-                      disabled={matching}
-                      onClick={() => void matchFlight(key, entry.label)}
-                    >
-                      {matching ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Route className="h-3 w-3" />}
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className={cn(
-                        'h-5 w-5',
-                        wb.issueKeys.has(key)
-                          ? 'text-destructive hover:text-destructive/80'
-                          : 'text-muted-foreground hover:text-destructive',
-                      )}
-                      aria-label={wb.issueKeys.has(key) ? `将 ${entry.label} 移出异常归档` : `将 ${entry.label} 加入异常归档`}
-                      aria-pressed={wb.issueKeys.has(key)}
-                      title={wb.issueKeys.has(key) ? '已在异常归档中（点击移出）' : '加入异常航班归档（match_issues）'}
-                      disabled={togglingIssue.has(key)}
-                      onClick={() => void toggleIssue(key, entry.label, match.error)}
-                    >
-                      <Flag className={cn('h-3 w-3', wb.issueKeys.has(key) && 'fill-current')} />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="flight-remove-action h-5 w-5 text-muted-foreground hover:text-destructive"
-                      aria-label={`移除 ${entry.label}`}
-                      title="移出地图"
-                      onClick={() => wb.dispatch({ type: 'map-flight', key, value: null })}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
+                    <span
+                      aria-hidden="true"
+                      className="absolute bottom-1.5 left-1 top-1.5 w-[3px] rounded-full"
+                      style={{ backgroundColor: slotColor }}
+                    />
 
-                <div className="flex items-center justify-between gap-1 pl-5">
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={entry.trajectoryVisible}
-                      aria-label={`${entry.label} 轨迹`}
-                      title="显示/隐藏原始轨迹"
-                      className={cn(
-                        'inline-flex h-5 items-center rounded px-1.5 text-[11px] transition-colors cursor-pointer',
-                        entry.trajectoryVisible
-                          ? 'bg-zinc-900/10 font-medium text-zinc-900'
-                          : 'bg-transparent text-zinc-400 hover:bg-zinc-900/5 hover:text-zinc-600',
-                      )}
-                      onClick={() => updateMapEntry(key, { trajectoryVisible: !entry.trajectoryVisible })}
-                    >
-                      轨迹
-                    </button>
-                    <button
-                      type="button"
-                      role="switch"
-                      aria-checked={entry.pathVisible}
-                      aria-label={`${entry.label} 路径`}
-                      title={hasPath ? '显示/隐藏匹配路径' : '尚无匹配路径'}
-                      disabled={!hasPath}
-                      className={cn(
-                        'inline-flex h-5 items-center rounded px-1.5 text-[11px] transition-colors',
-                        !hasPath
-                          ? 'cursor-not-allowed bg-transparent text-zinc-300 opacity-50'
-                          : entry.pathVisible
-                            ? 'cursor-pointer bg-zinc-900/10 font-medium text-zinc-900'
-                            : 'cursor-pointer bg-transparent text-zinc-400 hover:bg-zinc-900/5 hover:text-zinc-600',
-                      )}
-                      onClick={() => hasPath && updateMapEntry(key, { pathVisible: !entry.pathVisible })}
-                    >
-                      路径
-                    </button>
-                  </div>
+                    <div className="flex min-w-0 items-center gap-1.5">
+                      <span className="w-4 shrink-0 text-[11px] font-medium text-muted-foreground tabular-nums">
+                        {entry.slot + 1}
+                      </span>
+                      <span
+                        className="min-w-0 flex-1 truncate text-xs font-medium text-foreground"
+                        title={entry.label}
+                      >
+                        {entry.label.includes('_') ? entry.label.split('_')[0] : entry.label}
+                      </span>
+                      <div className="flex shrink-0 items-center gap-0.5">
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className={cn(
+                            'flight-isolate-action h-5 w-5',
+                            isolated
+                              ? 'bg-primary text-primary-foreground opacity-100 hover:bg-primary/90 hover:text-primary-foreground'
+                              : RAIL_ACTION_REVEAL,
+                          )}
+                          aria-label={isolated ? '恢复全部航班' : `仅显示 ${entry.label}`}
+                          aria-pressed={isolated}
+                          title={isolated ? '恢复全部地图航班' : '仅显示此航班'}
+                          onClick={() => wb.dispatch({ type: 'isolate-flight', key: isolated ? null : key })}
+                        >
+                          <Eye className="h-3 w-3" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className={cn(
+                            'h-5 w-5',
+                            match.status === 'failed'
+                              ? 'text-destructive opacity-100'
+                              : matching
+                                ? 'text-primary opacity-100'
+                                : RAIL_ACTION_REVEAL,
+                          )}
+                          aria-label={`${matchLabel} ${entry.label}`}
+                          title={match.status === 'failed' && !matching ? `上次匹配失败：${match.error ?? '未生成路径'}。点击重试` : matchLabel}
+                          disabled={matching}
+                          onClick={() => void matchFlight(key, entry.label)}
+                        >
+                          {matching ? <LoaderCircle className="h-3 w-3 animate-spin" /> : <Route className="h-3 w-3" />}
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className={cn(
+                            'h-5 w-5',
+                            wb.issueKeys.has(key)
+                              ? 'text-destructive opacity-100 hover:text-destructive/80'
+                              : cn(RAIL_ACTION_REVEAL, 'hover:text-destructive'),
+                          )}
+                          aria-label={wb.issueKeys.has(key) ? `将 ${entry.label} 移出异常归档` : `将 ${entry.label} 加入异常归档`}
+                          aria-pressed={wb.issueKeys.has(key)}
+                          title={wb.issueKeys.has(key) ? '已在异常归档中（点击移出）' : '加入异常归档'}
+                          disabled={togglingIssue.has(key)}
+                          onClick={() => void toggleIssue(key, entry.label, match.error)}
+                        >
+                          <Flag className={cn('h-3 w-3', wb.issueKeys.has(key) && 'fill-current')} />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon-xs"
+                          className={cn('flight-remove-action h-5 w-5', RAIL_ACTION_REVEAL, 'hover:text-destructive')}
+                          aria-label={`移除 ${entry.label}`}
+                          title="移出地图"
+                          onClick={() => wb.dispatch({ type: 'map-flight', key, value: null })}
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                    </div>
 
-                  <div className="flex items-center gap-0.5">
-                    <button
-                      type="button"
-                      className="inline-flex h-5 cursor-pointer items-center gap-0.5 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-zinc-900/5 hover:text-foreground"
-                      title="在地图中定位此航班"
-                      onClick={() => wb.dispatch({ type: 'focus-flight', key, preserveView: splitView })}
-                    >
-                      <Crosshair className="h-3 w-3" />
-                      定位
-                    </button>
-                    <button
-                      type="button"
-                      disabled={loadingDetailKey === key}
-                      className="inline-flex h-5 cursor-pointer items-center gap-0.5 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-zinc-900/5 hover:text-foreground disabled:opacity-50"
-                      title="查看原始观测记录"
-                      onClick={() => void openDetail(key)}
-                    >
-                      <FileText className="h-3 w-3" />
-                      详情
-                    </button>
+                    <div className="flex items-center justify-between gap-1 pl-5">
+                      <div className="flex items-center gap-1">
+                        <Toggle
+                          size="xs"
+                          role="switch"
+                          pressed={entry.trajectoryVisible}
+                          aria-checked={entry.trajectoryVisible}
+                          aria-label={`${entry.label} 轨迹`}
+                          title="显示/隐藏原始轨迹"
+                          onClick={() => updateMapEntry(key, { trajectoryVisible: !entry.trajectoryVisible })}
+                        >
+                          轨迹
+                        </Toggle>
+                        <Toggle
+                          size="xs"
+                          role="switch"
+                          pressed={hasPath && entry.pathVisible}
+                          aria-checked={entry.pathVisible}
+                          aria-label={`${entry.label} 路径`}
+                          title={hasPath ? '显示/隐藏匹配路径' : '尚无匹配路径'}
+                          disabled={!hasPath}
+                          onClick={() => hasPath && updateMapEntry(key, { pathVisible: !entry.pathVisible })}
+                        >
+                          路径
+                        </Toggle>
+                      </div>
+
+                      <div className="flex items-center gap-0.5">
+                        <IconActionButton
+                          size="icon-xs"
+                          reveal="rail"
+                          className="h-5 w-5 [&_svg]:size-3"
+                          label="定位"
+                          tooltip="在地图中定位"
+                          onClick={() => wb.dispatch({ type: 'focus-flight', key, preserveView: splitView })}
+                        >
+                          <Crosshair />
+                        </IconActionButton>
+                        <IconActionButton
+                          size="icon-xs"
+                          reveal="rail"
+                          disabled={loadingDetailKey === key}
+                          className="h-5 w-5 [&_svg]:size-3"
+                          label="详情"
+                          tooltip="查看观测记录"
+                          onClick={() => void openDetail(key)}
+                        >
+                          <FileText />
+                        </IconActionButton>
+                      </div>
+                    </div>
                   </div>
-                </div>
-              </div>
-            );
-          })}
+                );
+              })}
+            </div>
+          </ScrollArea>
+
+          <div className="flex shrink-0 items-center justify-end gap-1 border-t border-border bg-muted/70 px-3 py-1.5">
+            <IconActionButton
+              size="icon-xs"
+              className="text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
+              label="适配全部航班"
+              tooltipSide="top"
+              disabled={!wb.mapFlights.size}
+              onClick={() => wb.dispatch({ type: 'fit-map-flights', preserveView: splitView })}
+            >
+              <Maximize2 />
+            </IconActionButton>
+            <IconActionButton
+              size="icon-xs"
+              className="text-muted-foreground hover:text-destructive [&_svg]:size-3.5"
+              label="清空地图航班"
+              tooltipSide="top"
+              disabled={!wb.mapFlights.size}
+              onClick={() => wb.dispatch({ type: 'clear-map-flights' })}
+            >
+              <Trash2 />
+            </IconActionButton>
+          </div>
+        </>
+      )}
+
+      {tab === 'routes' && <MapRouteList sortedRoutes={sortedRoutes} splitView={splitView} />}
+
+      {tab === 'layers' && (
+        <div className="min-h-0 flex-1 overflow-hidden bg-background/60">
+          <Inspector state={state} layers={layers} onLayers={onLayers} embedded />
         </div>
-      </ScrollArea>
+      )}
 
-      <button
-        type="button"
-        role="separator"
-        aria-orientation="horizontal"
-        aria-label="调整地图展示列表高度"
-        aria-valuemin={MIN_HEIGHT_PCT}
-        aria-valuemax={MAX_HEIGHT_PCT}
-        aria-valuenow={listHeightPct}
-        title="上下拖动调整列表高度 · 双击恢复默认"
-        className="group flex h-2.5 shrink-0 cursor-row-resize items-center justify-center border-y border-border bg-muted/80 text-muted-foreground/50 transition-colors hover:bg-accent hover:text-muted-foreground focus-visible:bg-accent focus-visible:outline-none"
-        onPointerDown={event => {
-          const railHeight = railRef.current?.getBoundingClientRect().height || 600;
-          dragRef.current = { startY: event.clientY, startPct: listHeightPct, railHeight };
-          event.currentTarget.setPointerCapture(event.pointerId);
-          event.preventDefault();
-        }}
-        onPointerMove={event => {
-          if (!dragRef.current || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
-          const deltaPct = ((event.clientY - dragRef.current.startY) / dragRef.current.railHeight) * 100;
-          updateHeight(dragRef.current.startPct + deltaPct);
-        }}
-        onPointerUp={event => {
-          if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-            event.currentTarget.releasePointerCapture(event.pointerId);
-          }
-          dragRef.current = null;
-        }}
-        onLostPointerCapture={() => {
-          dragRef.current = null;
-        }}
-        onDoubleClick={() => updateHeight(DEFAULT_HEIGHT_PCT)}
-        onKeyDown={event => {
-          if (event.key === 'ArrowUp') {
-            event.preventDefault();
-            updateHeight(listHeightPct - 5);
-          } else if (event.key === 'ArrowDown') {
-            event.preventDefault();
-            updateHeight(listHeightPct + 5);
-          } else if (event.key === 'Home') {
-            event.preventDefault();
-            updateHeight(DEFAULT_HEIGHT_PCT);
-          }
-        }}
+      <div
+        role="tablist"
+        aria-label="左侧栏切换"
+        className="grid shrink-0 grid-cols-3 gap-1 border-t border-border bg-muted p-1.5"
       >
-        <GripHorizontal className="h-3 w-3" />
-      </button>
-
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-1.5 text-[11px] text-muted-foreground">
-        <span className="tabular-nums">已显示 {wb.mapFlights.size} 架航班</span>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            disabled={!wb.mapFlights.size}
-            title="缩放地图以显示全部已加入航班"
-            onClick={() => wb.dispatch({ type: 'fit-map-flights', preserveView: splitView })}
-          >
-            <Maximize2 className="h-3 w-3" />
-            适配全部
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-6 px-2 text-[11px] text-muted-foreground hover:text-destructive"
-            disabled={!wb.mapFlights.size}
-            onClick={() => wb.dispatch({ type: 'clear-map-flights' })}
-          >
-            <Trash2 className="h-3 w-3" />
-            清空
-          </Button>
-        </div>
-      </div>
-
-      <div className="flex shrink-0 items-center justify-between border-b border-border px-4 py-1.5 text-[11px]">
-        <span className="font-medium text-foreground">地图路径</span>
-        <div className="flex items-center gap-1">
-          <span className="text-muted-foreground tabular-nums">{wb.mapRoutes.size} 条</span>
-          <Button
-            variant="ghost"
-            size="icon-xs"
-            className="h-5 w-5 text-muted-foreground hover:text-foreground"
-            title={wb.showMapRoutes ? '隐藏全部地图路径图层' : '显示全部地图路径图层'}
-            aria-label={wb.showMapRoutes ? '隐藏地图路径图层' : '显示地图路径图层'}
-            aria-pressed={wb.showMapRoutes}
-            onClick={() => wb.dispatch({ type: 'toggle-map-routes-group' })}
-          >
-            {wb.showMapRoutes ? <Eye className="h-3.5 w-3.5" /> : <EyeOff className="h-3.5 w-3.5 opacity-60" />}
-          </Button>
-        </div>
-      </div>
-
-      <ScrollArea className="min-h-0 flex-1 bg-background/55">
-        <div className="divide-y divide-border/60 px-2 py-1">
-          {sortedRoutes.length === 0 && (
-            <p className="px-2 py-4 text-center text-xs text-muted-foreground">尚无地图展示路径</p>
-          )}
-          {sortedRoutes.map(([routeId, entry]) => {
-            const isolated = wb.isolatedRouteId === routeId;
-            const slotColor = routeColors[entry.slot % routeColors.length];
-            const route = entry.geometry.route;
-            return (
-              <div
-                key={routeId}
-                className={cn(
-                  'group relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-1.5 transition-all hover:bg-background',
-                  isolated && 'bg-background shadow-2xs',
-                )}
-              >
-                <span
-                  aria-hidden="true"
-                  className="absolute bottom-1.5 left-1 top-1.5 w-[3px] rounded-full"
-                  style={{ backgroundColor: slotColor }}
-                />
-                <div className="flex min-w-0 items-center gap-1.5">
-                  <span className="min-w-0 flex-1 truncate text-[12px] font-medium text-foreground" title={entry.label}>
-                    {entry.label}
-                  </span>
-                  <div className="flex shrink-0 items-center gap-0.5">
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className={cn(
-                        'h-5 w-5',
-                        isolated
-                          ? 'bg-primary text-primary-foreground hover:bg-primary/90 hover:text-primary-foreground'
-                          : 'text-muted-foreground hover:text-foreground',
-                      )}
-                      aria-label={isolated ? '恢复全部路径' : `仅显示 ${entry.label}`}
-                      aria-pressed={isolated}
-                      title={isolated ? '恢复全部地图路径' : '仅显示此路径'}
-                      onClick={() => wb.dispatch({ type: 'isolate-route', routeId: isolated ? null : routeId })}
-                    >
-                      <Eye className="h-3 w-3" />
-                    </Button>
-                    <Button
-                      variant="ghost"
-                      size="icon-xs"
-                      className="h-5 w-5 text-muted-foreground hover:text-destructive"
-                      aria-label={`移除路径 ${entry.label}`}
-                      title="移出地图"
-                      onClick={() => wb.dispatch({ type: 'map-route', routeId, value: null })}
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
-                  </div>
-                </div>
-                <div className="flex items-center justify-between gap-1 text-[11px] text-muted-foreground">
-                  <span className="truncate tabular-nums">
-                    {Math.round(route.total_length_m)} m · {routeStatusLabels[route.status] ?? route.status}
-                  </span>
-                  <button
-                    type="button"
-                    className="inline-flex h-5 cursor-pointer items-center gap-0.5 rounded px-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-zinc-900/5 hover:text-foreground"
-                    title="在地图中定位此路径"
-                    onClick={() => wb.dispatch({ type: 'focus-route', routeId, preserveView: splitView })}
-                  >
-                    <Crosshair className="h-3 w-3" />
-                    定位
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </ScrollArea>
-
-      <div className="flex shrink-0 items-center justify-between border-t border-border px-4 py-1.5 text-[11px] text-muted-foreground">
-        <span className="tabular-nums">路径 {wb.mapRoutes.size} 条</span>
-        <div className="flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-6 px-2 text-[11px] text-muted-foreground hover:text-foreground"
-            disabled={!wb.mapRoutes.size}
-            title="缩放地图以显示全部已加入路径"
-            onClick={() => wb.dispatch({ type: 'fit-map-routes', preserveView: splitView })}
-          >
-            <Maximize2 className="h-3 w-3" />
-            适配
-          </Button>
-          <Button
-            variant="ghost"
-            size="xs"
-            className="h-6 px-2 text-[11px] text-muted-foreground hover:text-destructive"
-            disabled={!wb.mapRoutes.size}
-            onClick={() => wb.dispatch({ type: 'clear-map-routes' })}
-          >
-            <Trash2 className="h-3 w-3" />
-            清空
-          </Button>
-        </div>
+        {(
+          [
+            { key: 'flights' as const, label: '航班', count: wb.mapFlights.size, icon: Plane },
+            { key: 'routes' as const, label: '路径', count: wb.mapRoutes.size, icon: Route },
+            { key: 'layers' as const, label: '图层', count: null, icon: Layers },
+          ] as const
+        ).map(item => {
+          const Icon = item.icon;
+          const active = tab === item.key;
+          return (
+            <Button
+              key={item.key}
+              role="tab"
+              aria-selected={active}
+              variant={active ? 'default' : 'ghost'}
+              size="xs"
+              className={cn(
+                'h-7 gap-1 px-1.5 text-xs [&_svg]:size-3.5',
+                !active && 'text-muted-foreground hover:text-foreground',
+              )}
+              onClick={() => setTab(item.key)}
+            >
+              <Icon />
+              <span>{item.label}</span>
+              {item.count !== null && item.count > 0 && (
+                <span className="text-[11px] tabular-nums opacity-80">{item.count}</span>
+              )}
+            </Button>
+          );
+        })}
       </div>
     </aside>
   );

@@ -13,16 +13,18 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { IconActionButton } from '@/components/ui/workbench-shell';
 
 interface HeaderProps {
   editing: boolean;
   leftOpen: boolean;
   rightOpen: boolean;
+  showRightToggle?: boolean;
   onLeft(): void;
   onRight(): void;
 }
 
-export function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: HeaderProps) {
+export function Header({ editing, leftOpen, rightOpen, showRightToggle = true, onLeft, onRight }: HeaderProps) {
   const wb = useWorkbench();
   const state = wb.state;
   const [finishOpen, setFinishOpen] = useState(false);
@@ -33,24 +35,23 @@ export function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: Header
 
   return (
     <header className="relative z-[1200] col-span-full row-start-1 flex h-14 items-center gap-2.5 border-b border-border bg-background px-4">
-      <Button
-        variant="ghost"
-        size="icon-sm"
+      <IconActionButton
         className="text-muted-foreground hover:text-foreground"
-        aria-label="切换左侧栏"
+        label="切换左侧栏"
+        tooltip={leftOpen ? '收起左侧栏' : '展开左侧栏'}
         aria-expanded={leftOpen}
         onClick={onLeft}
       >
         <PanelLeft className="h-4 w-4" />
-      </Button>
+      </IconActionButton>
 
-      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-[var(--brand-red)] text-xs font-extrabold tracking-tight text-white shadow-xs">
+      <div className="grid h-8 w-8 shrink-0 place-items-center rounded-md bg-primary text-xs font-bold tracking-tight text-primary-foreground shadow-xs">
         AW
       </div>
 
       <div className="flex min-w-0 flex-col leading-tight">
         <div className="flex items-center gap-2">
-          <strong className="truncate text-[14px] font-semibold text-foreground">Airport Workbench</strong>
+          <strong className="truncate text-sm font-semibold text-foreground">Airport Workbench</strong>
           {wb.hasUnsavedChanges && (
             <Badge variant="warning" title="有未保存的图修改">
               未保存
@@ -90,16 +91,17 @@ export function Header({ editing, leftOpen, rightOpen, onLeft, onRight }: Header
         )}
       </div>
 
-      <Button
-        variant="ghost"
-        size="icon-sm"
-        className="text-muted-foreground hover:text-foreground"
-        aria-label="切换右侧栏"
-        aria-expanded={rightOpen}
-        onClick={onRight}
-      >
-        <PanelRight className="h-4 w-4" />
-      </Button>
+      {showRightToggle && (
+        <IconActionButton
+          className="text-muted-foreground hover:text-foreground"
+          label="切换右侧栏"
+          tooltip={rightOpen ? '收起右侧栏' : '展开右侧栏'}
+          aria-expanded={rightOpen}
+          onClick={onRight}
+        >
+          <PanelRight className="h-4 w-4" />
+        </IconActionButton>
+      )}
 
       <AlertDialog open={finishOpen} onOpenChange={setFinishOpen}>
         <AlertDialogContent>

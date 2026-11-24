@@ -150,3 +150,67 @@ def test_frontend_palettes_live_only_in_domain_palette():
     assert not offenders, (
         "Duplicated palette hex codes outside src/domain/palette.ts:\n" + "\n".join(offenders)
     )
+
+
+RAW_BUTTON_ALLOWLIST = {
+    "app/App.tsx",  # Draggable main-view tab buttons for split-screen DnD
+    "features/layout/RailResizer.tsx",  # Specialized pointer-capture drag separator
+}
+
+
+def test_frontend_uses_shadcn_primitives_not_raw_html():
+    """App and feature components must use src/components/ui/ primitives instead of raw HTML form/table controls."""
+    forbidden_tags = ("table", "label", "input", "select", "textarea")
+    tag_pattern = re.compile(r"<(" + "|".join(forbidden_tags) + r")\b")
+    button_pattern = re.compile(r"<button\b")
+    offenders: list[str] = []
+
+    for tsx_file in FRONTEND_SRC.rglob("*.tsx"):
+        rel = tsx_file.relative_to(FRONTEND_SRC).as_posix()
+        if rel.startswith("components/ui/"):
+            continue
+        text = tsx_file.read_text(encoding="utf-8")
+        bad_tags = sorted(set(tag_pattern.findall(text)))
+        if bad_tags:
+            offenders.append(f"{rel}: raw HTML tag(s) {bad_tags}")
+        if rel not in RAW_BUTTON_ALLOWLIST and button_pattern.search(text):
+            offenders.append(f"{rel}: raw <button> (use Button, Toggle, InlineEditTrigger, or IconActionButton)")
+
+    assert not offenders, "Non-shadcn raw HTML controls found:\n" + "\n".join(offenders)
+
+
+def test_frontend_respects_slate_tokens_and_typography():
+    """Prevent off-theme gray/accent color classes and fragmented arbitrary font sizes from creeping back."""
+    off_theme_colors = re.compile(r"\b(?:bg|text|border|ring)-(?:zinc|gray|neutral|stone|violet|purple)(?:-\d+)?(?:/\d+)?")
+    bad_font_sizes = re.compile(r"\btext-\[(?:10|12|14)px\]")
+    offenders: list[str] = []
+
+    for tsx_file in FRONTEND_SRC.rglob("*.tsx"):
+        rel = tsx_file.relative_to(FRONTEND_SRC).as_posix()
+        text = tsx_file.read_text(encoding="utf-8")
+        bad_colors = sorted(set(off_theme_colors.findall(text)))
+        if bad_colors:
+            offenders.append(f"{rel}: off-theme color classes {bad_colors}")
+        if rel != "features/graph-editor/Inspector.tsx":
+            bad_sizes = sorted(set(bad_font_sizes.findall(text)))
+            if bad_sizes:
+                offenders.append(f"{rel}: fragmented font sizes {bad_sizes}")
+
+    assert not offenders, "Design token / typography drift detected:\n" + "\n".join(offenders)
+
+
+def test_frontend_table_views_share_workbench_shell():
+    """Every feature view rendering a data <Table> must use the shared workbench-shell layout primitives."""
+    required_shell_parts = ("ViewHeader", "DataTableContainer", "PaginationFooter")
+    offenders: list[str] = []
+
+    for tsx_file in (FRONTEND_SRC / "features").rglob("*.tsx"):
+        rel = tsx_file.relative_to(FRONTEND_SRC).as_posix()
+        text = tsx_file.read_text(encoding="utf-8")
+        if "<Table" not in text:
+            continue
+        missing = [part for part in required_shell_parts if part not in text]
+        if missing:
+            offenders.append(f"{rel}: missing workbench-shell primitive(s) {missing}")
+
+    assert not offenders, "Table view shell inconsistency:\n" + "\n".join(offenders)

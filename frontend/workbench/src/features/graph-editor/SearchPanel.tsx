@@ -3,13 +3,17 @@ import { X } from 'lucide-react';
 import type { SelectedFeature } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
-function edgeLabel(id: { u: string; v: string; key: number }) {
-  return `${id.u}—${id.v} · ${id.key}`;
+import { formatEdgeId } from '@/domain/features';
+
+interface SearchPanelProps {
+  leftOffset?: boolean;
 }
 
-export function SearchPanel() {
+export function SearchPanel({ leftOffset = true }: SearchPanelProps) {
   const wb = useWorkbench();
   const [query, setQuery] = useState('');
   const [stand, setStand] = useState('');
@@ -31,7 +35,7 @@ export function SearchPanel() {
     }
     select(
       wb.state!.nodes.features.find(item => item.properties.id.toLocaleLowerCase().includes(needle)) ??
-        wb.state!.edges.features.find(item => edgeLabel(item.properties.id).toLocaleLowerCase().includes(needle)),
+        wb.state!.edges.features.find(item => formatEdgeId(item.properties.id).toLocaleLowerCase().includes(needle)),
       query.trim(),
     );
   };
@@ -63,15 +67,16 @@ export function SearchPanel() {
   };
 
   return (
-    <section
-      className="fixed top-[70px] z-[1050] max-h-[calc(100vh-120px)] w-80 space-y-3.5 overflow-auto rounded-lg border border-border bg-background/95 p-4 shadow-lg backdrop-blur-xs"
-      style={{ left: 'calc(var(--left-sidebar-width, var(--sidebar-width)) + 14px)' }}
+    <Card
+      className="fixed top-[70px] z-[1050] max-h-[calc(100vh-120px)] w-80 space-y-3.5 overflow-auto bg-background/95 p-4 shadow-lg backdrop-blur-xs"
+      style={{
+        left: leftOffset
+          ? 'calc(var(--left-sidebar-width, var(--sidebar-width)) + 14px)'
+          : '14px',
+      }}
     >
-      <div className="flex items-start justify-between gap-2">
-        <div>
-          <small className="block text-[11px] text-muted-foreground">快速定位</small>
-          <h2 className="m-0 text-[15px] font-semibold text-foreground">搜索图要素</h2>
-        </div>
+      <div className="flex items-center justify-between gap-2">
+        <h2 className="m-0 text-[15px] font-semibold text-foreground">搜索图要素</h2>
         <Button
           variant="ghost"
           size="icon-xs"
@@ -82,7 +87,7 @@ export function SearchPanel() {
         </Button>
       </div>
 
-      <label className="grid gap-1.5 text-xs text-muted-foreground">
+      <Label className="grid gap-1.5 font-normal text-muted-foreground">
         <span>节点或边 ID</span>
         <div className="flex items-center gap-1.5">
           <Input
@@ -97,9 +102,9 @@ export function SearchPanel() {
             选中
           </Button>
         </div>
-      </label>
+      </Label>
 
-      <label className="grid gap-1.5 text-xs text-muted-foreground">
+      <Label className="grid gap-1.5 font-normal text-muted-foreground">
         <span>机位编号</span>
         <div className="flex items-center gap-1.5">
           <Input
@@ -114,9 +119,9 @@ export function SearchPanel() {
             定位机位
           </Button>
         </div>
-      </label>
+      </Label>
 
-      <label className="grid gap-1.5 text-xs text-muted-foreground">
+      <Label className="grid gap-1.5 font-normal text-muted-foreground">
         <span>边的两个端点</span>
         <div className="flex items-center gap-1.5">
           <Input
@@ -140,7 +145,7 @@ export function SearchPanel() {
             选中边
           </Button>
         </div>
-      </label>
-    </section>
+      </Label>
+    </Card>
   );
 }

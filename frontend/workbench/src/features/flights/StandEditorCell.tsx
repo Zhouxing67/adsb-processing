@@ -4,9 +4,11 @@ import type { FlightItem } from '@/api/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { InlineEditTrigger, PopoverFooter } from '@/components/ui/workbench-shell';
 
 interface StandEditorCellProps {
   item: FlightItem;
@@ -78,24 +80,23 @@ export function StandEditorCell({ item, standOptions, onSave }: StandEditorCellP
       }}
     >
       <PopoverTrigger asChild>
-        <button
-          type="button"
-          className="stand-edit-trigger cursor-pointer border-0 border-b border-dashed border-zinc-400 bg-transparent px-0 py-0.5 text-[13px] text-foreground transition-colors hover:border-foreground"
-          title="点击编辑机位"
-        >
+        <InlineEditTrigger className="stand-edit-trigger" title="点击编辑机位">
           {item.stand_position || '选择机位'}
-        </button>
+        </InlineEditTrigger>
       </PopoverTrigger>
       <PopoverContent
         role="dialog"
         aria-label={`编辑 ${item.flight_id} 机位`}
-        className="w-60 space-y-2 p-2.5"
+        className="w-64 space-y-2.5 p-3"
       >
-        {canRecommend && (
-          <Button variant="outline" size="sm" onClick={() => setShowRecommendations(prev => !prev)}>
-            {showRecommendations ? '返回机位搜索' : '推荐机位'}
-          </Button>
-        )}
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-foreground">编辑机位</span>
+          {canRecommend && (
+            <Button variant="outline" size="xs" onClick={() => setShowRecommendations(prev => !prev)}>
+              {showRecommendations ? '返回机位搜索' : '推荐机位'}
+            </Button>
+          )}
+        </div>
         {!showRecommendations && (
           <Input
             type="search"
@@ -128,9 +129,9 @@ export function StandEditorCell({ item, standOptions, onSave }: StandEditorCellP
                       <div key={group} className="space-y-1 py-1">
                         <Badge variant="secondary">{group === 'high' ? '高置信度' : '中置信度'}</Badge>
                         {recommendations[group].map(candidate => (
-                          <label
+                          <Label
                             key={candidate.stand}
-                            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs hover:bg-accent"
+                            className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 font-normal hover:bg-accent"
                           >
                             <RadioGroupItem value={candidate.stand} aria-label={candidate.stand} />
                             <span>
@@ -141,7 +142,7 @@ export function StandEditorCell({ item, standOptions, onSave }: StandEditorCellP
                                   : `近 90 天使用 ${candidate.uses}/${candidate.total} 次，未发现同期占用`}
                               </small>
                             </span>
-                          </label>
+                          </Label>
                         ))}
                       </div>
                     ),
@@ -152,25 +153,25 @@ export function StandEditorCell({ item, standOptions, onSave }: StandEditorCellP
               editableStands.map(stand => {
                 const label = stand || '空机位';
                 return (
-                  <label
+                  <Label
                     key={stand || '__empty'}
-                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-foreground hover:bg-accent"
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 font-normal text-foreground hover:bg-accent"
                   >
                     <RadioGroupItem value={stand || '__empty__'} aria-label={label} />
                     <span>{label}</span>
-                  </label>
+                  </Label>
                 );
               })}
           </RadioGroup>
         </ScrollArea>
-        <div className="flex justify-end gap-1.5 border-t border-border pt-2">
+        <PopoverFooter>
           <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
             取消
           </Button>
           <Button variant="default" size="sm" disabled={saving} onClick={() => void handleSave()}>
             保存
           </Button>
-        </div>
+        </PopoverFooter>
       </PopoverContent>
     </Popover>
   );

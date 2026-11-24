@@ -112,7 +112,7 @@ export function RailResizer({ side }: { side: Side }) {
         updateAria(setWidth(side, currentWidth() + delta));
       }}
     >
-      <span className="pointer-events-none absolute inset-y-0 left-1 w-0.5 bg-transparent transition-colors group-hover:bg-zinc-400 group-focus-visible:bg-zinc-500" />
+      <span className="pointer-events-none absolute inset-y-0 left-1 w-0.5 bg-transparent transition-colors group-hover:bg-slate-400 group-focus-visible:bg-slate-500" />
     </button>
   );
 }

@@ -4,6 +4,7 @@ import type { GraphPostInput, GraphPostPath } from '../../api/client';
 import type { EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
+import { isNodeFeature as isNode } from '../../domain/features';
 import type { Aeroway } from '../../domain/properties';
 import type { GraphDialogState } from './types';
 
@@ -33,8 +34,6 @@ export function graphEditorReducer(state: GraphEditorState, event: MachineEvent)
     case 'SET_PREVIEW': return state.phase === 'confirming' ? { ...state, previewGeometry: event.geometry } : state;
   }
 }
-
-function isNode(feature: SelectedFeature): feature is GeoFeature<PointGeometry, NodeProperties> { return feature.geometry.type === 'Point'; }
 
 export function useGraphEditorMachine() {
   const wb = useWorkbench();

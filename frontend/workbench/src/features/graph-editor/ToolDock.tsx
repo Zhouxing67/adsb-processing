@@ -2,6 +2,7 @@ import { Crosshair, GitMerge, Magnet, PenLine, Route, Scissors, Trash2 } from 'l
 import type { ComponentType } from 'react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { EditorTool } from '@/app/WorkbenchContext';
+import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
 const tools: Array<{ key: EditorTool; label: string; icon: ComponentType<{ className?: string }> }> = [
@@ -42,18 +43,16 @@ export function ToolDock() {
         const active = wb.tool === tool.key;
         const danger = tool.key === 'delete';
         return (
-          <button
+          <Button
             key={tool.key}
-            type="button"
+            variant={active && !danger ? 'default' : 'ghost'}
             className={cn(
-              'flex w-full cursor-pointer items-center gap-2.5 rounded-md px-3 py-2 text-left text-[13px] transition-colors',
-              active
-                ? danger
-                  ? 'bg-red-50 font-medium text-red-700 ring-1 ring-inset ring-red-200'
-                  : 'bg-zinc-900 text-white font-medium'
-                : danger
-                  ? 'text-red-600 hover:bg-red-50/70'
-                  : 'text-foreground hover:bg-accent',
+              'h-auto w-full justify-start gap-2.5 px-3 py-2 text-left text-[13px] font-normal',
+              active && !danger && 'font-medium',
+              danger &&
+                (active
+                  ? 'bg-red-50 font-medium text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-red-50 hover:text-destructive'
+                  : 'text-destructive hover:bg-red-50/70 hover:text-destructive'),
             )}
             onClick={() => {
               wb.dispatch({ type: 'tool', value: tool.key });
@@ -62,7 +61,7 @@ export function ToolDock() {
           >
             <Icon className="h-4 w-4 shrink-0" />
             <span className="truncate">{tool.label}</span>
-          </button>
+          </Button>
         );
       })}
       </div>
