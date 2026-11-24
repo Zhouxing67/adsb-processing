@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import math
 import secrets
 from contextlib import contextmanager
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +26,28 @@ def get_token() -> str:
 
 def sql_literal(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
+
+
+def sql_value(value: Any) -> str:
+    """Render a scalar Python value as a safe DuckDB SQL literal for bulk DML."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return "TRUE" if value else "FALSE"
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError(f"Non-finite float cannot be serialized to SQL: {value!r}")
+        return repr(value)
+    if isinstance(value, datetime):
+        prefix = "TIMESTAMPTZ" if value.tzinfo is not None else "TIMESTAMP"
+        return f"{prefix} {sql_literal(value.isoformat())}"
+    if isinstance(value, date):
+        return f"DATE {sql_literal(value.isoformat())}"
+    if isinstance(value, str):
+        return sql_literal(value)
+    raise TypeError(f"Unsupported SQL literal value type: {type(value).__qualname__}")
 
 
 def attach_sql(uri: str, token: str, read_only: bool = False) -> str:
@@ -51,7 +75,7 @@ class DuckDBConnection:
             import duckdb_engine  # noqa: F401
             from sqlalchemy import URL, create_engine, event
             from sqlalchemy.exc import SQLAlchemyError
-            from sqlalchemy.pool import NullPool
+            from sqlalchemy.pool import NullPool, QueuePool
         except ImportError as error:
             raise ValueError(
                 "Install database support with: uv sync --extra stand-editing"
@@ -60,19 +84,35 @@ class DuckDBConnection:
         path = Path(database).resolve(strict=True)
         self.read_only = read_only
         self._quack_uri = quack_uri
+        self._quack_token = get_token() if quack_uri else None
         self.database_error = SQLAlchemyError
+        engine_kwargs: dict[str, Any] = {
+            "connect_args": {"read_only": read_only and not quack_uri},
+        }
+        if quack_uri:
+            engine_kwargs.update(
+                poolclass=QueuePool,
+                pool_size=4,
+                max_overflow=4,
+                pool_pre_ping=True,
+            )
+        else:
+            engine_kwargs["poolclass"] = NullPool
         self._engine = create_engine(
             URL.create("duckdb", database=":memory:" if quack_uri else str(path)),
-            connect_args={"read_only": read_only and not quack_uri},
-            poolclass=NullPool,
+            **engine_kwargs,
         )
         if quack_uri:
             event.listen(self._engine, "connect", self._initialize_quack)
 
     def _initialize_quack(self, connection: Any, _record: Any) -> None:
+        token = self._quack_token or get_token()
         connection.execute("LOAD quack")
-        connection.execute(attach_sql(self._quack_uri, get_token(), self.read_only))
+        connection.execute(attach_sql(self._quack_uri, token, self.read_only))
         connection.execute("USE adsb.main")
+
+    def close(self) -> None:
+        self._engine.dispose()
 
     @contextmanager
     def connection(self, *, write: bool = False):

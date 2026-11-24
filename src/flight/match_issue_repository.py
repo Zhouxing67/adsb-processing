@@ -7,9 +7,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from db import DuckDBConnection
+from db import DuckDBConnection, sql_value
 
 MATCH_ISSUES_TABLE = "main.match_issues"
+BATCH_MUTATION_SIZE = 200
 
 
 def make_issue_id(movement: str, flight_id: str) -> str:
@@ -62,51 +63,63 @@ class MatchIssueRepository:
         """
         if not items:
             return 0, 0
+        deduped = list(
+            {
+                (movement, flight_id): (movement, flight_id, reason, graph_id)
+                for movement, flight_id, reason, graph_id in items
+            }.values()
+        )
         now = datetime.now(timezone.utc)
         inserted = 0
         existing = 0
         with self._database.connection(write=True) as connection:
-            for movement, flight_id, reason, graph_id in items:
-                issue_id = make_issue_id(movement, flight_id)
-                cleaned_reason = (reason.strip() or None) if reason is not None else None
-                placeholders, parameters = self._database.bind(
-                    connection,
-                    issue_id,
-                    movement,
-                    flight_id,
-                    cleaned_reason,
-                    graph_id,
-                    now,
+            for offset in range(0, len(deduped), BATCH_MUTATION_SIZE):
+                chunk = deduped[offset : offset + BATCH_MUTATION_SIZE]
+                values_sql = ", ".join(
+                    "("
+                    + ", ".join(
+                        sql_value(value)
+                        for value in (
+                            make_issue_id(movement, flight_id),
+                            movement,
+                            flight_id,
+                            (reason.strip() or None) if reason is not None else None,
+                            graph_id,
+                            now,
+                        )
+                    )
+                    + ")"
+                    for movement, flight_id, reason, graph_id in chunk
                 )
-                row = connection.execute(
+                rows = connection.execute(
                     f"INSERT INTO {MATCH_ISSUES_TABLE} "
                     "(issue_id, movement, flight_id, reason, graph_id, created_at) "
-                    f"VALUES ({', '.join(placeholders)}) "
+                    f"VALUES {values_sql} "
                     "ON CONFLICT (movement, flight_id) DO NOTHING "
-                    "RETURNING issue_id",
-                    parameters,
-                ).fetchone()
-                if row is not None:
-                    inserted += 1
-                else:
-                    existing += 1
+                    "RETURNING issue_id"
+                ).fetchall()
+                chunk_inserted = len(rows)
+                inserted += chunk_inserted
+                existing += len(chunk) - chunk_inserted
         return inserted, existing
 
     def remove(self, pairs: Sequence[tuple[str, str]]) -> int:
         """Remove archived flights by (movement, flight_id). Returns deleted count."""
         if not pairs:
             return 0
+        deduped = list(dict.fromkeys(pairs))
         deleted = 0
         with self._database.connection(write=True) as connection:
-            for movement, flight_id in pairs:
-                (mov_val, fid_val), parameters = self._database.bind(
-                    connection, movement, flight_id
+            for offset in range(0, len(deduped), BATCH_MUTATION_SIZE):
+                chunk = deduped[offset : offset + BATCH_MUTATION_SIZE]
+                tuples_sql = ", ".join(
+                    f"({sql_value(movement)}, {sql_value(flight_id)})"
+                    for movement, flight_id in chunk
                 )
                 rows = connection.execute(
                     f"DELETE FROM {MATCH_ISSUES_TABLE} "
-                    f"WHERE movement = {mov_val} AND flight_id = {fid_val} "
-                    "RETURNING issue_id",
-                    parameters,
+                    f"WHERE (movement, flight_id) IN ({tuples_sql}) "
+                    "RETURNING issue_id"
                 ).fetchall()
                 deleted += len(rows)
         return deleted

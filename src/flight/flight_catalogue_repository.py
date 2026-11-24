@@ -15,6 +15,7 @@ STAND_COLUMNS = {
     "arrival": ("adsb_arr", "arr_stand_position"),
 }
 BEIJING = "Asia/Shanghai"
+_BEIJING_TZ = ZoneInfo(BEIJING)
 
 
 class FlightCatalogueRepository:
@@ -108,8 +109,8 @@ class FlightCatalogueRepository:
                         flight_id=identifier,
                         flight_number=str(number) if numbers == 1 else None,
                         number_count=numbers,
-                        start_time=utc_timestamp(start, ZoneInfo(BEIJING)),
-                        end_time=utc_timestamp(end, ZoneInfo(BEIJING)),
+                        start_time=utc_timestamp(start, _BEIJING_TZ),
+                        end_time=utc_timestamp(end, _BEIJING_TZ),
                         point_count=points,
                         stand_position=stand if count <= 1 else None,
                         stand_count=count,

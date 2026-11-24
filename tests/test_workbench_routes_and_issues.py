@@ -194,3 +194,56 @@ def test_match_issues_archive_filter_remove_and_slim_polling(tmp_path):
             params={"include_items": False, "flight_key": [flight_key]},
         ).json()
         assert [item["flight_key"] for item in slim_tracked["tasks"][0]["items"]] == [flight_key]
+
+
+def test_import_matched_routes_reuses_graph_id_and_catalogue_avoids_rescan(tmp_path, monkeypatch):
+    airport_graph = _mini_graph()
+    store = _single_flight_db(tmp_path)
+    workbench = FlightWorkbench(airport_graph, flight_database=store)
+    flight_key = next(iter(workbench.items))
+
+    # Catalogue refresh must filter in-memory items without re-scanning adsb_dep/adsb_arr.
+    def fail_summaries(*_args, **_kwargs):
+        raise AssertionError("catalogue() must not rescan raw ADS-B tables")
+
+    monkeypatch.setattr(store.catalogue, "summaries", fail_summaries)
+    refreshed = workbench.catalogue(FlightFilter(query="F1"))
+    assert refreshed["total"] == 1
+    assert refreshed["items"][0]["flight_key"] == flight_key
+
+    # Route import must pass graph_identity=self.graph_id instead of re-hashing per flight.
+    result = workbench.results[flight_key]
+    result.status = "success"
+    result.graph_id = workbench.match_tasks.graph_id
+    result.path = Path(airport_graph, [("1", "2", 0), ("2", "3", 0)])
+    result.stand_ref = "009"
+    result.runway_ref = "01"
+
+    def fail_graph_id(_graph):
+        raise AssertionError("import_matched_routes() must reuse cached graph_id")
+
+    monkeypatch.setattr("route_library.models.graph_id", fail_graph_id)
+    summary = workbench.import_matched_routes([flight_key])
+    assert summary["evaluated_flights"] == 1
+    assert summary["unique_routes"] == 1
+    assert summary["inserted_routes"] == 1
+    assert summary["existing_routes"] == 0
+    workbench.close()
+
+
+def test_quack_connection_uses_queue_pool_while_local_file_uses_null_pool(tmp_path):
+    from sqlalchemy.pool import NullPool, QueuePool
+
+    from db import DuckDBConnection
+
+    store = _single_flight_db(tmp_path)
+    assert isinstance(store.duckdb._engine.pool, NullPool)
+    store.close()
+
+    quack_conn = DuckDBConnection(
+        tmp_path / "workbench.duckdb",
+        read_only=False,
+        quack_uri="quack:127.0.0.1:9494",
+    )
+    assert isinstance(quack_conn._engine.pool, QueuePool)
+    quack_conn.close()

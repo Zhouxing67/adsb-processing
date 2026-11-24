@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping, Sequence
 from typing import Any
 
 from flight.flight_repository import FlightDatabase, database_flight_key
+
+logger = logging.getLogger(__name__)
 
 
 class MatchIssueService:
@@ -34,8 +37,7 @@ class MatchIssueService:
         }
 
     def list_issue_keys(self) -> dict[str, Any]:
-        with self.lock:
-            keys = sorted(self.issue_map())
+        keys = sorted(self.issue_map())
         return {"flight_keys": keys, "count": len(keys)}
 
     def add_issues(
@@ -63,9 +65,9 @@ class MatchIssueService:
         try:
             inserted, existing = self.flight_database.issues.add(records)
         except self.flight_database.database_error as error:
+            logger.exception("Failed to archive %d match issues", len(records))
             raise RuntimeError("异常航班归档失败") from error
-        with self.lock:
-            issue_keys = sorted(self.issue_map())
+        issue_keys = sorted(self.issue_map())
         return {
             "inserted": inserted,
             "existing": existing,
@@ -89,9 +91,9 @@ class MatchIssueService:
         try:
             deleted = self.flight_database.issues.remove(pairs)
         except self.flight_database.database_error as error:
+            logger.exception("Failed to remove %d match issues", len(pairs))
             raise RuntimeError("异常航班移出失败") from error
-        with self.lock:
-            issue_keys = sorted(self.issue_map())
+        issue_keys = sorted(self.issue_map())
         return {
             "inserted": 0,
             "existing": 0,

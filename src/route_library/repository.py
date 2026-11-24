@@ -6,7 +6,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime, timezone
 from typing import Any
 
-from db import DuckDBConnection
+from db import DuckDBConnection, sql_value
 
 from .models import (
     RouteEntry,
@@ -35,6 +35,22 @@ ROUTE_LIBRARY_COLUMNS = (
     "created_at",
     "updated_at",
 )
+ROUTE_LIBRARY_SUMMARY_COLUMNS = (
+    "route_id",
+    "graph_id",
+    "movement",
+    "stand_ref",
+    "runway_ref",
+    "runway_interface_node",
+    "edge_count",
+    "total_length_m",
+    "status",
+    "source",
+    "note",
+    "created_at",
+    "updated_at",
+)
+BATCH_INSERT_SIZE = 200
 
 
 def _row_to_entry(row: Mapping[str, Any]) -> RouteEntry:
@@ -69,42 +85,46 @@ class RouteLibraryRepository:
     ) -> tuple[int, int]:
         if not entries:
             return 0, 0
-        deduped = list(dict.fromkeys(entries))
+        deduped = list({entry.route_id: entry for entry in entries}.values())
         now = datetime.now(timezone.utc)
         inserted = 0
         existing = 0
         columns = ", ".join(ROUTE_LIBRARY_COLUMNS)
-        for entry in deduped:
-            created_at = entry.created_at or now
-            updated_at = entry.updated_at or now
-            placeholders, parameters = self._database.bind(
-                connection,
-                entry.route_id,
-                entry.graph_id,
-                entry.movement,
-                entry.stand_ref,
-                entry.runway_ref,
-                entry.runway_interface_node,
-                entry.edges_json,
-                entry.edge_count,
-                entry.total_length_m,
-                entry.status.value,
-                entry.source.value,
-                entry.note,
-                created_at,
-                updated_at,
+        for offset in range(0, len(deduped), BATCH_INSERT_SIZE):
+            chunk = deduped[offset : offset + BATCH_INSERT_SIZE]
+            values_sql = ", ".join(
+                "("
+                + ", ".join(
+                    sql_value(value)
+                    for value in (
+                        entry.route_id,
+                        entry.graph_id,
+                        entry.movement,
+                        entry.stand_ref,
+                        entry.runway_ref,
+                        entry.runway_interface_node,
+                        entry.edges_json,
+                        entry.edge_count,
+                        entry.total_length_m,
+                        entry.status.value,
+                        entry.source.value,
+                        entry.note,
+                        entry.created_at or now,
+                        entry.updated_at or now,
+                    )
+                )
+                + ")"
+                for entry in chunk
             )
-            row = connection.execute(
+            rows = connection.execute(
                 f"INSERT INTO {ROUTE_LIBRARY_TABLE} ({columns}) "
-                f"VALUES ({', '.join(placeholders)}) "
+                f"VALUES {values_sql} "
                 "ON CONFLICT (route_id) DO NOTHING "
-                "RETURNING route_id",
-                parameters,
-            ).fetchone()
-            if row is not None:
-                inserted += 1
-            else:
-                existing += 1
+                "RETURNING route_id"
+            ).fetchall()
+            chunk_inserted = len(rows)
+            inserted += chunk_inserted
+            existing += len(chunk) - chunk_inserted
         return inserted, existing
 
     def upsert_routes(self, entries: Sequence[RouteEntry]) -> tuple[int, int]:
@@ -196,6 +216,42 @@ class RouteLibraryRepository:
                 parameters,
             ).mappings()
             return [_row_to_entry(row) for row in rows]
+
+    def list_metadata(self, *, graph_id: str | None = None) -> list[dict[str, Any]]:
+        """Query route metadata without fetching or deserializing edges_json."""
+        columns = ", ".join(ROUTE_LIBRARY_SUMMARY_COLUMNS)
+        with self._database.connection() as connection:
+            if graph_id is not None:
+                (graph_val,), parameters = self._database.bind(connection, graph_id)
+                where = f" WHERE graph_id = {graph_val}"
+            else:
+                where = ""
+                parameters = ()
+            rows = connection.execute(
+                f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE}{where} "
+                "ORDER BY movement, stand_ref, runway_ref NULLS LAST, total_length_m, route_id",
+                parameters,
+            ).mappings()
+            return [
+                {
+                    "route_id": str(row["route_id"]),
+                    "graph_id": str(row["graph_id"]),
+                    "movement": str(row["movement"]),
+                    "stand_ref": str(row["stand_ref"]),
+                    "runway_ref": (
+                        str(row["runway_ref"]) if row["runway_ref"] is not None else None
+                    ),
+                    "runway_interface_node": str(row["runway_interface_node"]),
+                    "edge_count": int(row["edge_count"]),
+                    "total_length_m": float(row["total_length_m"]),
+                    "status": RouteStatus(str(row["status"])).value,
+                    "source": RouteSource(str(row["source"])).value,
+                    "note": str(row["note"]) if row["note"] is not None else None,
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in rows
+            ]
 
     def update_status(
         self,

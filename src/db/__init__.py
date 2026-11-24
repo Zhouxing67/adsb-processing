@@ -10,6 +10,7 @@ from .connection import (
     attach_sql,
     get_token,
     sql_literal,
+    sql_value,
 )
 
 __all__ = [
@@ -22,4 +23,5 @@ __all__ = [
     "attach_sql",
     "get_token",
     "sql_literal",
+    "sql_value",
 ]

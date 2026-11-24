@@ -146,6 +146,9 @@ class FlightDatabase:
     def connection(self, *, write: bool = False):
         return self._database.connection(write=write)
 
+    def close(self) -> None:
+        self._database.close()
+
     @property
     def read_only(self) -> bool:
         return self._database.read_only

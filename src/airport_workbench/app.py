@@ -255,9 +255,8 @@ class BrowserState:
                         "u": u,
                         "v": v,
                         "edge_ids": [
-                            {"u": eu, "v": ev, "key": edge_key}
-                            for eu, ev, edge_key in graph.edges(keys=True)
-                            if edge_key in keys and ({eu, ev} == {u, v})
+                            {"u": u, "v": v, "key": edge_key}
+                            for edge_key in keys
                         ],
                     }
                     for u, v, keys in parallel_groups

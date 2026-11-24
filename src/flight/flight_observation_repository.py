@@ -13,9 +13,11 @@ from db import DuckDBConnection
 from .flight_catalogue_repository import BEIJING, STAND_COLUMNS
 from .models import Flight, utc_timestamp
 
+_BEIJING_TZ = ZoneInfo(BEIJING)
+
 
 def _utc(value: datetime) -> datetime:
-    return utc_timestamp(value, ZoneInfo(BEIJING))
+    return utc_timestamp(value, _BEIJING_TZ)
 
 
 class FlightObservationRepository:
