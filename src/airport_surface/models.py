@@ -170,9 +170,15 @@ class AirportGraph:
         self.rebuild_runway_interfaces()
 
     def rebuild_runway_interfaces(self) -> None:
-        """Index nodes incident to both runway and taxiway edges.
+        """Index runway-taxiway interface nodes and symmetric runway boundary edges.
 
-        Values contain the incident runway and taxiway edge IDs respectively.
+        - ``runway_interfaces`` maps each node incident to both runway and taxiway
+          edges to ``{"runway": ..., "taxiway": ...}``.
+        - ``runway_to_edges`` maps each uppercase runway designator (e.g. ``"01"``)
+          to the incident taxiway boundary edges (symmetric with ``stand_to_edges``).
+        - ``edge_to_runways`` maps each runway-interface taxiway edge to the
+          ``frozenset`` of connected uppercase runway designators (empty when the
+          connected runway edge has no ``ref``).
         """
         incident: dict[NodeId, dict[str, list[EdgeId]]] = {}
         for u, v, key, data in self.graph.edges(keys=True, data=True):
@@ -187,6 +193,39 @@ class AirportGraph:
             for node, kinds in incident.items()
             if kinds["runway"] and kinds["taxiway"]
         }
+        forward: dict[str, list[EdgeId]] = {}
+        reverse: dict[EdgeId, set[str]] = {}
+        for interface in self.runway_interfaces.values():
+            refs: set[str] = set()
+            for edge_id in interface["runway"]:
+                raw_ref = str(self.graph.edges[edge_id].get("ref") or "").upper()
+                refs.update(part.strip() for part in raw_ref.split("/") if part.strip())
+            for taxiway_edge in interface["taxiway"]:
+                reverse.setdefault(taxiway_edge, set()).update(refs)
+                for ref in refs:
+                    forward.setdefault(ref, []).append(taxiway_edge)
+        self.runway_to_edges: dict[str, tuple[EdgeId, ...]] = {
+            ref: tuple(dict.fromkeys(edges)) for ref, edges in forward.items()
+        }
+        self.edge_to_runways: dict[EdgeId, frozenset[str]] = {
+            edge_id: frozenset(refs) for edge_id, refs in reverse.items()
+        }
+
+    def stand_for_edge(self, edge: EdgeId) -> str | None:
+        """Return the stand ref for an undirected edge, regardless of orientation."""
+        stand = self.edge_to_stand.get(edge)
+        if stand is not None:
+            return stand
+        u, v, key = edge
+        return self.edge_to_stand.get((v, u, key))
+
+    def runways_for_edge(self, edge: EdgeId) -> frozenset[str] | None:
+        """Return connected runway refs if ``edge`` is a runway-interface taxiway edge."""
+        runways = self.edge_to_runways.get(edge)
+        if runways is not None:
+            return runways
+        u, v, key = edge
+        return self.edge_to_runways.get((v, u, key))
 
     def rebuild_stand_index(self) -> None:
         """Map OSM stand refs to edge IDs and back; unlabelled stands are omitted.

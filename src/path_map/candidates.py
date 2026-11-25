@@ -40,12 +40,14 @@ class CandidateIndex:
         self.airport_graph = airport_graph
         self.edge_ids: list[EdgeId] = []
         self.lines: list[LineString] = []
+        self.lengths: list[float] = []
         for u, v, key in airport_graph.graph.edges(keys=True):
             line = airport_graph.project_shape(airport_graph.oriented_edge_geometry(u, v, key))
             if line.is_empty or line.length == 0:
                 continue
             self.edge_ids.append((u, v, key))
             self.lines.append(line)
+            self.lengths.append(line.length)
         if not self.lines:
             raise ValueError("Airport graph has no non-empty edge geometries")
         self.tree = STRtree(self.lines)
@@ -53,25 +55,31 @@ class CandidateIndex:
     def candidates(
         self, observation_index: int, point: Point, radius: float, maximum: int
     ) -> list[Candidate]:
-        indices = self.tree.query(point.buffer(radius), predicate="intersects")
-        result: list[Candidate] = []
+        indices = self.tree.query(point, predicate="dwithin", distance=radius)
+        if len(indices) == 0:
+            return []
+        lines = self.lines
+        scored: list[tuple[float, int]] = []
         for raw_index in np.asarray(indices).tolist():
             index = int(raw_index)
-
-            line = self.lines[index]
-            edge = self.edge_ids[index]
-            distance = point.distance(line)
+            distance = point.distance(lines[index])
             if distance <= radius:
-                offset = line.project(point)
-                result.append(
-                    Candidate(
-                        observation_index,
-                        edge,
-                        distance,
-                        line.interpolate(offset),
-                        offset,
-                        offset / line.length,
-                    )
+                scored.append((distance, index))
+        scored.sort()
+        edge_ids = self.edge_ids
+        lengths = self.lengths
+        result: list[Candidate] = []
+        for distance, index in scored[:maximum]:
+            line = lines[index]
+            offset = line.project(point)
+            result.append(
+                Candidate(
+                    observation_index,
+                    edge_ids[index],
+                    distance,
+                    point,
+                    offset,
+                    offset / lengths[index],
                 )
-        result.sort(key=lambda candidate: candidate.distance)
-        return result[:maximum]
+            )
+        return result

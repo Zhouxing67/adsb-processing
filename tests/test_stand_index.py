@@ -65,6 +65,30 @@ def test_runway_interface_uses_derived_edge_types_without_source_registry():
     assert airport.runway_interfaces == {
         "2": {"runway": (("1", "2", 0),), "taxiway": (("2", "3", 0),)}
     }
+    assert airport.runway_to_edges == {}
+    assert airport.edge_to_runways == {("2", "3", 0): frozenset()}
+    assert airport.runways_for_edge(("2", "3", 0)) == frozenset()
+    assert airport.runways_for_edge(("3", "2", 0)) == frozenset()
+    assert airport.runways_for_edge(("1", "2", 0)) is None
+
+
+def test_runway_edge_indices_align_with_stand_indices():
+    graph = nx.MultiGraph()
+    graph.add_edge("1", "2", aeroway="parking_position", ref="101")
+    graph.add_edge("2", "3", aeroway="taxiway")
+    graph.add_edge("3", "4", aeroway="runway", ref="01L/19R")
+
+    airport = AirportGraph(graph, Proj("EPSG:3857"))
+
+    assert airport.runway_to_edges == {
+        "01L": (("2", "3", 0),),
+        "19R": (("2", "3", 0),),
+    }
+    assert airport.edge_to_runways == {("2", "3", 0): frozenset({"01L", "19R"})}
+    assert airport.stand_for_edge(("2", "1", 0)) == "101"
+    assert airport.runways_for_edge(("3", "2", 0)) == frozenset({"01L", "19R"})
+    assert airport.copy().runway_to_edges == airport.runway_to_edges
+    assert airport.copy().edge_to_runways == airport.edge_to_runways
 
 
 def test_missing_ref_is_omitted_and_shared_ref_indexes_all_edges():

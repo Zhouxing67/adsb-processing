@@ -695,10 +695,11 @@ def test_runway_roll_observations_disambiguate_symmetric_runway_entries():
 def test_missing_runway_ref_requires_runway_end_observation():
     airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=False)
     x0, y0 = 450_000.0, 4_428_000.0
-    # Track stops mid-taxiway without reaching the runway, and runway_ref is missing.
+    # Track stops on a non-interface taxiway (2->3) without reaching the runway interface,
+    # and runway_ref is missing.
     flight = make_flight(
         to_wgs84,
-        [(x0, y0 - 20), (x0 - 40, y0)],
+        [(x0, y0 - 20), (x0, y0 + 40)],
         movement="departure",
     )
     flight = Flight([{**row, "org_runway": None} for row in flight.rows], movement="departure")
@@ -708,3 +709,65 @@ def test_missing_runway_ref_requires_runway_end_observation():
         matcher.map_flight(flight)
 
     assert exc_info.value.code is MapMatchingFailure.MISSING_OD
+
+
+@pytest.mark.parametrize("movement", ["departure", "arrival"])
+def test_phase1_pure_trajectory_succeeds_without_od_labels(movement):
+    airport_graph, to_wgs84 = straight_od_graph()
+    # Points traverse stand (1->2), runway-interface taxiway (2->3), and runway roll (3->5).
+    points = [(450_002, 4_428_000), (450_015, 4_428_000), (450_026, 4_428_000)]
+    expected = (("1", "2", 0), ("2", "3", 1))
+    if movement == "arrival":
+        points = points[::-1]
+        expected = (("3", "2", 1), ("2", "1", 0))
+    base = make_flight(to_wgs84, points, movement=movement)
+    unlabeled = Flight(
+        [
+            {
+                **row,
+                "dep_stand_position": None,
+                "arr_stand_position": None,
+                "org_runway": None,
+                "dst_runway": None,
+            }
+            for row in base.rows
+        ],
+        movement=movement,
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=1.0))
+
+    path = matcher.map_flight(unlabeled)
+
+    assert path.edge_ids == expected
+
+
+def test_phase1_falls_back_to_phase2_when_pure_path_conflicts_with_reported_stand():
+    airport_graph, to_wgs84 = straight_od_graph()
+    graph = airport_graph.graph
+    x, y = 450_000.0, 4_428_000.0
+    # Add a second stand "010" attached to junction "2" so Phase 1 naturally lands on "010".
+    graph.add_node("6", pos=to_wgs84.transform(x + 10, y - 10))
+    graph.add_edge(
+        "6",
+        "2",
+        key=0,
+        aeroway="parking_position",
+        ref="010",
+        geometry=LineString([graph.nodes["6"]["pos"], graph.nodes["2"]["pos"]]),
+    )
+    airport_graph.rebuild_stand_index()
+    airport_graph.rebuild_runway_interfaces()
+
+    # Observations clearly lie on stand "010" -> taxiway "2->3", but label reports stand "009".
+    flight = make_flight(
+        to_wgs84,
+        [(x + 10, y - 5), (x + 15, y)],
+        movement="departure",
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=2.0))
+
+    # Label is trusted: Phase 1 (stand "010") is rejected and Phase 2 enforces stand "009".
+    path = matcher.map_flight(flight)
+
+    assert path.edge_ids[0] == ("1", "2", 0)
+    assert path.edge_ids[-1] == ("2", "3", 1)

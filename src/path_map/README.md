@@ -34,12 +34,14 @@ print(stats.summary())
 A work item carries a caller-supplied key and either a loaded flight or a callable
 that loads it. Expected matching errors are recorded in the outcome. Workbench
 supplies lazy loaders and captures per-item system errors to keep task progress
-accurate. The batch runner propagates unexpected exceptions. For a single flight,
-call `matcher.map_flight(flight)`. The flight must provide its movement direction
-and stand reference; when the runway designator is omitted, the runway end of the
-track must hit a runway edge so the matcher can infer that runway (otherwise it
-raises `missing_od`). The matcher resolves the route under the turn constraint
-(allowing at most one pushback reversal for departures).
+accurate. The batch runner propagates unexpected exceptions. For a single flight, call `matcher.map_flight(flight)`. The flight must provide its
+movement direction (`departure` or `arrival`). The matcher first runs turn-constrained
+pure-trajectory decoding (allowing at most one pushback reversal for departures) and
+accepts the result immediately when it connects a stand boundary edge to a
+runway-interface taxiway edge consistently with any reported `stand_ref`/`runway_ref`.
+When trajectory evidence alone is insufficient or conflicts with reported labels, it
+falls back to OD-bounded decoding (requiring `stand_ref`, and inferring the runway from
+the runway-end observations if `runway_ref` is omitted).
 
 ## Surface OD for downstream callers
 

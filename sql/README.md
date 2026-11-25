@@ -11,6 +11,7 @@
 | `migrations/001_normalize_202406_tables.sql` | 一次性迁移脚本：将旧 `adsb_202406_arr`/`dep` 原地重命名为 `adsb_arr`/`dep` 并补充 `source_month = '2024-06'`，保留所有人工修正过的机位。 |
 | `ingest/ingest_month.sql` | 单月 CSV 增量导入脚本（Staging 清洗 → 幂等替换当月 → 跨月去重写入 → 登记批次）。 |
 | `analysis/quality_checks.sql` | 按月汇总、点数分布、机位/跑道一致性及验证航班集检查模板。 |
+| `analysis/filter_garbage_flights.sql` | 人工前置异常/垃圾轨迹过滤脚本（只读占比预览、抽样复核、可选刷新 `flight_quality_metrics`/`flight_whitelist` 或清理异常航班）。 |
 | `export/export_templates.sql` | 常用 CSV 导出模板（按最小点数导出进/离港、导出机位清单）。 |
 
 ## 核心表与约定

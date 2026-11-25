@@ -101,8 +101,8 @@ SourceSegment(
 ### 3.3 派生业务索引（`models.py`）
 `AirportGraph` 从当前拓扑和边属性派生两套业务索引，供工作台检索和 `path_map` 构造 OD 边界使用：
 
-- **机位索引（`stand_to_edges` / `edge_to_stand`）**：由 `rebuild_stand_index()` 构建。扫描所有 `aeroway == "parking_position"` 且 `ref` 非空（去空白后）的边，按 `str(ref)` 聚合为 `dict[str, tuple[EdgeId, ...]]`（允许同一机位对应多条边），并维护反向映射 `edge_to_stand`。
-- **跑道接口索引（`runway_interfaces`）**：由 `rebuild_runway_interfaces()` 构建。找出同时关联至少一条 `aeroway == "runway"` 边和至少一条 `aeroway == "taxiway"` 边的节点，记录为 `runway_interfaces[node] = {"runway": tuple[EdgeId, ...], "taxiway": tuple[EdgeId, ...]}`。跑道号通过跑道边的 `ref`（如 `"18L/36R"`）识别。
+- **机位索引（`stand_to_edges` / `edge_to_stand`）**：由 `rebuild_stand_index()` 构建。扫描所有 `aeroway == "parking_position"` 且 `ref` 非空（去空白后）的边，按 `str(ref)` 聚合为 `dict[str, tuple[EdgeId, ...]]`（允许同一机位对应多条边），并维护反向映射 `edge_to_stand` 与方向无关查询 `stand_for_edge()`。
+- **跑道接口与边界边索引（`runway_interfaces` / `runway_to_edges` / `edge_to_runways`）**：由 `rebuild_runway_interfaces()` 构建。先找出同时关联至少一条 `aeroway == "runway"` 边和至少一条 `aeroway == "taxiway"` 边的节点（`runway_interfaces[node] = {"runway": ..., "taxiway": ...}`，供工作台 `[R]` 标注使用），再对称派生跑道侧边界边索引：`runway_to_edges` 按单向大写跑道号（如 `"18L"`、`"36R"`）映射到连接该跑道交叉口的 `taxiway` 边，`edge_to_runways` 维护反向映射（配合方向无关查询 `runways_for_edge()`），使机位侧与跑道侧在 `path_map` 中统一以边为边界。
 
 > 直接修改底层 `graph` 后需手动调用上述两个 `rebuild_*` 方法；通过工作台 `EditorSession` 执行的编辑会自动同步刷新。
 
