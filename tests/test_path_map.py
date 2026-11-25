@@ -188,7 +188,10 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
     if not departure:
         expected = [(v, u, key) for u, v, key in reversed(expected)]
     flight = make_flight(to_wgs84, [(x + 6, y)], movement="departure" if departure else "arrival")
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
+    matcher = Matcher(
+        airport_graph,
+        MatchConfig(candidate_radius=0.5, max_transition_turn_angle_deg=150.0),
+    )
 
     if detour:
         path = matcher.map_flight(flight)
@@ -771,3 +774,65 @@ def test_phase1_falls_back_to_phase2_when_pure_path_conflicts_with_reported_stan
 
     assert path.edge_ids[0] == ("1", "2", 0)
     assert path.edge_ids[-1] == ("2", "3", 1)
+
+
+def test_same_edge_jitter_within_tolerance_is_accepted_without_loop():
+    airport_graph, to_wgs84 = straight_od_graph()
+    x, y = 450_000.0, 4_428_000.0
+    # Slight 3m backward GPS jitter on taxiway (2->3) within default 5m tolerance.
+    flight = make_flight(
+        to_wgs84,
+        [(x + 2, y), (x + 16, y), (x + 13, y), (x + 19, y)],
+        movement="departure",
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
+
+    assert matcher.map_flight(flight).edge_ids == (("1", "2", 0), ("2", "3", 1))
+
+
+def test_stand_edge_tolerates_larger_stationary_multipath_jitter():
+    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=False)
+    x0, y0 = 450_000.0, 4_428_000.0
+    # Arrival reaches stand (2->1) and emits a 15m back-and-forth stationary hairball (> 5m).
+    flight = make_flight(
+        to_wgs84,
+        [
+            (x0 - 80, y0),
+            (x0, y0 - 20),
+            (x0, y0 - 50),
+            (x0, y0 - 35),
+            (x0, y0 - 52),
+            (x0, y0 - 38),
+        ],
+        movement="arrival",
+    )
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20))
+
+    assert matcher.map_flight(flight).edge_ids == (("4", "2", 0), ("2", "1", 0))
+
+
+def test_single_step_detour_exceeding_limit_is_pruned():
+    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=True)
+    x0, y0 = 450_000.0, 4_428_000.0
+    # Arrival observations moving backward on (2->3): without detour pruning, the 300m detour
+    # bulb could legally reverse direction; with max_transition_detour_m=100, it is pruned.
+    flight = make_flight(
+        to_wgs84,
+        [(x0 - 60, y0), (x0, y0 + 20), (x0, y0 + 80), (x0, y0 + 20)],
+        movement="arrival",
+    )
+    matcher = Matcher(
+        airport_graph,
+        MatchConfig(candidate_radius=20, max_transition_detour_m=100.0),
+    )
+
+    with pytest.raises(MapMatchingError) as exc_info:
+        matcher.map_flight(flight)
+
+    assert exc_info.value.code is MapMatchingFailure.NO_LEGAL_PATH
+
+
+@pytest.mark.parametrize("value", [-1, float("inf"), float("nan")])
+def test_same_edge_jitter_must_be_finite_and_non_negative(value):
+    with pytest.raises(ValueError, match="same_edge_jitter_m"):
+        MatchConfig(same_edge_jitter_m=value)

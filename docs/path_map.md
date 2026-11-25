@@ -266,8 +266,10 @@ flowchart LR
 | `max_candidates` | 每个观测点最多保留的无向候选边数 | 16 |
 | `gps_sigma` | 发射得分高斯标准差 $\sigma$ | 10 m |
 | `transition_beta` | 转移得分距离差尺度 $\beta$ | 20 m |
-| `max_transition_turn_angle_deg` | 对偶图允许的最大局部转角 | 150° |
-| `turn_tangent_sample_m` | 边端局部切线采样长度 | 10 m |
+| `max_transition_turn_angle_deg` | 对偶图允许的最大局部转角 | 130° |
+| `turn_tangent_sample_m` | 边端局部切线采样长度 | 2 m |
+| `same_edge_jitter_m` | 同有向边允许的微小定位回退容差（视为原地抖动） | 5 m |
+| `max_transition_detour_m` | 相邻观测点单步转移允许的最大绕路差值 $D - r$（不含首尾 OD 边界层） | 250 m |
 
 - **索引与缓存复用**：同一图快照上的所有航班共享同一个 `Matcher`（含跑道边界层 `lru_cache`）、`CandidateIndex`（`STRtree` `dwithin` 空间查询与 Top-K 延迟投影）与 `DirectedNetworkRouter`（含按源边缓存的单源最短路距离 `distances_from` 以及仅在回溯胜出路径时惰性重建边序列的 `_route` 缓存）。匹配期间保持图快照只读，避免拓扑变更导致缓存失效。
 - **统一批处理接口**：离线运行器（`BatchMatchingRunner`）和工作台后台任务（`FlightMatchTasks`）均调用 `match_batch()` 流式产出 `MatchOutcome`，并用 `BatchStats` 汇总总数、成功数、失败分类和耗时。

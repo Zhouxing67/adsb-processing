@@ -58,8 +58,10 @@ class MatchConfig:
     max_candidates: int = 16
     gps_sigma: float = 10.0
     transition_beta: float = 20.0
-    max_transition_turn_angle_deg: float = 150.0
-    turn_tangent_sample_m: float = 10.0
+    max_transition_turn_angle_deg: float = 130.0
+    turn_tangent_sample_m: float = 2.0
+    same_edge_jitter_m: float = 5.0
+    max_transition_detour_m: float = 250.0
 
     def __post_init__(self) -> None:
         distances = (
@@ -67,9 +69,12 @@ class MatchConfig:
             self.gps_sigma,
             self.transition_beta,
             self.turn_tangent_sample_m,
+            self.max_transition_detour_m,
         )
         if any(not math.isfinite(value) or value <= 0 for value in distances):
             raise ValueError("Distance parameters must be finite and positive")
+        if not math.isfinite(self.same_edge_jitter_m) or self.same_edge_jitter_m < 0:
+            raise ValueError("same_edge_jitter_m must be finite and non-negative")
         if (
             not math.isfinite(self.max_transition_turn_angle_deg)
             or not 0 < self.max_transition_turn_angle_deg <= 180
@@ -119,6 +124,7 @@ class Matcher:
             self.index,
             max_turn_angle_deg=self.config.max_transition_turn_angle_deg,
             tangent_sample_m=self.config.turn_tangent_sample_m,
+            same_edge_jitter_m=self.config.same_edge_jitter_m,
         )
 
     def get_od(self, flight: Flight, movetype: MovementType | str | None = None) -> FlightOD:
@@ -214,6 +220,8 @@ class Matcher:
                 self.config.gps_sigma,
                 self.config.transition_beta,
                 allow_single_reversal=is_departure,
+                max_transition_detour_m=self.config.max_transition_detour_m,
+                has_boundary_layers=True,
             )
         except nx.NetworkXNoPath as exc:
             raise MapMatchingError(
@@ -262,6 +270,8 @@ class Matcher:
                 self.config.gps_sigma,
                 self.config.transition_beta,
                 allow_single_reversal=is_departure,
+                max_transition_detour_m=self.config.max_transition_detour_m,
+                has_boundary_layers=False,
             )
         except nx.NetworkXNoPath:
             return None
