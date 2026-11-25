@@ -2,6 +2,8 @@ import * as React from 'react';
 import { cn } from '@/lib/utils';
 import { Button } from './button';
 import type { ButtonProps } from './button';
+import { Input } from './input';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './select';
 import { Spinner } from './spinner';
 import { Tooltip, TooltipContent, TooltipTrigger } from './tooltip';
 
@@ -83,6 +85,125 @@ export function PaginationFooter({
     >
       {children}
     </footer>
+  );
+}
+
+export interface TablePaginationProps {
+  page: number;
+  totalPages: number;
+  totalItems: number;
+  itemLabel?: string;
+  pageSize?: number;
+  pageSizeOptions?: readonly number[];
+  disabled?: boolean;
+  onPageChange(nextPage: number): void;
+  onPageSizeChange?(nextSize: number): void;
+}
+
+const DEFAULT_PAGE_SIZE_OPTIONS = [20, 50, 100] as const;
+
+/** Shared table pagination controls with first/prev/jump/next/last buttons and optional page-size selector. */
+export function TablePagination({
+  page,
+  totalPages,
+  totalItems,
+  itemLabel = '条',
+  pageSize,
+  pageSizeOptions = DEFAULT_PAGE_SIZE_OPTIONS,
+  disabled = false,
+  onPageChange,
+  onPageSizeChange,
+}: TablePaginationProps) {
+  const safeTotalPages = Math.max(0, totalPages);
+  const [draft, setDraft] = React.useState(String(page));
+  const [error, setError] = React.useState('');
+
+  React.useEffect(() => {
+    setDraft(String(page));
+    setError('');
+  }, [page]);
+
+  const jump = () => {
+    const value = Number(draft);
+    if (!Number.isSafeInteger(value) || value < 1 || safeTotalPages < 1 || value > safeTotalPages) {
+      setError(`页码范围为 1～${Math.max(1, safeTotalPages)}`);
+      return;
+    }
+    setError('');
+    if (value !== page) onPageChange(value);
+  };
+
+  const atFirst = disabled || page <= 1;
+  const atLast = disabled || safeTotalPages <= 1 || page >= safeTotalPages;
+
+  return (
+    <>
+      <div className="flex flex-wrap items-center gap-3">
+        <span className="text-xs text-muted-foreground tabular-nums">
+          共 {totalItems} {itemLabel}
+          {safeTotalPages > 0 ? ` · 第 ${page} / ${safeTotalPages} 页` : ''}
+        </span>
+        {pageSize !== undefined && onPageSizeChange && (
+          <Select
+            value={String(pageSize)}
+            disabled={disabled}
+            onValueChange={value => {
+              const nextSize = Number(value);
+              if (Number.isSafeInteger(nextSize) && nextSize > 0 && nextSize !== pageSize) {
+                onPageSizeChange(nextSize);
+              }
+            }}
+          >
+            <SelectTrigger aria-label="每页条数" className="h-7 w-[92px] text-xs tabular-nums">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {pageSizeOptions.map(option => (
+                <SelectItem key={option} value={String(option)}>
+                  {option} 条/页
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+      </div>
+      <div className="flex flex-wrap items-center gap-1.5">
+        <Button variant="outline" size="sm" disabled={atFirst} onClick={() => onPageChange(1)}>
+          首页
+        </Button>
+        <Button variant="outline" size="sm" disabled={atFirst} onClick={() => onPageChange(Math.max(1, page - 1))}>
+          上一页
+        </Button>
+        <Input
+          type="number"
+          min={1}
+          max={Math.max(1, safeTotalPages)}
+          value={draft}
+          disabled={disabled || safeTotalPages <= 1}
+          aria-label="跳转页码"
+          className="h-7 w-16 text-center text-xs tabular-nums"
+          onChange={event => setDraft(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter') jump();
+          }}
+        />
+        <Button variant="outline" size="sm" disabled={disabled || safeTotalPages <= 1} onClick={jump}>
+          跳转
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={atLast}
+          onClick={() => onPageChange(Math.min(safeTotalPages, page + 1))}
+        >
+          下一页
+        </Button>
+        <Button variant="outline" size="sm" disabled={atLast} onClick={() => onPageChange(safeTotalPages)}>
+          尾页
+        </Button>
+        {error && <p className="m-0 text-xs text-destructive">{error}</p>}
+      </div>
+    </>
   );
 }
 

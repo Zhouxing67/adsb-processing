@@ -111,3 +111,64 @@ export function addPathDirectionArrows(
     }).addTo(targetGroup);
   });
 }
+
+export interface StyledPathOverlayOptions {
+  color: string;
+  weight?: number;
+  opacity?: number;
+  dashArray?: string;
+  haloWeight?: number;
+  haloOpacity?: number;
+  tooltip?: string;
+  onClick(event: L.LeafletMouseEvent): void;
+}
+
+export function addStyledPathOverlay(
+  displayPath: PathCollectionLike,
+  options: StyledPathOverlayOptions,
+  targetGroup: L.LayerGroup,
+): L.GeoJSON[] {
+  const halo = L.geoJSON(displayPath as never, {
+    style: {
+      color: '#fff',
+      weight: options.haloWeight ?? 8.5,
+      opacity: options.haloOpacity ?? 0.9,
+    },
+    interactive: false,
+  }).addTo(targetGroup);
+  const pathLayer = L.geoJSON(displayPath as never, {
+    style: {
+      color: options.color,
+      weight: options.weight ?? 5,
+      opacity: options.opacity ?? 0.95,
+      dashArray: options.dashArray,
+    },
+    onEachFeature: (_feature, layer) => {
+      if (options.tooltip) {
+        layer.bindTooltip(options.tooltip, { sticky: true, direction: 'top', offset: [0, -8] });
+      }
+      layer.on('click', options.onClick);
+    },
+  }).addTo(targetGroup);
+  addPathDirectionArrows(displayPath, options.color, targetGroup);
+  return [halo, pathLayer];
+}
+
+export function fitGeoJsonEntries<T>(
+  map: L.Map,
+  entries: Map<string, T>,
+  focusKey: string | undefined,
+  getGeoJson: (entry: T) => unknown,
+  maxZoom: { single: number; all: number },
+): void {
+  const selected = focusKey && entries.has(focusKey) ? [entries.get(focusKey)!] : [...entries.values()];
+  const bounds = L.latLngBounds([]);
+  selected.forEach(entry => {
+    const entryBounds = L.geoJSON(getGeoJson(entry) as never).getBounds();
+    if (entryBounds.isValid()) bounds.extend(entryBounds);
+  });
+  if (bounds.isValid()) {
+    map.invalidateSize({ animate: false, pan: false });
+    map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusKey ? maxZoom.single : maxZoom.all });
+  }
+}

@@ -3,31 +3,63 @@ import { api } from '@/api/client';
 import type { RouteItem } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapRouteInput } from '@/app/WorkbenchContext';
-import { runWithConcurrency } from '@/lib/async';
+import { useMapBatchLoader } from '@/features/map/useMapBatchLoader';
 
 interface UseRouteBatchSelectionOptions {
   items: RouteItem[];
+  page: number;
+  totalPages: number;
   splitView: boolean;
   labelFor(item: RouteItem): string;
+  fetchPage(targetPage: number): Promise<{ items: RouteItem[]; page: number }>;
 }
 
-export function useRouteBatchSelection({ items, splitView, labelFor }: UseRouteBatchSelectionOptions) {
+export function useRouteBatchSelection({
+  items,
+  page,
+  totalPages,
+  splitView,
+  labelFor,
+  fetchPage,
+}: UseRouteBatchSelectionOptions) {
   const wb = useWorkbench();
   const [selectedRoutes, setSelectedRoutes] = useState<Map<string, RouteItem>>(() => new Map());
-  const [addingProgress, setAddingProgress] = useState<{ done: number; total: number } | null>(null);
-  const batchAbortRef = useRef<AbortController | null>(null);
-  const mountedRef = useRef(true);
   const prevLibraryVersionRef = useRef(wb.routeLibraryVersion);
 
-  useEffect(() => {
-    mountedRef.current = true;
-    return () => {
-      mountedRef.current = false;
-      batchAbortRef.current?.abort();
-    };
-  }, []);
+  const mapLoader = useMapBatchLoader<RouteItem, MapRouteInput>({
+    kind: 'routes',
+    unitLabel: '路径',
+    page,
+    totalPages,
+    getKey: item => item.route_id,
+    fetchEntry: async (candidate, signal) => {
+      const geometry = await api.routeGeometry(candidate.route_id, signal);
+      return { geometry, label: labelFor(candidate), visible: true };
+    },
+    onCommitAdd: entries => {
+      wb.dispatch({
+        type: 'map-routes-batch',
+        entries: entries.map(({ key, value }) => ({ routeId: key, value })),
+      });
+      wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
+    },
+    onCommitReplace: entries => {
+      wb.dispatch({
+        type: 'replace-map-routes-batch',
+        entries: entries.map(({ key, value }) => ({ routeId: key, value })),
+        isolateFirst: true,
+        preserveView: splitView,
+      });
+    },
+    fetchPage: async targetPage => {
+      const result = await fetchPage(targetPage);
+      return {
+        items: result.items.filter(item => item.matches_current_graph),
+        page: result.page,
+      };
+    },
+  });
 
-  // Clear cross-page selection when the underlying route library version changes (e.g. re-import).
   useEffect(() => {
     if (prevLibraryVersionRef.current !== wb.routeLibraryVersion) {
       prevLibraryVersionRef.current = wb.routeLibraryVersion;
@@ -35,7 +67,6 @@ export function useRouteBatchSelection({ items, splitView, labelFor }: UseRouteB
     }
   }, [wb.routeLibraryVersion]);
 
-  // Keep cached selected RouteItem entries fresh as pages reload.
   useEffect(() => {
     if (items.length === 0) return;
     setSelectedRoutes(current => {
@@ -111,53 +142,33 @@ export function useRouteBatchSelection({ items, splitView, labelFor }: UseRouteB
 
   const clearSelection = useCallback(() => setSelectedRoutes(new Map()), []);
 
-  const addSelectedToMap = useCallback(async () => {
-    const validItems = [...selectedRoutes.values()].filter(item => item.matches_current_graph);
-    if (validItems.length === 0) return;
-    const pending = validItems.filter(item => !wb.mapRoutes.has(item.route_id));
-    if (pending.length === 0) {
-      wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
-      wb.dispatch({ type: 'status', value: `所选 ${validItems.length} 条路径均已在地图中` });
-      return;
-    }
-    const controller = new AbortController();
-    batchAbortRef.current?.abort();
-    batchAbortRef.current = controller;
-    let done = 0;
-    setAddingProgress({ done: 0, total: pending.length });
-    try {
-      const entries: Array<{ routeId: string; value: MapRouteInput }> = [];
-      await runWithConcurrency(
-        pending,
-        5,
-        async candidate => {
-          const geometry = await api.routeGeometry(candidate.route_id, controller.signal);
-          if (controller.signal.aborted) return;
-          entries.push({
-            routeId: candidate.route_id,
-            value: { geometry, label: labelFor(candidate), visible: true },
-          });
-          done += 1;
-          if (mountedRef.current) setAddingProgress({ done, total: pending.length });
-        },
-        controller.signal,
-      );
-      if (controller.signal.aborted || !mountedRef.current) return;
-      wb.dispatch({ type: 'map-routes-batch', entries });
-      wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
-      wb.dispatch({
-        type: 'status',
-        value: `已将 ${entries.length} 条路径批量加入地图`,
-      });
-    } catch (failure) {
-      if ((failure as Error).name !== 'AbortError' && mountedRef.current) {
-        wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '批量加载路径失败' });
+  const addRouteItemsToMap = useCallback(
+    (targetItems: RouteItem[]) => {
+      const validItems = targetItems.filter(item => item.matches_current_graph);
+      if (validItems.length === 0) return;
+      const pending = validItems.filter(item => !wb.mapRoutes.has(item.route_id));
+      if (pending.length === 0) {
+        wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
+        wb.dispatch({ type: 'status', value: `所选 ${validItems.length} 条路径均已在地图中` });
+        return;
       }
-    } finally {
-      if (batchAbortRef.current === controller) batchAbortRef.current = null;
-      if (mountedRef.current) setAddingProgress(null);
-    }
-  }, [selectedRoutes, wb, splitView, labelFor]);
+      mapLoader.addItems(pending);
+    },
+    [wb, splitView, mapLoader],
+  );
+
+  const addSelectedToMap = useCallback(() => {
+    addRouteItemsToMap([...selectedRoutes.values()]);
+  }, [selectedRoutes, addRouteItemsToMap]);
+
+  const replaceItemsOnMap = useCallback(
+    (targetItems: RouteItem[], pageNumber?: number) =>
+      mapLoader.replaceItems(
+        targetItems.filter(item => item.matches_current_graph),
+        pageNumber,
+      ),
+    [mapLoader],
+  );
 
   const removeSelectedFromMap = useCallback(() => {
     const onMapIds = [...selectedRoutes.keys()].filter(routeId => wb.mapRoutes.has(routeId));
@@ -166,16 +177,11 @@ export function useRouteBatchSelection({ items, splitView, labelFor }: UseRouteB
     wb.dispatch({ type: 'status', value: `已从地图移出 ${onMapIds.length} 条路径` });
   }, [selectedRoutes, wb]);
 
-  const cancelAddToMap = useCallback(() => {
-    batchAbortRef.current?.abort();
-    batchAbortRef.current = null;
-    setAddingProgress(null);
-    wb.dispatch({ type: 'status', value: '已取消批量加入地图' });
-  }, [wb]);
-
   return {
     selectedRoutes,
-    addingProgress,
+    addingProgress: mapLoader.addingProgress,
+    confirmDialog: mapLoader.confirmDialog,
+    dismissConfirm: mapLoader.dismissConfirm,
     selectablePageItems,
     allPageSelected,
     selectedOnMapCount,
@@ -184,7 +190,9 @@ export function useRouteBatchSelection({ items, splitView, labelFor }: UseRouteB
     clearSelection,
     syncSelectedItem,
     addSelectedToMap,
+    addRouteItemsToMap,
+    replaceItemsOnMap,
     removeSelectedFromMap,
-    cancelAddToMap,
+    cancelAddToMap: mapLoader.cancel,
   };
 }

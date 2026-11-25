@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { api } from '../../api/client';
 import type { MapFlightEntry, MatchStatus } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
+import type { MapFlightInput } from '../../app/WorkbenchContext';
+import { runWithConcurrency } from '../../lib/async';
 
 interface UseMatchPollingOptions {
   matchRun: string;
@@ -46,15 +48,26 @@ export function useMatchPolling({
 
         const latestResults = new Map(status.tasks.flatMap(task =>
           task.items.map(result => [result.flight_key, result] as const)));
+        const changedKeys: string[] = [];
         for (const result of latestResults.values()) {
           const previous = mapFlightsRef.current.get(result.flight_key);
           if (!previous) continue;
           if (previous.geometry.match.status === result.status && previous.geometry.match.task_id === result.task_id) continue;
-          const geometry = await api.geometry(result.flight_key);
-          if (cancelled) return;
-          const latest = mapFlightsRef.current.get(result.flight_key);
-          if (latest) {
-            dispatch({ type: 'map-flight', key: result.flight_key, value: { ...latest, geometry } });
+          changedKeys.push(result.flight_key);
+        }
+        if (changedKeys.length > 0) {
+          const updatedEntries: Array<{ key: string; value: MapFlightInput }> = [];
+          await runWithConcurrency(changedKeys, 5, async flightKey => {
+            if (cancelled) return;
+            const geometry = await api.geometry(flightKey);
+            if (cancelled) return;
+            const latest = mapFlightsRef.current.get(flightKey);
+            if (latest) {
+              updatedEntries.push({ key: flightKey, value: { ...latest, geometry } });
+            }
+          });
+          if (!cancelled && updatedEntries.length > 0) {
+            dispatch({ type: 'map-flights-batch', entries: updatedEntries });
           }
         }
 

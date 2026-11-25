@@ -1,4 +1,4 @@
-import { MapPinOff, MapPinPlus, X } from 'lucide-react';
+import { MapPinOff, MapPinPlus, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -13,6 +13,7 @@ interface RouteBulkBarProps {
   onTogglePage(): void;
   onClearSelection(): void;
   onAddSelectedToMap(): void;
+  onReplacePageToMap(): void;
   onRemoveSelectedFromMap(): void;
   onCancelAddToMap(): void;
 }
@@ -26,6 +27,7 @@ export function RouteBulkBar({
   onTogglePage,
   onClearSelection,
   onAddSelectedToMap,
+  onReplacePageToMap,
   onRemoveSelectedFromMap,
   onCancelAddToMap,
 }: RouteBulkBarProps) {
@@ -55,6 +57,16 @@ export function RouteBulkBar({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!selectablePageCount || Boolean(addingProgress)}
+          title="清空当前地图路径，加载本页全部可叠加路径并进入逐条巡检"
+          onClick={onReplacePageToMap}
+        >
+          <RefreshCw className="h-3.5 w-3.5" />
+          <span>本页替换到地图</span>
+        </Button>
         <Button
           variant="default"
           size="sm"

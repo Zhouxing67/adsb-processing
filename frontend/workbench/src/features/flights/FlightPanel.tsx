@@ -1,59 +1,39 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, FileText, MapPinOff, MapPinPlus, RotateCw } from 'lucide-react';
 import { ApiError, api } from '@/api/client';
-import type { FlightCatalogueQuery } from '@/api/client';
 import type { FlightCatalogue, FlightItem, MatchStatus } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapFlightInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Input } from '@/components/ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import {
   DataTableContainer,
   IconActionButton,
   PaginationFooter,
+  TablePagination,
   ViewHeader,
 } from '@/components/ui/workbench-shell';
 import { MATCH_STATUS_LABELS as statusLabels, MOVEMENT_LABELS as movementLabels } from '@/domain/palette';
-import { runWithConcurrency } from '@/lib/async';
+import { MapBatchConfirmDialog } from '@/features/map/MapBatchConfirmDialog';
+import { useMapBatchLoader } from '@/features/map/useMapBatchLoader';
 import { cn } from '@/lib/utils';
 import { FlightBulkBar } from './FlightBulkBar';
 import { FlightConfirmDialog } from './FlightConfirmDialog';
 import type { ConfirmDialogState } from './FlightConfirmDialog';
 import { FlightFilterBar } from './FlightFilterBar';
 import type { DraftFilters } from './FlightFilterBar';
+import {
+  buildFlightFilterChips,
+  buildFlightQueryParams as paramsFor,
+  countAdvancedFlightFilters,
+  toFlightDraft as toDraft,
+  validateFlightDraft,
+} from './flightFilterHelpers';
 import { StandEditorCell } from './StandEditorCell';
 import { defaultFlightFilters, patchStoredFlightState, readStoredFlightState } from './storage';
 import type { FlightFilters } from './storage';
-
-function toDraft(value: FlightFilters): DraftFilters {
-  return {
-    ...value,
-    minimum: String(value.minimum),
-    maximum: value.maximum === null ? '' : String(value.maximum),
-  };
-}
-
-function paramsFor(filters: FlightFilters, page?: number): FlightCatalogueQuery {
-  return {
-    q: filters.query || undefined,
-    movement_type: filters.movement || undefined,
-    match_status: filters.status || undefined,
-    min_points: filters.minimum,
-    max_points: filters.maximum,
-    stands: filters.stands,
-    start_date: filters.start || undefined,
-    end_date: filters.end || undefined,
-    validation_only: filters.validation || undefined,
-    whitelist_only: filters.whitelist || undefined,
-    issues_only: filters.issues || undefined,
-    page,
-    page_size: page === undefined ? undefined : 15,
-  };
-}
 
 function statusBadgeVariant(status: string) {
   if (status === 'success') return 'success' as const;
@@ -92,25 +72,23 @@ export function FlightPanel({
   const [filters, setFilters] = useState<FlightFilters>(initialFilters);
   const [catalogue, setCatalogue] = useState<FlightCatalogue | null>(null);
   const [page, setPage] = useState(Number.isInteger(saved.page) && saved.page! > 0 ? saved.page! : 1);
-  const [pageDraft, setPageDraft] = useState(String(page));
+  const [pageSize, setPageSize] = useState(
+    Number.isInteger(saved.pageSize) && saved.pageSize! > 0 ? saved.pageSize! : 20,
+  );
   const [loading, setLoading] = useState(false);
-  const [addingProgress, setAddingProgress] = useState<{ done: number; total: number } | null>(null);
   const [error, setError] = useState('');
-  const [pageError, setPageError] = useState('');
   const [allResultsIntent, setAllResultsIntent] = useState<boolean | null>(null);
   const [filteredKeys, setFilteredKeys] = useState<{ catalogue: FlightCatalogue; keys: string[] } | null>(null);
   const [confirmDialog, setConfirmDialog] = useState<ConfirmDialogState>(null);
   const [mutatingIssues, setMutatingIssues] = useState(false);
 
   const mounted = useRef(true);
-  const addAbortRef = useRef<AbortController | null>(null);
   const toggleFilteredSeqRef = useRef(0);
 
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
-      addAbortRef.current?.abort();
     };
   }, []);
 
@@ -119,10 +97,9 @@ export function FlightPanel({
       setLoading(true);
       setError('');
       try {
-        const value = await api.catalogue(paramsFor(filters, page), signal);
+        const value = await api.catalogue(paramsFor(filters, page, pageSize), signal);
         setCatalogue(value);
         setPage(value.page || 1);
-        setPageDraft(String(value.page || 1));
         setDraft(current => ({
           ...current,
           maximum: current.maximum === '' ? String(value.dataset_max_points) : current.maximum,
@@ -143,7 +120,7 @@ export function FlightPanel({
         setLoading(false);
       }
     },
-    [filters, page],
+    [filters, page, pageSize],
   );
 
   useEffect(() => {
@@ -158,8 +135,8 @@ export function FlightPanel({
   }, [filters]);
 
   useEffect(() => {
-    patchStoredFlightState({ filters, page });
-  }, [filters, page]);
+    patchStoredFlightState({ filters, page, pageSize });
+  }, [filters, page, pageSize]);
 
   const mutateIssues = async (mode: 'add' | 'remove') => {
     const keys = [...wb.matchSelection];
@@ -187,37 +164,13 @@ export function FlightPanel({
   };
 
   const validateAndApply = () => {
-    const minText = draft.minimum.trim();
-    const maxText = draft.maximum.trim();
-    const minimum = minText === '' ? 0 : Number(minText);
-    const maximum = maxText === '' ? (catalogue?.dataset_max_points ?? null) : Number(maxText);
-    if (!Number.isSafeInteger(minimum) || minimum < 0 || maximum === null || !Number.isSafeInteger(maximum) || maximum < 0) {
-      setError('观测点数必须是非负整数');
+    const result = validateFlightDraft(draft, catalogue);
+    if (result.error || !result.filters) {
+      setError(result.error ?? '筛选条件无效');
       return false;
     }
-    if (minimum > maximum) {
-      setError('最小观测点数不得大于最大观测点数');
-      return false;
-    }
-    if (catalogue && maximum > catalogue.dataset_max_points) {
-      setError(`最大观测点数不得超过 ${catalogue.dataset_max_points}`);
-      return false;
-    }
-    if (draft.start && draft.end && draft.start > draft.end) {
-      setError('起始日期不得晚于终止日期');
-      return false;
-    }
-    const minDate = catalogue?.dataset_min_date ?? '';
-    const maxDate = catalogue?.dataset_max_date ?? '';
-    const isFullDateRange = Boolean(minDate && maxDate) && draft.start === minDate && draft.end === maxDate;
     setError('');
-    setFilters({
-      ...draft,
-      minimum,
-      maximum,
-      start: isFullDateRange ? '' : draft.start,
-      end: isFullDateRange ? '' : draft.end,
-    });
+    setFilters(result.filters);
     setPage(1);
     return true;
   };
@@ -274,61 +227,55 @@ export function FlightPanel({
     }
   };
 
-  const runAddSelectedToMap = async (pending: string[]) => {
-    const controller = new AbortController();
-    addAbortRef.current?.abort();
-    addAbortRef.current = controller;
-    const batchSize = 10;
-    let done = 0;
-    let buffer: Array<{ key: string; value: MapFlightInput }> = [];
-    const flush = () => {
-      if (!buffer.length || !mounted.current) return;
-      const entries = buffer;
-      buffer = [];
-      dispatch({ type: 'map-flights-batch', entries });
-    };
-    setAddingProgress({ done: 0, total: pending.length });
-    await runWithConcurrency(
-      pending,
-      5,
-      async key => {
-        try {
-          const geometry = await api.geometry(key, controller.signal);
-          if (!mounted.current || controller.signal.aborted) return;
-          buffer.push({
-            key,
-            value: { geometry, label: geometry.flight_id, trajectoryVisible: true, pathVisible: true },
-          });
-          if (buffer.length >= batchSize) flush();
-        } catch (failure) {
-          if ((failure as Error).name !== 'AbortError' && mounted.current) {
-            setError(failure instanceof Error ? failure.message : '批量轨迹加载失败');
-          }
-        } finally {
-          done += 1;
-          if (mounted.current && !controller.signal.aborted) {
-            setAddingProgress({ done, total: pending.length });
-          }
-        }
-      },
-      controller.signal,
-    );
-    flush();
-    if (addAbortRef.current === controller) addAbortRef.current = null;
-    if (mounted.current) {
-      setAddingProgress(null);
-      if (controller.signal.aborted) dispatch({ type: 'status', value: '已取消批量加入地图' });
-    }
-  };
+  const mapLoader = useMapBatchLoader<{ flight_key: string; label?: string }, MapFlightInput>({
+    kind: 'flights',
+    unitLabel: '航班',
+    page,
+    totalPages: catalogue?.total_pages ?? 0,
+    getKey: item => item.flight_key,
+    fetchEntry: async (item, signal) => {
+      const geometry = await api.geometry(item.flight_key, signal);
+      return {
+        geometry,
+        label: item.label || geometry.flight_id,
+        trajectoryVisible: true,
+        pathVisible: true,
+      };
+    },
+    onCommitAdd: entries => dispatch({ type: 'map-flights-batch', entries }),
+    onCommitReplace: entries =>
+      dispatch({
+        type: 'replace-map-flights-batch',
+        entries,
+        isolateFirst: true,
+        preserveView: splitView,
+      }),
+    fetchPage: async targetPage => {
+      const nextCatalogue = await api.catalogue(paramsFor(filters, targetPage, pageSize));
+      if (mounted.current) {
+        setCatalogue(nextCatalogue);
+        setPage(nextCatalogue.page || targetPage);
+      }
+      return {
+        items: nextCatalogue.items.map(item => ({ flight_key: item.flight_key, label: item.flight_id })),
+        page: nextCatalogue.page || targetPage,
+      };
+    },
+    onError: setError,
+  });
 
   const addSelectedToMap = () => {
-    const pending = [...wb.matchSelection].filter(key => !wb.mapFlights.has(key));
-    if (!pending.length) return;
-    if (pending.length > 50) {
-      setConfirmDialog({ kind: 'bulk-map', pending });
+    const pending = [...wb.matchSelection]
+      .filter(key => !wb.mapFlights.has(key))
+      .map(flight_key => ({ flight_key }));
+    if (!pending.length) {
+      if (wb.matchSelection.size > 0) {
+        dispatch({ type: 'fit-map-flights', preserveView: splitView });
+        dispatch({ type: 'status', value: `所选 ${wb.matchSelection.size} 条航班均已在地图中` });
+      }
       return;
     }
-    void runAddSelectedToMap(pending);
+    mapLoader.addItems(pending);
   };
 
   const saveStand = async (flightKey: string, standValue: string | null) => {
@@ -369,26 +316,13 @@ export function FlightPanel({
   const executeConfirm = async () => {
     const dialog = confirmDialog;
     setConfirmDialog(null);
-    if (!dialog) return;
-    if (dialog.kind === 'bulk-map') {
-      await runAddSelectedToMap(dialog.pending);
-      return;
-    }
+    if (!dialog || dialog.kind !== 'match') return;
     try {
       await submitMatches(dialog.keys, dialog.force);
       await load();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '任务提交失败');
     }
-  };
-
-  const jump = () => {
-    const value = Number(pageDraft);
-    if (!Number.isSafeInteger(value) || value < 1 || !catalogue || value > catalogue.total_pages) {
-      return setPageError(`页码范围为 1～${catalogue?.total_pages ?? 1}`);
-    }
-    setPageError('');
-    setPage(value);
   };
 
   const allPageSelected = useMemo(
@@ -423,42 +357,14 @@ export function FlightPanel({
         filteredKeys.keys.every(key => wb.matchSelection.has(key))));
 
   const datasetMax = catalogue?.dataset_max_points ?? null;
-  const advancedActiveCount = useMemo(() => {
-    let count = 0;
-    if (filters.stands.length > 0) count += 1;
-    if (filters.minimum > 0) count += 1;
-    if (filters.maximum !== null && datasetMax !== null && filters.maximum < datasetMax) count += 1;
-    if (filters.start || filters.end) count += 1;
-    if (filters.validation) count += 1;
-    if (filters.whitelist) count += 1;
-    if (filters.issues) count += 1;
-    return count;
-  }, [filters, datasetMax]);
-
-  const activeChips = useMemo(() => {
-    const chips: Array<{ id: string; label: string; clear: () => void }> = [];
-    if (filters.query) chips.push({ id: 'q', label: `搜索: ${filters.query}`, clear: () => applyFilterPatch({ query: '' }) });
-    if (filters.movement) {
-      chips.push({ id: 'movement', label: `进出港: ${movementLabels[filters.movement] ?? filters.movement}`, clear: () => applyFilterPatch({ movement: '' }) });
-    }
-    if (filters.status) {
-      chips.push({ id: 'status', label: `状态: ${statusLabels[filters.status] ?? filters.status}`, clear: () => applyFilterPatch({ status: '' }) });
-    }
-    if (filters.stands.length) {
-      chips.push({ id: 'stands', label: `机位: ${filters.stands.map(s => s || '空机位').join(', ')}`, clear: () => applyFilterPatch({ stands: [] }) });
-    }
-    if (filters.minimum > 0) chips.push({ id: 'min', label: `观测点 ≥ ${filters.minimum}`, clear: () => applyFilterPatch({ minimum: 0 }) });
-    if (filters.maximum !== null && datasetMax !== null && filters.maximum < datasetMax) {
-      chips.push({ id: 'max', label: `观测点 ≤ ${filters.maximum}`, clear: () => applyFilterPatch({ maximum: datasetMax }) });
-    }
-    if (filters.start || filters.end) {
-      chips.push({ id: 'date', label: `日期: ${filters.start || '不限'} ~ ${filters.end || '不限'}`, clear: () => applyFilterPatch({ start: '', end: '' }) });
-    }
-    if (filters.validation) chips.push({ id: 'validation', label: '仅验证航班', clear: () => applyFilterPatch({ validation: false }) });
-    if (filters.whitelist) chips.push({ id: 'whitelist', label: '仅白名单航班', clear: () => applyFilterPatch({ whitelist: false }) });
-    if (filters.issues) chips.push({ id: 'issues', label: '仅异常归档航班', clear: () => applyFilterPatch({ issues: false }) });
-    return chips;
-  }, [filters, datasetMax, applyFilterPatch]);
+  const advancedActiveCount = useMemo(
+    () => countAdvancedFlightFilters(filters, datasetMax),
+    [filters, datasetMax],
+  );
+  const activeChips = useMemo(
+    () => buildFlightFilterChips(filters, datasetMax, applyFilterPatch),
+    [filters, datasetMax, applyFilterPatch],
+  );
 
   return (
     <section
@@ -486,11 +392,12 @@ export function FlightPanel({
 
       <FlightBulkBar
         selectedCount={wb.matchSelection.size}
+        pageCount={catalogue?.items.length ?? 0}
         allPageSelected={allPageSelected}
         allResultsChecked={allResultsIntent ?? allResultsSelected}
         canEditIssues={Boolean(catalogue?.can_edit_issues)}
         mutatingIssues={mutatingIssues}
-        addingProgress={addingProgress}
+        addingProgress={mapLoader.addingProgress}
         tracking={tracking}
         progress={progress}
         onTogglePage={() =>
@@ -506,7 +413,13 @@ export function FlightPanel({
         onArchiveIssues={() => void mutateIssues('add')}
         onRemoveIssues={() => void mutateIssues('remove')}
         onAddSelectedToMap={addSelectedToMap}
-        onCancelAddToMap={() => addAbortRef.current?.abort()}
+        onReplacePageToMap={() =>
+          void mapLoader.replaceItems(
+            (catalogue?.items ?? []).map(item => ({ flight_key: item.flight_key, label: item.flight_id })),
+            catalogue?.page || page,
+          )
+        }
+        onCancelAddToMap={mapLoader.cancel}
         onRequestSubmit={() => requestSubmit()}
       />
 
@@ -633,37 +546,19 @@ export function FlightPanel({
       </DataTableContainer>
 
       <PaginationFooter>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          {catalogue ? `共 ${catalogue.total} 条 · 第 ${catalogue.page || 0} / ${catalogue.total_pages} 页` : '—'}
-        </span>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>
-            上一页
-          </Button>
-          <Input
-            type="number"
-            min={1}
-            value={pageDraft}
-            aria-label="跳转页码"
-            className="h-7 w-16 text-center text-xs tabular-nums"
-            onChange={event => setPageDraft(event.target.value)}
-            onKeyDown={event => {
-              if (event.key === 'Enter') jump();
-            }}
-          />
-          <Button variant="outline" size="sm" onClick={jump}>
-            跳转
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!catalogue || page >= catalogue.total_pages}
-            onClick={() => setPage(value => value + 1)}
-          >
-            下一页
-          </Button>
-          {pageError && <p className="m-0 text-xs text-destructive">{pageError}</p>}
-        </div>
+        <TablePagination
+          page={catalogue?.page || 0}
+          totalPages={catalogue?.total_pages ?? 0}
+          totalItems={catalogue?.total ?? 0}
+          itemLabel="条"
+          pageSize={pageSize}
+          disabled={loading}
+          onPageChange={setPage}
+          onPageSizeChange={nextSize => {
+            setPageSize(nextSize);
+            setPage(1);
+          }}
+        />
       </PaginationFooter>
 
       <FlightConfirmDialog
@@ -671,6 +566,7 @@ export function FlightPanel({
         onClose={() => setConfirmDialog(null)}
         onConfirm={() => void executeConfirm()}
       />
+      <MapBatchConfirmDialog dialog={mapLoader.confirmDialog} onClose={mapLoader.dismissConfirm} />
     </section>
   );
 }

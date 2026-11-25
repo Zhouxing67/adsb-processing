@@ -10,7 +10,13 @@ import {
   ROUTE_COLORS as routeColors,
   ROUTE_STATUS_LABELS as routeStatusLabels,
 } from '../../domain/palette';
-import { addPathDirectionArrows, applySpreadOffset, buildEdgeOccupants, computeSpreadSignature } from './pathOverlay';
+import {
+  addStyledPathOverlay,
+  applySpreadOffset,
+  buildEdgeOccupants,
+  computeSpreadSignature,
+  fitGeoJsonEntries,
+} from './pathOverlay';
 
 export interface MapPreviewLine {
   geometry: LineGeometry;
@@ -340,15 +346,9 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
       };
       if (entry.pathVisible && geometry.path) {
         const displayPath = applySpreadOffset(geometry.path, key, edgeOccupants, spreadRoutes);
-        const halo = L.geoJSON(displayPath as never, { style: { color: '#fff', weight: 8.5, opacity: .9 }, interactive: false }).addTo(subGroup);
-        const pathLayer = L.geoJSON(displayPath as never, {
-          style: { color, weight: 5, opacity: .95 },
-          onEachFeature: (_feature, layer) => {
-            layer.on('click', handleFlightClick);
-          },
-        }).addTo(subGroup);
-        interactiveLayers.push(halo, pathLayer);
-        addPathDirectionArrows(displayPath, color, subGroup);
+        interactiveLayers.push(
+          ...addStyledPathOverlay(displayPath, { color, onClick: handleFlightClick }, subGroup),
+        );
       }
       if (entry.trajectoryVisible) {
         const trajLayer = L.geoJSON(geometry.flight as never, {
@@ -432,25 +432,22 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
           routeClickHandler.current?.(routeId);
         };
         const tooltip = `<strong>${escapeHtml(entry.label)}</strong> · ${Math.round(route.total_length_m)} m · ${route.edge_count} 边 · ${escapeHtml(routeStatusLabels[route.status] ?? route.status)}`;
-
-        const halo = L.geoJSON(displayPath as never, {
-          style: { color: '#fff', weight: verified ? 9 : 7.5, opacity: rejected ? 0.5 : 0.88 },
-          interactive: false,
-        }).addTo(subGroup);
-        const pathLayer = L.geoJSON(displayPath as never, {
-          style: {
-            color,
-            weight: verified ? 5.5 : rejected ? 3.5 : 4.5,
-            opacity: rejected ? 0.65 : 0.95,
-            dashArray: rejected ? '8 6' : undefined,
-          },
-          onEachFeature: (_feature, layer) => {
-            layer.bindTooltip(tooltip, { sticky: true, direction: 'top', offset: [0, -8] });
-            layer.on('click', handleRouteClick);
-          },
-        }).addTo(subGroup);
-        interactiveLayers.push(halo, pathLayer);
-        addPathDirectionArrows(displayPath, color, subGroup);
+        interactiveLayers.push(
+          ...addStyledPathOverlay(
+            displayPath,
+            {
+              color,
+              weight: verified ? 5.5 : rejected ? 3.5 : 4.5,
+              opacity: rejected ? 0.65 : 0.95,
+              dashArray: rejected ? '8 6' : undefined,
+              haloWeight: verified ? 9 : 7.5,
+              haloOpacity: rejected ? 0.5 : 0.88,
+              tooltip,
+              onClick: handleRouteClick,
+            },
+            subGroup,
+          ),
+        );
       }
       subGroup.addTo(group);
       rendered.set(routeId, { entry, spreadSig, layer: subGroup });
@@ -459,40 +456,20 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    if (!focusRouteRequest && fitRoutesVersion === 0) return;
-    const currentRoutes = routesRef.current;
-    const focusId = focusRouteRequest?.key;
-    const entries = focusId && currentRoutes.has(focusId) ? [currentRoutes.get(focusId)!] : [...currentRoutes.values()];
-    const bounds = L.latLngBounds([]);
-    entries.forEach(entry => {
-      const layer = L.geoJSON(entry.geometry.path as never);
-      const entryBounds = layer.getBounds();
-      if (entryBounds.isValid()) bounds.extend(entryBounds);
+    if (!map || (!focusRouteRequest && fitRoutesVersion === 0)) return;
+    fitGeoJsonEntries(map, routesRef.current, focusRouteRequest?.key, entry => entry.geometry.path, {
+      single: 20,
+      all: 19,
     });
-    if (bounds.isValid()) {
-      map.invalidateSize({ animate: false, pan: false });
-      map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusId ? 20 : 19 });
-    }
   }, [focusRouteRequest, fitRoutesVersion]);
 
   useEffect(() => {
     const map = mapRef.current;
-    if (!map) return;
-    if (!focusFlightRequest && fitMapVersion === 0) return;
-    const currentFlights = flightsRef.current;
-    const focusKey = focusFlightRequest?.key;
-    const entries = focusKey && currentFlights.has(focusKey) ? [currentFlights.get(focusKey)!] : [...currentFlights.values()];
-    const bounds = L.latLngBounds([]);
-    entries.forEach(entry => {
-      const layer = L.geoJSON(entry.geometry.flight as never);
-      const entryBounds = layer.getBounds();
-      if (entryBounds.isValid()) bounds.extend(entryBounds);
+    if (!map || (!focusFlightRequest && fitMapVersion === 0)) return;
+    fitGeoJsonEntries(map, flightsRef.current, focusFlightRequest?.key, entry => entry.geometry.flight, {
+      single: 21,
+      all: 20,
     });
-    if (bounds.isValid()) {
-      map.invalidateSize({ animate: false, pan: false });
-      map.fitBounds(bounds, { padding: [55, 55], maxZoom: focusKey ? 21 : 20 });
-    }
   }, [focusFlightRequest, fitMapVersion]);
 
   useEffect(() => {

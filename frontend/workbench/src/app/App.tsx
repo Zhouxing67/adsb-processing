@@ -416,35 +416,49 @@ function Workspace() {
         onDrop={dropIntoWorkspace}
       >
         {state.flight_mode && splitViews ? (
-          <ResizablePanelGroup
-            orientation="horizontal"
-            onLayoutChanged={handleSplitLayoutChange}
-            className="h-full w-full"
-          >
-            <ResizablePanel
-              id="left"
-              defaultSize={`${splitLeftSize}%`}
-              minSize="25%"
-              maxSize="75%"
-              className="workspace-pane relative h-full"
+          <>
+            <ResizablePanelGroup
+              orientation="horizontal"
+              onLayoutChanged={handleSplitLayoutChange}
+              className="h-full w-full"
             >
-              {renderSplitPane(splitViews[0])}
-            </ResizablePanel>
-            <ResizableHandle
-              withHandle
-              data-testid="workspace-split-handle"
-              onPointerDown={() => setSplitterResizing(true)}
-            />
-            <ResizablePanel
-              id="right"
-              defaultSize={`${100 - splitLeftSize}%`}
-              minSize="25%"
-              maxSize="75%"
-              className="workspace-pane relative h-full"
-            >
-              {renderSplitPane(splitViews[1])}
-            </ResizablePanel>
-          </ResizablePanelGroup>
+              <ResizablePanel
+                id="left"
+                defaultSize={`${splitLeftSize}%`}
+                minSize="25%"
+                maxSize="75%"
+                className="workspace-pane relative h-full"
+              >
+                {renderSplitPane(splitViews[0])}
+              </ResizablePanel>
+              <ResizableHandle
+                withHandle
+                data-testid="workspace-split-handle"
+                onPointerDown={() => setSplitterResizing(true)}
+              />
+              <ResizablePanel
+                id="right"
+                defaultSize={`${100 - splitLeftSize}%`}
+                minSize="25%"
+                maxSize="75%"
+                className="workspace-pane relative h-full"
+              >
+                {renderSplitPane(splitViews[1])}
+              </ResizablePanel>
+            </ResizablePanelGroup>
+            {!splitViews.includes('flights') && (
+              <FlightPanel
+                tracking={session.tracking}
+                progress={session.progress}
+                submitMatches={session.submitMatches}
+                active={false}
+                splitView
+                activeDetailKey={session.detail?.summary.flight_key ?? null}
+                onOpenDetail={session.openFlightDetail}
+              />
+            )}
+            {!splitViews.includes('routes') && <RouteLibraryPanel active={false} splitView />}
+          </>
         ) : (
           <>
             {renderMapView('flight', wb.view === 'map')}

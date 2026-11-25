@@ -15,6 +15,13 @@ export function useFlightSession(enabled: boolean) {
   const [progress, setProgress] = useState<MatchStatus['progress'] | null>(null);
   const restoredRef = useRef(false);
   const restoreCompleteRef = useRef(false);
+  const userMutatedMapRef = useRef(false);
+
+  useEffect(() => {
+    if (!restoreCompleteRef.current && wb.mapFlights.size > 0) {
+      userMutatedMapRef.current = true;
+    }
+  }, [wb.mapFlights]);
 
   const submitMatches = useCallback(async (keys: string[], force: boolean) => {
     const result = await api.submitMatches(keys, force);
@@ -85,7 +92,7 @@ export function useFlightSession(enabled: boolean) {
       );
       if (!controller.signal.aborted) {
         restoreCompleteRef.current = true;
-        if (restoredEntries.length) {
+        if (restoredEntries.length && !userMutatedMapRef.current) {
           dispatch({ type: 'map-flights-batch', entries: restoredEntries });
         }
       }

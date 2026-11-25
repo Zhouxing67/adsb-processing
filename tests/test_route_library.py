@@ -18,6 +18,7 @@ from airport_surface import (
 )
 from batch_matching import BatchMatchingRunner, DatabaseDataset
 from flight import Flight, MovementType
+from path_map import DirectedEdge, Path, PathGraphMismatch
 from route_library import (
     RouteEntry,
     RouteLibraryRepository,
@@ -352,3 +353,30 @@ def test_replace_candidates_only_clears_same_graph_candidates(tmp_path):
     assert routes.get(stale_candidate.route_id) is None
     assert routes.get(manual_entry.route_id) is not None
     assert routes.get(other_graph_candidate.route_id) is not None
+
+
+def test_route_entry_resolve_accepts_precomputed_graph_id_without_rehashing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    airport_graph, _ = _persisted_od_graph()
+    path = Path(airport_graph, (DirectedEdge("1", "2", 0), DirectedEdge("2", "3", 1)))
+    expected_graph_id = graph_id(airport_graph)
+    entry = RouteEntry.from_path(
+        airport_graph,
+        path,
+        movement="departure",
+        stand_ref="009",
+        runway_ref="01",
+        graph_identity=expected_graph_id,
+    )
+
+    def _boom(_graph: AirportGraph) -> str:
+        raise AssertionError("graph_id() must not be recomputed when actual_graph_id is supplied")
+
+    monkeypatch.setattr("path_map.path.graph_id", _boom)
+
+    resolved = entry.resolve(airport_graph, actual_graph_id=expected_graph_id)
+    assert resolved.edges == path.edges
+
+    with pytest.raises(PathGraphMismatch):
+        entry.resolve(airport_graph, actual_graph_id="sha256:different")

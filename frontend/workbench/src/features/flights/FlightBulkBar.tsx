@@ -1,4 +1,4 @@
-import { Flag, FlagOff, MapPinPlus, X } from 'lucide-react';
+import { Flag, FlagOff, MapPinPlus, RefreshCw, X } from 'lucide-react';
 import type { MatchStatus } from '@/api/types';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -8,6 +8,7 @@ import { RouteImportPopover } from './RouteImportPopover';
 
 interface FlightBulkBarProps {
   selectedCount: number;
+  pageCount: number;
   allPageSelected: boolean;
   allResultsChecked: boolean;
   canEditIssues: boolean;
@@ -21,12 +22,14 @@ interface FlightBulkBarProps {
   onArchiveIssues(): void;
   onRemoveIssues(): void;
   onAddSelectedToMap(): void;
+  onReplacePageToMap(): void;
   onCancelAddToMap(): void;
   onRequestSubmit(): void;
 }
 
 export function FlightBulkBar({
   selectedCount,
+  pageCount,
   allPageSelected,
   allResultsChecked,
   canEditIssues,
@@ -40,6 +43,7 @@ export function FlightBulkBar({
   onArchiveIssues,
   onRemoveIssues,
   onAddSelectedToMap,
+  onReplacePageToMap,
   onCancelAddToMap,
   onRequestSubmit,
 }: FlightBulkBarProps) {
@@ -102,6 +106,16 @@ export function FlightBulkBar({
               </IconActionButton>
             </>
           )}
+          <Button
+            variant="outline"
+            size="sm"
+            disabled={!pageCount || Boolean(addingProgress)}
+            title="清空当前地图航班，加载本页全部航班并进入逐条巡检"
+            onClick={onReplacePageToMap}
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            <span>本页替换到地图</span>
+          </Button>
           <IconActionButton
             variant="outline"
             size={addingProgress ? 'sm' : 'icon-sm'}

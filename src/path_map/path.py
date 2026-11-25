@@ -141,11 +141,15 @@ class PathRecord:
     def from_path(cls, path: Path) -> PathRecord:
         return cls(graph_id(path.airport_graph), path.edges)
 
-    def resolve(self, airport_graph: AirportGraph) -> Path:
-        actual_graph_id = graph_id(airport_graph)
-        if actual_graph_id != self.graph_id:
+    def resolve(
+        self, airport_graph: AirportGraph, *, actual_graph_id: str | None = None
+    ) -> Path:
+        resolved_graph_id = (
+            actual_graph_id if actual_graph_id is not None else graph_id(airport_graph)
+        )
+        if resolved_graph_id != self.graph_id:
             raise PathGraphMismatch(
-                f"Path requires graph {self.graph_id!r}, got {actual_graph_id!r}"
+                f"Path requires graph {self.graph_id!r}, got {resolved_graph_id!r}"
             )
         return Path(airport_graph, self.edges)
 

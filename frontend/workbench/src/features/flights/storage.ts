@@ -23,6 +23,7 @@ export interface StoredDisplay {
 export interface StoredFlightState {
   filters?: Partial<FlightFilters>;
   page?: number;
+  pageSize?: number;
   matchSelection?: string[];
   displayed?: StoredDisplay[];
 }

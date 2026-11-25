@@ -1,11 +1,14 @@
-import { Crosshair, Eye, Maximize2, Trash2, X } from 'lucide-react';
+import { Crosshair, Eye, X } from 'lucide-react';
 import type { MapRouteEntry } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription } from '@/components/ui/empty';
+import { InspectionStepper, MapRailFooter } from '@/components/ui/inspection-stepper';
+import { KeyboardShortcuts } from '@/components/ui/keyboard-shortcuts';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { IconActionButton, RAIL_ACTION_REVEAL } from '@/components/ui/workbench-shell';
 import { ROUTE_COLORS as routeColors, ROUTE_STATUS_LABELS as routeStatusLabels } from '@/domain/palette';
+import { useRailInspection } from '@/features/map/useRailInspection';
 import { cn } from '@/lib/utils';
 
 interface MapRouteListProps {
@@ -15,9 +18,26 @@ interface MapRouteListProps {
 
 export function MapRouteList({ sortedRoutes, splitView }: MapRouteListProps) {
   const wb = useWorkbench();
+  const inspection = useRailInspection({
+    kind: 'routes',
+    sortedEntries: sortedRoutes,
+    isolatedKey: wb.isolatedRouteId,
+    highlighted: wb.highlightedRoute,
+    onIsolate: routeId => wb.dispatch({ type: 'isolate-route', routeId }),
+    onFocus: routeId => wb.dispatch({ type: 'focus-route', routeId, preserveView: splitView }),
+    onFitAll: () => wb.dispatch({ type: 'fit-map-routes', preserveView: splitView }),
+  });
 
   return (
     <>
+      <KeyboardShortcuts bindings={inspection.bindings} />
+      <InspectionStepper
+        total={sortedRoutes.length}
+        currentIndex={inspection.currentIndex}
+        onPrev={() => inspection.step(-1)}
+        onNext={() => inspection.step(1)}
+        onShowAll={inspection.showAll}
+      />
       <ScrollArea className="min-h-0 flex-1 bg-background/60">
         <div className="divide-y divide-border/60 px-2 py-1">
           {sortedRoutes.length === 0 && (
@@ -27,14 +47,18 @@ export function MapRouteList({ sortedRoutes, splitView }: MapRouteListProps) {
           )}
           {sortedRoutes.map(([routeId, entry]) => {
             const isolated = wb.isolatedRouteId === routeId;
+            const highlighted = inspection.flashingKey === routeId;
             const slotColor = routeColors[entry.slot % routeColors.length];
             const route = entry.geometry.route;
             return (
               <div
                 key={routeId}
+                ref={element => inspection.setItemRef(routeId, element)}
+                data-highlighted={highlighted ? 'true' : undefined}
                 className={cn(
                   'group relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-1.5 transition-all hover:bg-background',
                   isolated && 'bg-background shadow-2xs',
+                  highlighted && 'bg-accent/80 ring-2 ring-primary/45',
                 )}
               >
                 <span
@@ -96,28 +120,13 @@ export function MapRouteList({ sortedRoutes, splitView }: MapRouteListProps) {
         </div>
       </ScrollArea>
 
-      <div className="flex shrink-0 items-center justify-end gap-1 border-t border-border bg-muted/70 px-3 py-1.5">
-        <IconActionButton
-          size="icon-xs"
-          className="text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-          label="适配全部路径"
-          tooltipSide="top"
-          disabled={!wb.mapRoutes.size}
-          onClick={() => wb.dispatch({ type: 'fit-map-routes', preserveView: splitView })}
-        >
-          <Maximize2 />
-        </IconActionButton>
-        <IconActionButton
-          size="icon-xs"
-          className="text-muted-foreground hover:text-destructive [&_svg]:size-3.5"
-          label="清空地图路径"
-          tooltipSide="top"
-          disabled={!wb.mapRoutes.size}
-          onClick={() => wb.dispatch({ type: 'clear-map-routes' })}
-        >
-          <Trash2 />
-        </IconActionButton>
-      </div>
+      <MapRailFooter
+        disabled={!wb.mapRoutes.size}
+        fitLabel="适配全部路径"
+        clearLabel="清空地图路径"
+        onFitAll={() => wb.dispatch({ type: 'fit-map-routes', preserveView: splitView })}
+        onClear={() => wb.dispatch({ type: 'clear-map-routes' })}
+      />
     </>
   );
 }

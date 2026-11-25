@@ -1,38 +1,40 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useReducer } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useReducer, useRef } from 'react';
 import type { Dispatch, ReactNode } from 'react';
 import { ApiError, api } from '../api/client';
 import type { GraphPostInput, GraphPostPath, GraphPostRequest, GraphPostResponse } from '../api/client';
 import type { MapFlightEntry, MapRouteEntry, SelectedFeature, WorkbenchState } from '../api/types';
 import { readStoredFlightState } from '../features/flights/storage';
+import {
+  addLayerBatch,
+  clearLayerCollection,
+  createMapLayerCollection,
+  fitLayerCollection,
+  focusLayerEntry,
+  highlightLayerEntry,
+  isolateLayerEntry,
+  removeLayerBatch,
+  replaceLayerBatch,
+  toggleLayerVisible,
+  upsertLayerEntry,
+} from './mapLayerCollection';
+import type { FocusRequest, MapLayerCollection, MapLayerInput } from './mapLayerCollection';
 
 export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'delete';
 export type MainView = 'map' | 'route-map' | 'flights' | 'observations' | 'routes';
-export interface FocusFlightRequest { key: string; seq: number }
+export type FocusFlightRequest = FocusRequest;
 export interface FocusFeatureRequest { feature: SelectedFeature; seq: number }
-export type MapFlightInput = Omit<MapFlightEntry, 'slot'> & { slot?: number };
-export type MapRouteInput = Omit<MapRouteEntry, 'slot'> & { slot?: number };
-
-function allocateFreeSlot(map: Map<string, { slot: number }>): number {
-  const used = new Set<number>();
-  map.forEach(entry => used.add(entry.slot));
-  let slot = 0;
-  while (used.has(slot)) slot += 1;
-  return slot;
-}
+export type MapFlightInput = MapLayerInput<MapFlightEntry>;
+export type MapRouteInput = MapLayerInput<MapRouteEntry>;
 
 interface UiState {
   state: WorkbenchState | null; loading: boolean; busy: boolean; error: string;
   status: string; tool: EditorTool; view: MainView; selected: SelectedFeature | null;
   focusFeatureRequest: FocusFeatureRequest | null;
   hasUnsavedChanges: boolean;
-  matchSelection: Set<string>; mapFlights: Map<string, MapFlightEntry>; isolatedFlightKey: string | null;
-  highlightedFlight: FocusFlightRequest | null;
-  mapFocusRequest: FocusFlightRequest | null; fitMapVersion: number; observationLocation: [number, number] | null;
-  showMapFlights: boolean;
-  mapRoutes: Map<string, MapRouteEntry>; isolatedRouteId: string | null;
-  highlightedRoute: FocusFlightRequest | null;
-  routeFocusRequest: FocusFlightRequest | null; fitRoutesVersion: number;
-  showMapRoutes: boolean;
+  matchSelection: Set<string>;
+  flightsLayer: MapLayerCollection<MapFlightEntry>;
+  routesLayer: MapLayerCollection<MapRouteEntry>;
+  observationLocation: [number, number] | null;
   flightCatalogueVersion: number;
   routeLibraryVersion: number;
   issueKeys: Set<string>;
@@ -56,6 +58,7 @@ type Action =
   | { type: 'prune-match-selection'; keys: string[] }
   | { type: 'map-flight'; key: string; value: MapFlightInput | null }
   | { type: 'map-flights-batch'; entries: Array<{ key: string; value: MapFlightInput }> }
+  | { type: 'replace-map-flights-batch'; entries: Array<{ key: string; value: MapFlightInput }>; isolateFirst?: boolean; preserveView?: boolean }
   | { type: 'clear-map-flights' }
   | { type: 'isolate-flight'; key: string | null }
   | { type: 'highlight-flight'; key: string | null }
@@ -64,6 +67,7 @@ type Action =
   | { type: 'toggle-map-flights-group' }
   | { type: 'map-route'; routeId: string; value: MapRouteInput | null }
   | { type: 'map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteInput }> }
+  | { type: 'replace-map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteInput }>; isolateFirst?: boolean; preserveView?: boolean }
   | { type: 'remove-map-routes-batch'; routeIds: string[] }
   | { type: 'clear-map-routes' }
   | { type: 'isolate-route'; routeId: string | null }
@@ -80,12 +84,10 @@ type Action =
 const initial: UiState = {
   state: null, loading: true, busy: false, error: '', status: '正在载入工作台…', tool: 'inspect',
   view: 'map', selected: null, focusFeatureRequest: null, hasUnsavedChanges: false,
-  matchSelection: new Set(readStoredFlightState().matchSelection ?? []), mapFlights: new Map(), isolatedFlightKey: null,
-  highlightedFlight: null,
-  mapFocusRequest: null, fitMapVersion: 0, observationLocation: null,
-  showMapFlights: true,
-  mapRoutes: new Map(), isolatedRouteId: null, highlightedRoute: null,
-  routeFocusRequest: null, fitRoutesVersion: 0, showMapRoutes: true,
+  matchSelection: new Set(readStoredFlightState().matchSelection ?? []),
+  flightsLayer: createMapLayerCollection<MapFlightEntry>(),
+  routesLayer: createMapLayerCollection<MapRouteEntry>(),
+  observationLocation: null,
   flightCatalogueVersion: 0,
   routeLibraryVersion: 0,
   issueKeys: new Set(),
@@ -129,129 +131,117 @@ function reducer(state: UiState, action: Action): UiState {
       const valid = new Set(action.keys);
       return { ...state, matchSelection: new Set([...state.matchSelection].filter(key => valid.has(key))) };
     }
-    case 'map-flight': {
-      const next = new Map(state.mapFlights);
-      if (action.value) {
-        const existing = next.get(action.key);
-        const slot = action.value.slot ?? existing?.slot ?? allocateFreeSlot(next);
-        next.set(action.key, { ...action.value, slot });
-      } else {
-        next.delete(action.key);
-      }
-      return { ...state, mapFlights: next, isolatedFlightKey: !action.value && state.isolatedFlightKey === action.key ? null : state.isolatedFlightKey };
-    }
-    case 'map-flights-batch': {
-      if (!action.entries.length) return state;
-      const next = new Map(state.mapFlights);
-      action.entries.forEach(({ key, value }) => {
-        const existing = next.get(key);
-        const slot = value.slot ?? existing?.slot ?? allocateFreeSlot(next);
-        next.set(key, { ...value, slot });
-      });
-      return { ...state, mapFlights: next };
-    }
-    case 'clear-map-flights': return { ...state, mapFlights: new Map(), isolatedFlightKey: null, highlightedFlight: null, mapFocusRequest: null };
-    case 'isolate-flight': return { ...state, isolatedFlightKey: action.key, status: action.key ? '仅显示所选航班' : '已恢复全部地图航班', error: '' };
-    case 'highlight-flight': return {
-      ...state,
-      highlightedFlight: action.key ? { key: action.key, seq: (state.highlightedFlight?.seq ?? 0) + 1 } : null,
-    };
-    case 'focus-flight': return {
-      ...state,
-      mapFocusRequest: { key: action.key, seq: (state.mapFocusRequest?.seq ?? 0) + 1 },
-      view: action.preserveView ? state.view : 'map',
-      status: '已定位航班',
-      error: '',
-    };
-    case 'fit-map-flights': return {
-      ...state,
-      fitMapVersion: state.fitMapVersion + 1,
-      view: action.preserveView ? state.view : 'map',
-      status: '已适配全部地图航班',
-      error: '',
-    };
-    case 'toggle-map-flights-group': return {
-      ...state,
-      showMapFlights: !state.showMapFlights,
-      status: state.showMapFlights ? '已隐藏地图航班图层' : '已显示地图航班图层',
-      error: '',
-    };
-    case 'map-route': {
-      const next = new Map(state.mapRoutes);
-      if (action.value) {
-        const existing = next.get(action.routeId);
-        const slot = action.value.slot ?? existing?.slot ?? allocateFreeSlot(next);
-        next.set(action.routeId, { ...action.value, slot });
-      } else {
-        next.delete(action.routeId);
-      }
+    case 'map-flight':
+      return { ...state, flightsLayer: upsertLayerEntry(state.flightsLayer, action.key, action.value) };
+    case 'map-flights-batch':
+      return { ...state, flightsLayer: addLayerBatch(state.flightsLayer, action.entries) };
+    case 'replace-map-flights-batch':
       return {
         ...state,
-        mapRoutes: next,
-        showMapRoutes: action.value ? true : state.showMapRoutes,
-        isolatedRouteId: !action.value && state.isolatedRouteId === action.routeId ? null : state.isolatedRouteId,
+        flightsLayer: replaceLayerBatch(state.flightsLayer, action.entries, { isolateFirst: action.isolateFirst }),
+        view: action.preserveView ? state.view : 'map',
       };
-    }
-    case 'map-routes-batch': {
-      if (!action.entries.length) return state;
-      const next = new Map(state.mapRoutes);
-      action.entries.forEach(({ routeId, value }) => {
-        const existing = next.get(routeId);
-        const slot = value.slot ?? existing?.slot ?? allocateFreeSlot(next);
-        next.set(routeId, { ...value, slot });
-      });
-      return { ...state, mapRoutes: next, showMapRoutes: true };
-    }
-    case 'remove-map-routes-batch': {
-      if (!action.routeIds.length) return state;
-      const next = new Map(state.mapRoutes);
-      const removed = new Set(action.routeIds);
-      removed.forEach(routeId => next.delete(routeId));
+    case 'clear-map-flights':
+      return { ...state, flightsLayer: clearLayerCollection(state.flightsLayer) };
+    case 'isolate-flight':
       return {
         ...state,
-        mapRoutes: next,
-        isolatedRouteId: state.isolatedRouteId && removed.has(state.isolatedRouteId) ? null : state.isolatedRouteId,
+        flightsLayer: isolateLayerEntry(state.flightsLayer, action.key),
+        status: action.key ? '仅显示所选航班' : '已恢复全部地图航班',
+        error: '',
+      };
+    case 'highlight-flight':
+      return { ...state, flightsLayer: highlightLayerEntry(state.flightsLayer, action.key) };
+    case 'focus-flight':
+      return {
+        ...state,
+        flightsLayer: focusLayerEntry(state.flightsLayer, action.key),
+        view: action.preserveView ? state.view : 'map',
+        status: '已定位航班',
+        error: '',
+      };
+    case 'fit-map-flights':
+      return {
+        ...state,
+        flightsLayer: fitLayerCollection(state.flightsLayer),
+        view: action.preserveView ? state.view : 'map',
+        status: '已适配全部地图航班',
+        error: '',
+      };
+    case 'toggle-map-flights-group':
+      return {
+        ...state,
+        flightsLayer: toggleLayerVisible(state.flightsLayer),
+        status: state.flightsLayer.visible ? '已隐藏地图航班图层' : '已显示地图航班图层',
+        error: '',
+      };
+    case 'map-route':
+      return { ...state, routesLayer: upsertLayerEntry(state.routesLayer, action.routeId, action.value) };
+    case 'map-routes-batch':
+      return {
+        ...state,
+        routesLayer: addLayerBatch(
+          state.routesLayer,
+          action.entries.map(({ routeId, value }) => ({ key: routeId, value })),
+        ),
+      };
+    case 'replace-map-routes-batch': {
+      const nextRoutes = replaceLayerBatch(
+        state.routesLayer,
+        action.entries.map(({ routeId, value }) => ({ key: routeId, value })),
+        { isolateFirst: action.isolateFirst },
+      );
+      const targetView = state.flightsLayer.entries.size > 0 && nextRoutes.entries.size > 0 ? 'route-map' : 'map';
+      return {
+        ...state,
+        routesLayer: nextRoutes,
+        view: action.preserveView ? state.view : targetView,
       };
     }
-    case 'clear-map-routes': return {
-      ...state,
-      mapRoutes: new Map(),
-      isolatedRouteId: null,
-      highlightedRoute: null,
-      routeFocusRequest: null,
-    };
-    case 'isolate-route': return {
-      ...state,
-      isolatedRouteId: action.routeId,
-      status: action.routeId ? '仅显示所选路径' : '已恢复全部地图路径',
-      error: '',
-    };
-    case 'highlight-route': return {
-      ...state,
-      highlightedRoute: action.routeId ? { key: action.routeId, seq: (state.highlightedRoute?.seq ?? 0) + 1 } : null,
-    };
-    case 'focus-route': return {
-      ...state,
-      routeFocusRequest: { key: action.routeId, seq: (state.routeFocusRequest?.seq ?? 0) + 1 },
-      showMapRoutes: true,
-      view: action.preserveView ? state.view : state.mapFlights.size > 0 && state.mapRoutes.size > 0 ? 'route-map' : 'map',
-      status: '已定位路径',
-      error: '',
-    };
-    case 'fit-map-routes': return {
-      ...state,
-      fitRoutesVersion: state.fitRoutesVersion + 1,
-      showMapRoutes: true,
-      view: action.preserveView ? state.view : state.mapFlights.size > 0 && state.mapRoutes.size > 0 ? 'route-map' : 'map',
-      status: '已适配全部地图路径',
-      error: '',
-    };
-    case 'toggle-map-routes-group': return {
-      ...state,
-      showMapRoutes: !state.showMapRoutes,
-      status: state.showMapRoutes ? '已隐藏地图路径图层' : '已显示地图路径图层',
-      error: '',
-    };
+    case 'remove-map-routes-batch':
+      return { ...state, routesLayer: removeLayerBatch(state.routesLayer, action.routeIds) };
+    case 'clear-map-routes':
+      return { ...state, routesLayer: clearLayerCollection(state.routesLayer) };
+    case 'isolate-route':
+      return {
+        ...state,
+        routesLayer: isolateLayerEntry(state.routesLayer, action.routeId),
+        status: action.routeId ? '仅显示所选路径' : '已恢复全部地图路径',
+        error: '',
+      };
+    case 'highlight-route':
+      return { ...state, routesLayer: highlightLayerEntry(state.routesLayer, action.routeId) };
+    case 'focus-route':
+      return {
+        ...state,
+        routesLayer: focusLayerEntry(state.routesLayer, action.routeId),
+        view: action.preserveView
+          ? state.view
+          : state.flightsLayer.entries.size > 0 && state.routesLayer.entries.size > 0
+            ? 'route-map'
+            : 'map',
+        status: '已定位路径',
+        error: '',
+      };
+    case 'fit-map-routes':
+      return {
+        ...state,
+        routesLayer: fitLayerCollection(state.routesLayer),
+        view: action.preserveView
+          ? state.view
+          : state.flightsLayer.entries.size > 0 && state.routesLayer.entries.size > 0
+            ? 'route-map'
+            : 'map',
+        status: '已适配全部地图路径',
+        error: '',
+      };
+    case 'toggle-map-routes-group':
+      return {
+        ...state,
+        routesLayer: toggleLayerVisible(state.routesLayer),
+        status: state.routesLayer.visible ? '已隐藏地图路径图层' : '已显示地图路径图层',
+        error: '',
+      };
     case 'flights-updated': return {
       ...state,
       flightCatalogueVersion: state.flightCatalogueVersion + 1,
@@ -274,16 +264,44 @@ function reducer(state: UiState, action: Action): UiState {
     case 'panel': return { ...state, [action.panel]: action.value };
   }
 }
+export type PageStepperKind = 'flights' | 'routes';
+export type PageStepHandler = (delta: -1 | 1) => Promise<void>;
+
 interface ContextValue extends UiState {
+  mapFlights: Map<string, MapFlightEntry>;
+  isolatedFlightKey: string | null;
+  highlightedFlight: FocusFlightRequest | null;
+  mapFocusRequest: FocusFlightRequest | null;
+  fitMapVersion: number;
+  showMapFlights: boolean;
+  mapRoutes: Map<string, MapRouteEntry>;
+  isolatedRouteId: string | null;
+  highlightedRoute: FocusFlightRequest | null;
+  routeFocusRequest: FocusFlightRequest | null;
+  fitRoutesVersion: number;
+  showMapRoutes: boolean;
   dispatch: Dispatch<Action>;
   refresh(options?: { preserveStatus?: boolean; signal?: AbortSignal }): Promise<WorkbenchState | null>;
   runGraphCommand<P extends GraphPostPath>(path: P, body?: GraphPostInput<P>): Promise<GraphPostResponse<P> | null>;
   previewGraphCommand<P extends GraphPostPath>(path: P, body?: GraphPostInput<P>): Promise<GraphPostResponse<P> | null>;
+  registerPageStepper(kind: PageStepperKind, handler: PageStepHandler | null): void;
+  stepPage(kind: PageStepperKind, delta: -1 | 1): Promise<void>;
 }
 const WorkbenchContext = createContext<ContextValue | null>(null);
 
 export function WorkbenchProvider({ children }: { children: ReactNode }) {
   const [model, dispatch] = useReducer(reducer, initial);
+  const pageSteppersRef = useRef<Record<PageStepperKind, PageStepHandler | null>>({
+    flights: null,
+    routes: null,
+  });
+  const registerPageStepper = useCallback((kind: PageStepperKind, handler: PageStepHandler | null) => {
+    pageSteppersRef.current[kind] = handler;
+  }, []);
+  const stepPage = useCallback(async (kind: PageStepperKind, delta: -1 | 1) => {
+    const handler = pageSteppersRef.current[kind];
+    if (handler) await handler(delta);
+  }, []);
   const refresh = useCallback(async (options?: { preserveStatus?: boolean; signal?: AbortSignal }) => {
     try {
       const value = await api.state(options?.signal);
@@ -350,7 +368,30 @@ export function WorkbenchProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener('beforeunload', onBeforeUnload);
   }, [model.hasUnsavedChanges]);
 
-  const value = useMemo(() => ({ ...model, dispatch, refresh, runGraphCommand, previewGraphCommand }), [model, refresh, runGraphCommand, previewGraphCommand]);
+  const value = useMemo(
+    () => ({
+      ...model,
+      mapFlights: model.flightsLayer.entries,
+      isolatedFlightKey: model.flightsLayer.isolatedKey,
+      highlightedFlight: model.flightsLayer.highlighted,
+      mapFocusRequest: model.flightsLayer.focusRequest,
+      fitMapVersion: model.flightsLayer.fitVersion,
+      showMapFlights: model.flightsLayer.visible,
+      mapRoutes: model.routesLayer.entries,
+      isolatedRouteId: model.routesLayer.isolatedKey,
+      highlightedRoute: model.routesLayer.highlighted,
+      routeFocusRequest: model.routesLayer.focusRequest,
+      fitRoutesVersion: model.routesLayer.fitVersion,
+      showMapRoutes: model.routesLayer.visible,
+      dispatch,
+      refresh,
+      runGraphCommand,
+      previewGraphCommand,
+      registerPageStepper,
+      stepPage,
+    }),
+    [model, refresh, runGraphCommand, previewGraphCommand, registerPageStepper, stepPage],
+  );
   return <WorkbenchContext.Provider value={value}>{children}</WorkbenchContext.Provider>;
 }
 export function useWorkbench() {

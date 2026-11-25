@@ -176,7 +176,7 @@ class RouteLibraryService:
         if entry is None:
             raise KeyError(f"Unknown route_id: {route_id!r}")
         try:
-            path = entry.resolve(self.airport_graph)
+            path = entry.resolve(self.airport_graph, actual_graph_id=self.graph_id)
         except (PathGraphMismatch, ValueError, KeyError) as error:
             raise ValueError(f"路径无法在当前机场图上解析：{error}") from error
         return {

@@ -107,8 +107,12 @@ class RouteEntry:
     def to_path_record(self) -> PathRecord:
         return PathRecord(self.graph_id, self.edges)
 
-    def resolve(self, airport_graph: AirportGraph) -> Path:
-        return self.to_path_record().resolve(airport_graph)
+    def resolve(
+        self, airport_graph: AirportGraph, *, actual_graph_id: str | None = None
+    ) -> Path:
+        return self.to_path_record().resolve(
+            airport_graph, actual_graph_id=actual_graph_id
+        )
 
     @classmethod
     def from_path(

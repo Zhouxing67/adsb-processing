@@ -6,7 +6,6 @@ import type { RouteItem, RouteList } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapRouteInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
-import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -15,10 +14,11 @@ import {
   DataTableContainer,
   IconActionButton,
   PaginationFooter,
+  TablePagination,
   ViewHeader,
 } from '@/components/ui/workbench-shell';
 import { ROUTE_STATUS_LABELS as statusLabels } from '@/domain/palette';
-import { runWithConcurrency } from '@/lib/async';
+import { MapBatchConfirmDialog } from '@/features/map/MapBatchConfirmDialog';
 import { cn } from '@/lib/utils';
 import { RouteBulkBar } from './RouteBulkBar';
 import { NULL_RUNWAY_VALUE, RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
@@ -31,7 +31,7 @@ function routeOdLabel(item: RouteItem): string {
   return item.movement === 'departure' ? `${item.stand_ref} → ${rwy}` : `${rwy} → ${item.stand_ref}`;
 }
 
-function paramsFor(filters: RouteFilters, page: number): RouteListQuery {
+function paramsFor(filters: RouteFilters, page: number, pageSize: number): RouteListQuery {
   return {
     q: filters.query.trim() || undefined,
     movement: filters.movement || undefined,
@@ -41,7 +41,7 @@ function paramsFor(filters: RouteFilters, page: number): RouteListQuery {
     status: filters.status || undefined,
     all_graphs: filters.allGraphs || undefined,
     page,
-    page_size: 20,
+    page_size: pageSize,
   };
 }
 
@@ -56,24 +56,33 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
   const [filters, setFilters] = useState<RouteFilters>(defaultRouteFilters);
   const [data, setData] = useState<RouteList | null>(null);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [busyRouteId, setBusyRouteId] = useState<string | null>(null);
   const [savingReview, setSavingReview] = useState(false);
-  const overlayAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
 
   const batch = useRouteBatchSelection({
     items: data?.items ?? [],
+    page,
+    totalPages: data?.total_pages ?? 0,
     splitView,
     labelFor: routeOdLabel,
+    fetchPage: async targetPage => {
+      const nextData = await api.routes(paramsFor(filters, targetPage, pageSize));
+      if (mountedRef.current) {
+        setData(nextData);
+        setPage(nextData.page || targetPage);
+      }
+      return { items: nextData.items, page: nextData.page || targetPage };
+    },
   });
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      overlayAbortRef.current?.abort();
     };
   }, []);
 
@@ -82,7 +91,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
       setLoading(true);
       setError('');
       try {
-        const result = await api.routes(paramsFor(filters, page), signal);
+        const result = await api.routes(paramsFor(filters, page, pageSize), signal);
         setData(result);
         if (result.page > 0 && result.page !== page) setPage(result.page);
       } catch (failure) {
@@ -97,7 +106,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         setLoading(false);
       }
     },
-    [filters, page],
+    [filters, page, pageSize],
   );
 
   useEffect(() => {
@@ -144,7 +153,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
     }
   };
 
-  const overlaySameOd = async (item: RouteItem) => {
+  const overlaySameOd = (item: RouteItem) => {
     if (!data) return;
     const peers = data.items.filter(
       candidate =>
@@ -153,45 +162,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         candidate.stand_ref === item.stand_ref &&
         candidate.runway_ref === item.runway_ref,
     );
-    const pending = peers.filter(candidate => !wb.mapRoutes.has(candidate.route_id));
-    if (pending.length === 0) {
-      wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
-      return;
-    }
-    const controller = new AbortController();
-    overlayAbortRef.current?.abort();
-    overlayAbortRef.current = controller;
-    setBusyRouteId(item.route_id);
-    try {
-      const entries: Array<{ routeId: string; value: MapRouteInput }> = [];
-      await runWithConcurrency(
-        pending,
-        5,
-        async candidate => {
-          const geometry = await api.routeGeometry(candidate.route_id, controller.signal);
-          if (controller.signal.aborted) return;
-          entries.push({
-            routeId: candidate.route_id,
-            value: { geometry, label: routeOdLabel(candidate), visible: true },
-          });
-        },
-        controller.signal,
-      );
-      if (controller.signal.aborted || !mountedRef.current) return;
-      wb.dispatch({ type: 'map-routes-batch', entries });
-      wb.dispatch({ type: 'fit-map-routes', preserveView: splitView });
-      wb.dispatch({
-        type: 'status',
-        value: `已将 ${routeOdLabel(item)} 下的 ${peers.length} 条路径叠加到地图`,
-      });
-    } catch (failure) {
-      if ((failure as Error).name !== 'AbortError' && mountedRef.current) {
-        wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '批量加载路径失败' });
-      }
-    } finally {
-      if (overlayAbortRef.current === controller) overlayAbortRef.current = null;
-      if (mountedRef.current) setBusyRouteId(current => (current === item.route_id ? null : current));
-    }
+    batch.addRouteItemsToMap(peers);
   };
 
   const applyReview = async (routeId: string, status: string, note: string | null): Promise<boolean> => {
@@ -300,6 +271,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
           onTogglePage={batch.toggleSelectPage}
           onClearSelection={batch.clearSelection}
           onAddSelectedToMap={() => void batch.addSelectedToMap()}
+          onReplacePageToMap={() => void batch.replaceItemsOnMap(batch.selectablePageItems, data.page || page)}
           onRemoveSelectedFromMap={batch.removeSelectedFromMap}
           onCancelAddToMap={batch.cancelAddToMap}
         />
@@ -440,7 +412,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
                             disabled={busy || !item.matches_current_graph}
                             label={`同 OD 对比（${sameOdCount} 条）`}
                             tooltip={`叠加本页同 OD 的 ${sameOdCount} 条路径对比`}
-                            onClick={() => void overlaySameOd(item)}
+                            onClick={() => overlaySameOd(item)}
                           >
                             <Layers />
                             <span className="tabular-nums">{sameOdCount}</span>
@@ -457,29 +429,22 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
       </DataTableContainer>
 
       <PaginationFooter>
-        <span className="text-xs text-muted-foreground tabular-nums">
-          共 {data?.total ?? 0} 条路径
-          {data && data.total_pages > 0 ? ` · 第 ${data.page} / ${data.total_pages} 页` : ''}
-        </span>
-        <div className="flex items-center gap-1.5">
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!data || data.page <= 1}
-            onClick={() => setPage(current => Math.max(1, current - 1))}
-          >
-            上一页
-          </Button>
-          <Button
-            variant="outline"
-            size="sm"
-            disabled={!data || data.page >= data.total_pages}
-            onClick={() => setPage(current => current + 1)}
-          >
-            下一页
-          </Button>
-        </div>
+        <TablePagination
+          page={data?.page ?? 0}
+          totalPages={data?.total_pages ?? 0}
+          totalItems={data?.total ?? 0}
+          itemLabel="条路径"
+          pageSize={pageSize}
+          disabled={loading}
+          onPageChange={setPage}
+          onPageSizeChange={nextSize => {
+            setPageSize(nextSize);
+            setPage(1);
+          }}
+        />
       </PaginationFooter>
+
+      <MapBatchConfirmDialog dialog={batch.confirmDialog} onClose={batch.dismissConfirm} />
     </section>
   );
 }

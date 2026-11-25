@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Crosshair,
   Eye,
@@ -7,10 +7,8 @@ import {
   Flag,
   Layers,
   LoaderCircle,
-  Maximize2,
   Plane,
   Route,
-  Trash2,
   X,
 } from 'lucide-react';
 import { api } from '@/api/client';
@@ -18,12 +16,15 @@ import type { MapFlightEntry, WorkbenchState } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
 import { Empty, EmptyDescription } from '@/components/ui/empty';
+import { InspectionStepper, MapRailFooter } from '@/components/ui/inspection-stepper';
+import { KeyboardShortcuts } from '@/components/ui/keyboard-shortcuts';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Toggle } from '@/components/ui/toggle';
 import { IconActionButton, RAIL_ACTION_REVEAL } from '@/components/ui/workbench-shell';
 import { FLIGHT_COLORS as colors } from '@/domain/palette';
 import { Inspector } from '@/features/graph-editor/Inspector';
 import type { LayerSettings } from '@/features/graph-editor/Inspector';
+import { useRailInspection } from '@/features/map/useRailInspection';
 import { cn } from '@/lib/utils';
 import { MapRouteList } from './MapRouteList';
 
@@ -48,11 +49,9 @@ export function MapSelectionRail({
 }: MapSelectionRailProps) {
   const wb = useWorkbench();
   const [tab, setTab] = useState<RailTab>('flights');
-  const [flashingKey, setFlashingKey] = useState<string | null>(null);
   const [loadingDetailKey, setLoadingDetailKey] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState<Set<string>>(new Set());
   const [togglingIssue, setTogglingIssue] = useState<Set<string>>(new Set());
-  const itemRefs = useRef<Map<string, HTMLDivElement>>(new Map());
 
   const toggleIssue = async (key: string, label: string, reason?: string | null) => {
     const archived = wb.issueKeys.has(key);
@@ -94,30 +93,17 @@ export function MapSelectionRail({
   };
 
   useEffect(() => {
-    const highlighted = wb.highlightedFlight;
-    if (!highlighted) return;
-    setTab('flights');
-    setFlashingKey(highlighted.key);
-    const frame = window.requestAnimationFrame(() => {
-      itemRefs.current.get(highlighted.key)?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    });
-    const timer = window.setTimeout(() => {
-      setFlashingKey(current => (current === highlighted.key ? null : current));
-    }, 1800);
-    return () => {
-      window.cancelAnimationFrame(frame);
-      window.clearTimeout(timer);
-    };
-  }, [wb.highlightedFlight]);
+    if (wb.highlightedRoute || wb.routeFocusRequest) setTab('routes');
+  }, [wb.highlightedRoute, wb.routeFocusRequest]);
 
   useEffect(() => {
-    if (wb.highlightedRoute) setTab('routes');
-  }, [wb.highlightedRoute]);
+    if (wb.mapFocusRequest) setTab('flights');
+  }, [wb.mapFocusRequest]);
 
   useEffect(() => {
     if (wb.view === 'route-map') setTab('routes');
-    else if (wb.view === 'map') setTab('flights');
-  }, [wb.view]);
+    else if (wb.view === 'map' && wb.mapFlights.size > 0) setTab('flights');
+  }, [wb.view, wb.mapFlights.size]);
 
   const updateMapEntry = (key: string, patch: Partial<MapFlightEntry>) => {
     const entry = wb.mapFlights.get(key);
@@ -135,6 +121,33 @@ export function MapSelectionRail({
 
   const sortedFlights = [...wb.mapFlights].sort((a, b) => a[1].slot - b[1].slot);
   const sortedRoutes = [...wb.mapRoutes].sort((a, b) => a[1].slot - b[1].slot);
+
+  const toggleIsolatedFlightIssue = async () => {
+    const currentIndex = wb.isolatedFlightKey
+      ? sortedFlights.findIndex(([key]) => key === wb.isolatedFlightKey)
+      : -1;
+    if (currentIndex < 0) {
+      if (sortedFlights.length > 0) {
+        wb.dispatch({ type: 'status', value: '请先单独显示一条航班，再按 I 切换异常归档' });
+      }
+      return;
+    }
+    const [key, entry] = sortedFlights[currentIndex];
+    if (togglingIssue.has(key)) return;
+    await toggleIssue(key, entry.label, entry.geometry.match.error);
+  };
+
+  const flightInspection = useRailInspection({
+    kind: 'flights',
+    sortedEntries: sortedFlights,
+    isolatedKey: wb.isolatedFlightKey,
+    highlighted: wb.highlightedFlight,
+    onIsolate: key => wb.dispatch({ type: 'isolate-flight', key }),
+    onFocus: key => wb.dispatch({ type: 'focus-flight', key, preserveView: splitView }),
+    onFitAll: () => wb.dispatch({ type: 'fit-map-flights', preserveView: splitView }),
+    onHighlightMatch: () => setTab('flights'),
+    extraBindings: [{ key: 'i', onTrigger: () => void toggleIsolatedFlightIssue() }],
+  });
 
   const tabTitle = tab === 'flights' ? '地图航班' : tab === 'routes' ? '地图路径' : '机场网络与图层';
 
@@ -176,6 +189,14 @@ export function MapSelectionRail({
 
       {tab === 'flights' && (
         <>
+          <KeyboardShortcuts enabled={tab === 'flights'} bindings={flightInspection.bindings} />
+          <InspectionStepper
+            total={sortedFlights.length}
+            currentIndex={flightInspection.currentIndex}
+            onPrev={() => flightInspection.step(-1)}
+            onNext={() => flightInspection.step(1)}
+            onShowAll={flightInspection.showAll}
+          />
           <ScrollArea className="min-h-0 flex-1 bg-background/60">
             <div className="divide-y divide-border/60 px-2 py-1">
               {wb.mapFlights.size === 0 && (
@@ -185,7 +206,7 @@ export function MapSelectionRail({
               )}
               {sortedFlights.map(([key, entry]) => {
                 const isolated = wb.isolatedFlightKey === key;
-                const highlighted = flashingKey === key;
+                const highlighted = flightInspection.flashingKey === key;
                 const slotColor = colors[entry.slot % colors.length];
                 const hasPath = Boolean(entry.geometry.path);
                 const match = entry.geometry.match;
@@ -194,10 +215,7 @@ export function MapSelectionRail({
                 return (
                   <div
                     key={key}
-                    ref={element => {
-                      if (element) itemRefs.current.set(key, element);
-                      else itemRefs.current.delete(key);
-                    }}
+                    ref={element => flightInspection.setItemRef(key, element)}
                     data-highlighted={highlighted ? 'true' : undefined}
                     className={cn(
                       'selected-chip group relative flex flex-col gap-1 rounded-md py-1.5 pl-3 pr-1.5 transition-all hover:bg-background',
@@ -343,28 +361,13 @@ export function MapSelectionRail({
             </div>
           </ScrollArea>
 
-          <div className="flex shrink-0 items-center justify-end gap-1 border-t border-border bg-muted/70 px-3 py-1.5">
-            <IconActionButton
-              size="icon-xs"
-              className="text-muted-foreground hover:text-foreground [&_svg]:size-3.5"
-              label="适配全部航班"
-              tooltipSide="top"
-              disabled={!wb.mapFlights.size}
-              onClick={() => wb.dispatch({ type: 'fit-map-flights', preserveView: splitView })}
-            >
-              <Maximize2 />
-            </IconActionButton>
-            <IconActionButton
-              size="icon-xs"
-              className="text-muted-foreground hover:text-destructive [&_svg]:size-3.5"
-              label="清空地图航班"
-              tooltipSide="top"
-              disabled={!wb.mapFlights.size}
-              onClick={() => wb.dispatch({ type: 'clear-map-flights' })}
-            >
-              <Trash2 />
-            </IconActionButton>
-          </div>
+          <MapRailFooter
+            disabled={!wb.mapFlights.size}
+            fitLabel="适配全部航班"
+            clearLabel="清空地图航班"
+            onFitAll={() => wb.dispatch({ type: 'fit-map-flights', preserveView: splitView })}
+            onClear={() => wb.dispatch({ type: 'clear-map-flights' })}
+          />
         </>
       )}
 
