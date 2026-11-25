@@ -38,3 +38,11 @@ All changes must preserve the 4-layer unidirectional architecture (enforced by `
   - All DuckDB `CREATE TABLE` / `CREATE INDEX` / schema migrations live exclusively in `sql/schema/` and `sql/migrations/`.
   - Python repositories and scripts perform CRUD/DML only (fail fast if a table is missing; tests apply `sql/schema/01_core_tables.sql` via `db.apply_core_schema()`).
   - Never access private `._database` attributes from outside repository classes.
+
+## Python Type Annotation Conventions
+
+- **Zero-error baseline**: Keep `ty check src` (configured via `[tool.ty.src]` in `pyproject.toml`) and `ruff check` clean on touched Python modules.
+- **Name instead of nest**: When a type grows beyond two levels of nesting, extract a Python 3.12+ `type Alias = ...`, `dataclass`, or `TypedDict` instead of writing deeply nested generic types.
+- **Avoid type gymnastics**: Do not write convoluted type-level metaprogramming just to satisfy the checker; at dynamic boundaries (e.g. `pandas`, `networkx`, or untyped third-party stubs), isolate with an explicit local annotation, `cast`, or small `Protocol` rather than disabling checks globally.
+- **Transparent signatures**: Do not use decorators that implicitly add or mutate public function parameters; declare parameters explicitly and share lock/validation boilerplate via context managers so IDE completion and static analysis stay aligned.
+- **Narrow before ignoring**: For `T | None` or union types, prefer explicit narrowing (`if x is None`, `isinstance(...)`, or `assert` for proven invariants) over `# type: ignore`.

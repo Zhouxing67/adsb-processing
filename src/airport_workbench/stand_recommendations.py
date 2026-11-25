@@ -44,7 +44,7 @@ class StandGeometryIndex:
                 stand = self.refs[i]
                 distance = point.distance(self.tree.geometries[i])
                 distances[stand] = min(distance, distances.get(stand, inf))
-            ranked = sorted(distances, key=distances.get)
+            ranked = sorted(distances, key=distances.__getitem__)
             if ranked:
                 stand = ranked[0]
                 distance = distances[stand]

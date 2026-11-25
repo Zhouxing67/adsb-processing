@@ -139,7 +139,9 @@ class BrowserState:
 
     def _state(self, can_finish: bool, save_path: FilePath) -> dict[str, Any]:
         graph = self.session.graph
-        components = sorted(nx.connected_components(graph), key=len, reverse=True)
+        components: list[set[Any]] = sorted(
+            nx.connected_components(graph), key=len, reverse=True
+        )
         component_by_node = {
             node: index + 1 for index, members in enumerate(components) for node in members
         }

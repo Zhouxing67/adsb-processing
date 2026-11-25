@@ -43,7 +43,7 @@ def match_batch(
         stand_ref = None
         runway_ref = None
         try:
-            flight = source() if callable(source) else source
+            flight = source if isinstance(source, Flight) else source()
             count = flight.point_count
             stand_ref = flight.stand_ref
             runway_ref = flight.runway_ref

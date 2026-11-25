@@ -222,13 +222,16 @@ class FlightWorkbench:
 
     def recommend_stands(self, key: str) -> StandRecommendations:
         flight = self._flight(key)
-        _, column = STAND_COLUMNS[flight.movement]
-        event = flight.actual_dep if flight.movement == "departure" else flight.actual_arr
+        movement = flight.movement
+        if movement is None or movement not in STAND_COLUMNS:
+            return StandRecommendations(high=[], medium=[])
+        _, column = STAND_COLUMNS[movement]
+        event = flight.actual_dep if movement == "departure" else flight.actual_arr
         if flight.stand_ref or (flight.od_error and column in flight.od_error) or event is None:
             return StandRecommendations(high=[], medium=[])
         high = self._stand_geometry.candidates(flight, event)
         history = self.flight_database.stands.historical_candidates(
-            flight.movement, flight.flight_id, flight.number, event, flight.a_num
+            movement, flight.flight_id, flight.number, event, flight.a_num
         ) if flight.number else []
         spatial_stands = {candidate.stand for candidate in high}
         return StandRecommendations(high=high, medium=[

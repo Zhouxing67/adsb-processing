@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from itertools import pairwise
-from typing import Any, Iterator, Sequence
+from typing import Any, Iterator, Sequence, overload
 
 from shapely.geometry import LineString
 
@@ -49,6 +49,12 @@ class Path(Sequence[DirectedEdge]):
 
     def __len__(self) -> int:
         return len(self._edges)
+
+    @overload
+    def __getitem__(self, index: int) -> DirectedEdge: ...
+
+    @overload
+    def __getitem__(self, index: slice) -> tuple[DirectedEdge, ...]: ...
 
     def __getitem__(self, index: int | slice) -> DirectedEdge | tuple[DirectedEdge, ...]:
         return self._edges[index]

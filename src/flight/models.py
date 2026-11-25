@@ -6,7 +6,7 @@ import math
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, tzinfo
-from typing import Any
+from typing import Any, cast
 
 from utils.json_value import to_json_value
 
@@ -16,10 +16,11 @@ REQUIRED_FLIGHT_COLUMNS = frozenset({"flight_id", "timestamp", "longitude", "lat
 def _records(source: Iterable[Mapping[str, Any]], owner: str) -> list[dict[str, Any]]:
     # Accept existing DataFrame callers at the input boundary.
     if hasattr(source, "to_dict") and hasattr(source, "columns"):
-        missing = REQUIRED_FLIGHT_COLUMNS.difference(source.columns)
+        frame = cast(Any, source)
+        missing = REQUIRED_FLIGHT_COLUMNS.difference(frame.columns)
         if missing:
             raise ValueError(f"{owner} is missing required columns: {sorted(missing)}")
-        source = source.to_dict(orient="records")
+        source = frame.to_dict(orient="records")
     rows = []
     for record in source:
         missing = REQUIRED_FLIGHT_COLUMNS.difference(record)

@@ -106,6 +106,7 @@ class DuckDBConnection:
             event.listen(self._engine, "connect", self._initialize_quack)
 
     def _initialize_quack(self, connection: Any, _record: Any) -> None:
+        assert self._quack_uri is not None
         token = self._quack_token or get_token()
         connection.execute("LOAD quack")
         connection.execute(attach_sql(self._quack_uri, token, self.read_only))
