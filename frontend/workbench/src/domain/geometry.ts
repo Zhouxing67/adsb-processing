@@ -80,3 +80,58 @@ export function offsetSegmentWithPinnedEndpoints(
     return shift(point, coordinates[index - 1], coordinates[index + 1]);
   });
 }
+
+export interface ConnectedEdgeAngleInput {
+  u: string;
+  v: string;
+  coordinates: ReadonlyArray<LngLat>;
+}
+
+export interface ConnectedEdgeAngleResult {
+  sharedNodeId: string;
+  interiorDegrees: number;
+  turnDegrees: number;
+}
+
+function outwardTangent(coordinates: ReadonlyArray<LngLat>, anchor: LngLat): [number, number] | null {
+  if (coordinates.length < 2) return null;
+  const distSq = (p: LngLat) => (p[0] - anchor[0]) ** 2 + (p[1] - anchor[1]) ** 2;
+  const ordered =
+    distSq(coordinates[0]) <= distSq(coordinates[coordinates.length - 1])
+      ? coordinates
+      : [...coordinates].reverse();
+  const origin = ordered[0];
+  const cosLat = Math.max(0.1, Math.cos(origin[1] * (Math.PI / 180)));
+  for (let i = 1; i < ordered.length; i += 1) {
+    const dx = (ordered[i][0] - origin[0]) * cosLat;
+    const dy = ordered[i][1] - origin[1];
+    if (dx * dx + dy * dy > 1e-16) return [dx, dy];
+  }
+  return null;
+}
+
+export function computeConnectedEdgesAngles(
+  edgeA: ConnectedEdgeAngleInput,
+  edgeB: ConnectedEdgeAngleInput,
+  nodePositions: ReadonlyMap<string, LngLat>,
+): ConnectedEdgeAngleResult[] {
+  const endsB = new Set([edgeB.u, edgeB.v]);
+  const sharedNodes = [...new Set([edgeA.u, edgeA.v].filter(id => endsB.has(id)))];
+  return sharedNodes.flatMap(sharedNodeId => {
+    const anchor = nodePositions.get(sharedNodeId);
+    if (!anchor) return [];
+    const vecA = outwardTangent(edgeA.coordinates, anchor);
+    const vecB = outwardTangent(edgeB.coordinates, anchor);
+    if (!vecA || !vecB) return [];
+    const cosine = Math.max(
+      -1,
+      Math.min(1, (vecA[0] * vecB[0] + vecA[1] * vecB[1]) / (Math.hypot(...vecA) * Math.hypot(...vecB))),
+    );
+    const interior = (Math.acos(cosine) * 180) / Math.PI;
+    return [{
+      sharedNodeId,
+      interiorDegrees: Math.round(interior * 10) / 10,
+      turnDegrees: Math.round((180 - interior) * 10) / 10,
+    }];
+  });
+}

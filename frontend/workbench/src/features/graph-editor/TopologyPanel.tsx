@@ -1,16 +1,25 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Play, Square, X } from 'lucide-react';
-import type { SelectedFeature } from '@/api/types';
+import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Play, RotateCcw, Square, X } from 'lucide-react';
+import type { EdgeProperties, GeoFeature, LineGeometry, SelectedFeature } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Toggle } from '@/components/ui/toggle';
 import { IconActionButton } from '@/components/ui/workbench-shell';
+import { formatEdgeId } from '@/domain/features';
+import { computeConnectedEdgesAngles } from '@/domain/geometry';
+import type { LngLat } from '@/domain/geometry';
 import { cn } from '@/lib/utils';
+
+export type AngleMeasureEdge = GeoFeature<LineGeometry, EdgeProperties>;
 
 interface TopologyPanelProps {
   splitValidation: boolean;
   onSplitValidation(): void;
+  angleMeasureActive: boolean;
+  angleEdges: AngleMeasureEdge[];
+  onToggleAngleMeasure(): void;
+  onClearAngleEdges(): void;
 }
 
 type AnomalyKey = 'isolated' | 'parallel' | 'deadend' | 'islands';
@@ -22,7 +31,14 @@ interface AnomalyItem {
   feature: SelectedFeature;
 }
 
-export function TopologyPanel({ splitValidation, onSplitValidation }: TopologyPanelProps) {
+export function TopologyPanel({
+  splitValidation,
+  onSplitValidation,
+  angleMeasureActive,
+  angleEdges,
+  onToggleAngleMeasure,
+  onClearAngleEdges,
+}: TopologyPanelProps) {
   const wb = useWorkbench();
   const topology = wb.state?.topology;
   const [reviewIndex, setReviewIndex] = useState(-1);
@@ -105,6 +121,24 @@ export function TopologyPanel({ splitValidation, onSplitValidation }: TopologyPa
 
     return { isolated, parallel, deadend, islands };
   }, [nodes, edges, topology]);
+
+  const nodePositions = useMemo(() => {
+    const map = new Map<string, LngLat>();
+    for (const node of nodes) {
+      map.set(node.properties.id, node.geometry.coordinates);
+    }
+    return map;
+  }, [nodes]);
+
+  const angleResults = useMemo(() => {
+    if (angleEdges.length !== 2) return null;
+    const [first, second] = angleEdges;
+    return computeConnectedEdgesAngles(
+      { u: String(first.properties.u), v: String(first.properties.v), coordinates: first.geometry.coordinates },
+      { u: String(second.properties.u), v: String(second.properties.v), coordinates: second.geometry.coordinates },
+      nodePositions,
+    );
+  }, [angleEdges, nodePositions]);
 
   useEffect(() => {
     setReviewIndex(current => (current >= nodes.length ? (nodes.length ? nodes.length - 1 : -1) : current));
@@ -305,6 +339,76 @@ export function TopologyPanel({ splitValidation, onSplitValidation }: TopologyPa
             >
               {splitValidation ? '已开启' : '开启'}
             </Toggle>
+          </section>
+
+          <section className="space-y-2.5 py-4">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="m-0 text-xs font-semibold text-foreground">转角测量</h3>
+              <div className="flex items-center gap-1">
+                {angleEdges.length > 0 && (
+                  <IconActionButton
+                    variant="ghost"
+                    size="icon-xs"
+                    className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                    label="清空测角边"
+                    tooltip="清空已选边"
+                    onClick={onClearAngleEdges}
+                  >
+                    <RotateCcw className="h-3 w-3" />
+                  </IconActionButton>
+                )}
+                <Toggle
+                  variant="outline"
+                  size="sm"
+                  pressed={angleMeasureActive}
+                  aria-label={`${angleMeasureActive ? '关闭' : '开启'}转角测量`}
+                  aria-pressed={angleMeasureActive}
+                  onClick={onToggleAngleMeasure}
+                >
+                  {angleMeasureActive ? '测角中' : '开启'}
+                </Toggle>
+              </div>
+            </div>
+            {(angleMeasureActive || angleEdges.length > 0) && (
+              <div className="space-y-2 rounded-md border border-border/70 bg-background p-2.5 text-xs">
+                {angleEdges.length === 0 && (
+                  <p className="m-0 text-[11px] text-muted-foreground">请在地图上依次点击两条相连的边</p>
+                )}
+                {angleEdges.length >= 1 && (
+                  <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
+                    <div className="flex items-center justify-between gap-2">
+                      <span>边 1</span>
+                      <span className="truncate text-foreground">{formatEdgeId(angleEdges[0].properties.id)}</span>
+                    </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <span>边 2</span>
+                      <span className="truncate text-foreground">
+                        {angleEdges[1] ? formatEdgeId(angleEdges[1].properties.id) : '待选择…'}
+                      </span>
+                    </div>
+                  </div>
+                )}
+                {angleResults !== null && angleResults.length === 0 && (
+                  <p className="m-0 text-[11px] text-destructive">两条边没有共享节点，请重新选择相连的边</p>
+                )}
+                {angleResults !== null && angleResults.length > 0 && (
+                  <div className="space-y-1.5 border-t border-border/60 pt-2 tabular-nums">
+                    {angleResults.map(item => (
+                      <div key={item.sharedNodeId} className="space-y-0.5">
+                        <div className="flex items-baseline justify-between gap-2">
+                          <span className="text-[11px] text-muted-foreground">转角（偏转）</span>
+                          <strong className="text-sm font-semibold text-primary">{item.turnDegrees.toFixed(1)}°</strong>
+                        </div>
+                        <div className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                          <span>夹角 {item.interiorDegrees.toFixed(1)}°</span>
+                          <span className="font-mono">节点 {item.sharedNodeId}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </section>
 
           <section className="space-y-2.5 py-4">

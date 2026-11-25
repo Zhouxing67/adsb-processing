@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { X } from 'lucide-react';
-import type { MapFlightEntry, MapRouteEntry } from '@/api/types';
+import type { MapFlightEntry, MapRouteEntry, SelectedFeature } from '@/api/types';
 import { Alert } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
+import { isNodeFeature } from '@/domain/features';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
@@ -19,6 +20,7 @@ import type { LayerSettings } from '@/features/graph-editor/Inspector';
 import { SearchPanel } from '@/features/graph-editor/SearchPanel';
 import { ToolDock } from '@/features/graph-editor/ToolDock';
 import { TopologyPanel } from '@/features/graph-editor/TopologyPanel';
+import type { AngleMeasureEdge } from '@/features/graph-editor/TopologyPanel';
 import { useGraphEditorMachine } from '@/features/graph-editor/useGraphEditorMachine';
 import { Header } from '@/features/layout/Header';
 import { MapToolbar } from '@/features/layout/MapToolbar';
@@ -38,6 +40,8 @@ function Workspace() {
   const flightMode = Boolean(state?.flight_mode);
   const session = useFlightSession(flightMode);
   const [splitValidation, setSplitValidation] = useState(false);
+  const [angleMeasureActive, setAngleMeasureActive] = useState(false);
+  const [angleEdges, setAngleEdges] = useState<AngleMeasureEdge[]>([]);
   const [graphEditing, setGraphEditing] = useState(false);
   const [splitViews, setSplitViews] = useState<[MainView, MainView] | null>(null);
   const splitView = splitViews !== null;
@@ -87,10 +91,10 @@ function Workspace() {
     return wb.mapRoutes;
   }, [wb.showMapRoutes, wb.isolatedRouteId, wb.mapRoutes]);
 
-  const selectedFeatures = useMemo(
-    () => (wb.selected ? [...editor.selection, wb.selected] : editor.selection),
-    [editor.selection, wb.selected],
-  );
+  const selectedFeatures = useMemo(() => {
+    const base = wb.selected ? [...editor.selection, wb.selected] : [...editor.selection];
+    return angleEdges.length ? [...base, ...angleEdges] : base;
+  }, [editor.selection, wb.selected, angleEdges]);
 
   useEffect(() => {
     if (!dualMap) {
@@ -105,7 +109,12 @@ function Workspace() {
   }, [splitView, leftOpen, showRightRail, flightMode]);
 
   useEffect(() => {
-    if (wb.topologyOpen) setLeftOpen(true);
+    if (wb.topologyOpen) {
+      setLeftOpen(true);
+    } else {
+      setAngleMeasureActive(false);
+      setAngleEdges([]);
+    }
   }, [wb.topologyOpen]);
 
   useEffect(() => {
@@ -248,6 +257,28 @@ function Workspace() {
     }
   };
 
+  const handleMapFeature = (feature: SelectedFeature, clickPoint?: [number, number]) => {
+    if (wb.topologyOpen && angleMeasureActive) {
+      if (!isNodeFeature(feature)) {
+        setAngleEdges(current => {
+          if (
+            current.length === 1 &&
+            current[0].properties.u === feature.properties.u &&
+            current[0].properties.v === feature.properties.v &&
+            current[0].properties.key === feature.properties.key
+          ) {
+            return current;
+          }
+          return current.length === 1 ? [current[0], feature] : [feature];
+        });
+      } else {
+        wb.dispatch({ type: 'status', value: '转角测量 · 请点击两条相连的边' });
+      }
+      return;
+    }
+    void editor.handleFeature(feature, clickPoint);
+  };
+
   const renderMapView = (kind: 'flight' | 'route', active: boolean) => {
     const isRouteMap = kind === 'route';
     const mapFlightsForKind = !dualMap
@@ -292,7 +323,7 @@ function Workspace() {
           fitMapVersion={!dualMap || !isRouteMap || routeMapOverlayFlights ? wb.fitMapVersion : 0}
           fitRoutesVersion={!dualMap || isRouteMap || flightMapOverlayRoutes ? wb.fitRoutesVersion : 0}
           observationLocation={!isRouteMap ? wb.observationLocation : null}
-          onFeature={editor.handleFeature}
+          onFeature={handleMapFeature}
           onMapClick={editor.handleMapClick}
           onFlightClick={key => {
             setLeftOpen(true);
@@ -383,7 +414,21 @@ function Workspace() {
       />
 
       {topologyLeft ? (
-        <TopologyPanel splitValidation={splitValidation} onSplitValidation={() => setSplitValidation(value => !value)} />
+        <TopologyPanel
+          splitValidation={splitValidation}
+          onSplitValidation={() => setSplitValidation(value => !value)}
+          angleMeasureActive={angleMeasureActive}
+          angleEdges={angleEdges}
+          onToggleAngleMeasure={() => {
+            setAngleMeasureActive(active => {
+              const next = !active;
+              if (!next) setAngleEdges([]);
+              else wb.dispatch({ type: 'status', value: '转角测量 · 请在地图上依次点击两条相连的边' });
+              return next;
+            });
+          }}
+          onClearAngleEdges={() => setAngleEdges([])}
+        />
       ) : (
         flightLeft && (
           <MapSelectionRail

@@ -330,21 +330,8 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                         onCheckedChange={next =>
                           setPairs(value => {
                             const updated = new Set(value);
-                            if (next === true) {
-                              dialog.preview.pair_candidates
-                                .filter(
-                                  item =>
-                                    item.pair_id !== pair.pair_id &&
-                                    (item.left === pair.left ||
-                                      item.left === pair.right ||
-                                      item.right === pair.left ||
-                                      item.right === pair.right),
-                                )
-                                .forEach(item => updated.delete(item.pair_id));
-                              updated.add(pair.pair_id);
-                            } else {
-                              updated.delete(pair.pair_id);
-                            }
+                            if (next === true) updated.add(pair.pair_id);
+                            else updated.delete(pair.pair_id);
                             return updated;
                           })
                         }
