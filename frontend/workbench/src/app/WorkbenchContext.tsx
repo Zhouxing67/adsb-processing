@@ -64,6 +64,7 @@ type Action =
   | { type: 'toggle-map-flights-group' }
   | { type: 'map-route'; routeId: string; value: MapRouteInput | null }
   | { type: 'map-routes-batch'; entries: Array<{ routeId: string; value: MapRouteInput }> }
+  | { type: 'remove-map-routes-batch'; routeIds: string[] }
   | { type: 'clear-map-routes' }
   | { type: 'isolate-route'; routeId: string | null }
   | { type: 'highlight-route'; routeId: string | null }
@@ -200,6 +201,17 @@ function reducer(state: UiState, action: Action): UiState {
         next.set(routeId, { ...value, slot });
       });
       return { ...state, mapRoutes: next, showMapRoutes: true };
+    }
+    case 'remove-map-routes-batch': {
+      if (!action.routeIds.length) return state;
+      const next = new Map(state.mapRoutes);
+      const removed = new Set(action.routeIds);
+      removed.forEach(routeId => next.delete(routeId));
+      return {
+        ...state,
+        mapRoutes: next,
+        isolatedRouteId: state.isolatedRouteId && removed.has(state.isolatedRouteId) ? null : state.isolatedRouteId,
+      };
     }
     case 'clear-map-routes': return {
       ...state,

@@ -45,6 +45,22 @@ export const ROUTE_STATUS_LABELS: Record<string, string> = {
   manual: '手动',
 };
 
+export const AEROWAY_EDGE_COLORS = {
+  taxiway: '#9a684d',
+  runway: '#1d5fa7',
+  parking_position: '#dc6b32',
+  other: '#64748b',
+} as const;
+
+export const PAIR_PREVIEW_COLORS = [
+  '#1d5fa7',
+  '#147a6e',
+  '#c86428',
+  '#db2777',
+  '#0284c7',
+  '#16a34a',
+] as const;
+
 export const ROUTE_SOURCE_LABELS: Record<string, string> = {
   matched: '匹配导入',
   manual: '人工录入',

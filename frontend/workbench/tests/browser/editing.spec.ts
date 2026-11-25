@@ -25,6 +25,9 @@ test('topology panel and inspector layer controls remain available', async ({ pa
   await page.goto('/');
   await page.getByRole('button', { name: /拓扑检查/ }).click();
   await expect(page.getByRole('heading', { name: '拓扑概览' })).toBeVisible();
+  await page.getByRole('button', { name: '编辑图', exact: true }).click();
+  await expect(page.getByRole('heading', { name: '拓扑概览' })).toBeVisible();
+  await expect(page.getByRole('navigation', { name: '编辑工具' })).toBeVisible();
   await expect(page.getByRole('radio', { name: '无底图（精细编辑）' })).toBeChecked();
   await expect(page.getByRole('checkbox', { name: /图节点/ })).not.toBeChecked();
   await page.getByRole('button', { name: /开启相邻边辨色/ }).click();

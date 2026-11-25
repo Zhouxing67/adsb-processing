@@ -6,12 +6,13 @@ import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
 import { isNodeFeature as isNode } from '../../domain/features';
 import type { Aeroway } from '../../domain/properties';
+import type { MapPreviewLine } from '../map/MapView';
 import type { GraphDialogState } from './types';
 
 type DrawPoint = [number, number];
-type IdleState = { phase: 'idle'; tool: EditorTool; selection: []; drawPoints: []; dialog: null; previewGeometry: null };
-type SelectingState = { phase: 'selecting'; tool: EditorTool; selection: SelectedFeature[]; drawPoints: DrawPoint[]; dialog: null; previewGeometry: null };
-type ConfirmingState = { phase: 'confirming'; tool: EditorTool; selection: SelectedFeature[]; drawPoints: DrawPoint[]; dialog: GraphDialogState; previewGeometry: LineGeometry | null };
+type IdleState = { phase: 'idle'; tool: EditorTool; selection: []; drawPoints: []; dialog: null; previewOverlays: MapPreviewLine[] };
+type SelectingState = { phase: 'selecting'; tool: EditorTool; selection: SelectedFeature[]; drawPoints: DrawPoint[]; dialog: null; previewOverlays: MapPreviewLine[] };
+type ConfirmingState = { phase: 'confirming'; tool: EditorTool; selection: SelectedFeature[]; drawPoints: DrawPoint[]; dialog: GraphDialogState; previewOverlays: MapPreviewLine[] };
 export type GraphEditorState = IdleState | SelectingState | ConfirmingState;
 
 type MachineEvent =
@@ -20,18 +21,18 @@ type MachineEvent =
   | { type: 'ADD_POINT'; point: DrawPoint }
   | { type: 'UNDO_POINT' }
   | { type: 'OPEN_DIALOG'; dialog: GraphDialogState }
-  | { type: 'SET_PREVIEW'; geometry: LineGeometry | null };
+  | { type: 'SET_PREVIEW'; overlays: MapPreviewLine[] };
 
-function idle(tool: EditorTool): IdleState { return { phase: 'idle', tool, selection: [], drawPoints: [], dialog: null, previewGeometry: null }; }
+function idle(tool: EditorTool): IdleState { return { phase: 'idle', tool, selection: [], drawPoints: [], dialog: null, previewOverlays: [] }; }
 
 export function graphEditorReducer(state: GraphEditorState, event: MachineEvent): GraphEditorState {
   switch (event.type) {
     case 'RESET': return idle(event.tool);
-    case 'SELECT': return event.selection.length ? { phase: 'selecting', tool: state.tool, selection: event.selection, drawPoints: state.drawPoints, dialog: null, previewGeometry: null } : idle(state.tool);
+    case 'SELECT': return event.selection.length ? { phase: 'selecting', tool: state.tool, selection: event.selection, drawPoints: state.drawPoints, dialog: null, previewOverlays: [] } : idle(state.tool);
     case 'ADD_POINT': return state.phase === 'selecting' ? { ...state, drawPoints: [...state.drawPoints, event.point] } : state;
     case 'UNDO_POINT': return state.phase === 'selecting' ? { ...state, drawPoints: state.drawPoints.slice(0, -1) } : state;
-    case 'OPEN_DIALOG': return { phase: 'confirming', tool: state.tool, selection: state.selection, drawPoints: state.drawPoints, dialog: event.dialog, previewGeometry: null };
-    case 'SET_PREVIEW': return state.phase === 'confirming' ? { ...state, previewGeometry: event.geometry } : state;
+    case 'OPEN_DIALOG': return { phase: 'confirming', tool: state.tool, selection: state.selection, drawPoints: state.drawPoints, dialog: event.dialog, previewOverlays: [] };
+    case 'SET_PREVIEW': return state.phase === 'confirming' ? { ...state, previewOverlays: event.overlays } : state;
   }
 }
 
@@ -59,7 +60,7 @@ export function useGraphEditorMachine() {
     if (await wb.runGraphCommand(path, body) !== null) reset();
   }, [wb, reset]);
 
-  const handleFeature = useCallback(async (feature: SelectedFeature) => {
+  const handleFeature = useCallback(async (feature: SelectedFeature, clickPoint?: [number, number]) => {
     const state = wb.state;
     if (!state?.capabilities.can_edit_graph || wb.tool === 'inspect') { wb.dispatch({ type: 'selected', value: feature }); return; }
     if (wb.tool === 'delete') {
@@ -73,7 +74,32 @@ export function useGraphEditorMachine() {
       return;
     }
     if (wb.tool === 'split') {
-      if (!isNode(feature)) { send({ type: 'SELECT', selection: [feature] }); wb.dispatch({ type: 'status', value: '已选择目标边，请点击切分位置' }); }
+      if (!isNode(feature)) {
+        const currentEdge =
+          (machine.phase === 'selecting' || machine.phase === 'confirming') &&
+          machine.selection.length &&
+          !isNode(machine.selection[0])
+            ? (machine.selection[0] as GeoFeature<LineGeometry, EdgeProperties>)
+            : null;
+        const sameEdge =
+          currentEdge !== null &&
+          currentEdge.properties.u === feature.properties.u &&
+          currentEdge.properties.v === feature.properties.v &&
+          currentEdge.properties.key === feature.properties.key;
+        if (sameEdge && clickPoint) {
+          const [longitude, latitude] = clickPoint;
+          const preview = await wb.previewGraphCommand('/api/split-source-preview', {
+            edge: feature.properties.id,
+            longitude,
+            latitude,
+            osm_node_id: null,
+          });
+          if (preview) openDialog({ kind: 'split', preview, edge: feature.properties.id, longitude, latitude });
+          return;
+        }
+        send({ type: 'SELECT', selection: [feature] });
+        wb.dispatch({ type: 'status', value: '已选择目标边，请点击边上或附近切分位置' });
+      }
       return;
     }
     if (wb.tool === 'merge') {
@@ -111,14 +137,19 @@ export function useGraphEditorMachine() {
         if (preview) openDialog({ kind: 'snap', preview, node: node.properties.id, edge: feature.properties.id });
       }
     }
-  }, [machine.selection, machine.drawPoints, drawAeroway, drawRef, wb, openDialog, reset]);
+  }, [machine.phase, machine.selection, machine.drawPoints, drawAeroway, drawRef, wb, openDialog, reset]);
 
   const handleMapClick = useCallback(async (longitude: number, latitude: number) => {
     if (wb.tool === 'draw' && machine.phase === 'selecting') {
       send({ type: 'ADD_POINT', point: [longitude, latitude] });
       wb.dispatch({ type: 'status', value: `已添加 ${machine.drawPoints.length + 1} 个形状点，请选择终点` });
     }
-    if (wb.tool === 'split' && machine.phase === 'selecting' && machine.selection.length && !isNode(machine.selection[0])) {
+    if (
+      wb.tool === 'split' &&
+      (machine.phase === 'selecting' || machine.phase === 'confirming') &&
+      machine.selection.length &&
+      !isNode(machine.selection[0])
+    ) {
       const edge = machine.selection[0] as GeoFeature<LineGeometry, EdgeProperties>;
       const preview = await wb.previewGraphCommand('/api/split-source-preview', { edge: edge.properties.id, longitude, latitude, osm_node_id: null });
       if (preview) openDialog({ kind: 'split', preview, edge: edge.properties.id, longitude, latitude });
@@ -127,7 +158,7 @@ export function useGraphEditorMachine() {
 
   const mergeNodeIds = machine.selection.reduce<NodeId[]>((ids, item) => { if (isNode(item)) ids.push(item.properties.id); return ids; }, []);
   const undoDrawPoint = useCallback(() => send({ type: 'UNDO_POINT' }), []);
-  const setPreviewGeometry = useCallback((geometry: LineGeometry | null) => send({ type: 'SET_PREVIEW', geometry }), []);
+  const setPreviewOverlays = useCallback((overlays: MapPreviewLine[]) => send({ type: 'SET_PREVIEW', overlays }), []);
 
   return {
     state: machine,
@@ -138,7 +169,7 @@ export function useGraphEditorMachine() {
     drawRef,
     setDrawRef,
     dialog: machine.dialog,
-    previewGeometry: machine.previewGeometry,
+    previewOverlays: machine.previewOverlays,
     mergeNodeIds,
     handleFeature,
     handleMapClick,
@@ -147,6 +178,6 @@ export function useGraphEditorMachine() {
     previewMerge,
     confirmDialog,
     undoDrawPoint,
-    setPreviewGeometry,
+    setPreviewOverlays,
   };
 }

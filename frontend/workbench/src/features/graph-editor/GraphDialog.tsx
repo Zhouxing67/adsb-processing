@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import type { GraphPostInput, GraphPostPath } from '@/api/client';
-import type { LineGeometry, NodeId } from '@/api/types';
+import type { NodeId } from '@/api/types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -9,20 +9,63 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
+import { PAIR_PREVIEW_COLORS } from '@/domain/palette';
+import type { MapPreviewLine } from '@/features/map/MapView';
 import type { GraphDialogState } from './types';
 
 interface Props {
   dialog: GraphDialogState;
   onClose(): void;
-  onPreview(geometry: LineGeometry | null): void;
+  onPreview(overlays: MapPreviewLine[]): void;
   onConfirm<P extends GraphPostPath>(path: P, body: GraphPostInput<P>): Promise<void>;
   onMergeCandidate(nodeIds: NodeId[], revision: number): Promise<void>;
 }
 
+function recommendedPairIds(dialog: GraphDialogState): Set<string> {
+  if (dialog.kind !== 'delete-node') return new Set();
+  const used = new Set<string>();
+  const selected = new Set<string>();
+  dialog.preview.pair_candidates
+    .filter(item => item.recommended)
+    .forEach(item => {
+      if (!used.has(item.left) && !used.has(item.right)) {
+        selected.add(item.pair_id);
+        used.add(item.left);
+        used.add(item.right);
+      }
+    });
+  return selected;
+}
+
 export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCandidate }: Props) {
   const [choice, setChoice] = useState(0);
-  const [pairs, setPairs] = useState<Set<string>>(new Set());
+  const [pairsState, setPairsState] = useState<{ dialog: GraphDialogState; selected: Set<string> }>(() => ({
+    dialog,
+    selected: recommendedPairIds(dialog),
+  }));
+  const [hoveredPairId, setHoveredPairId] = useState<string | null>(null);
   const [discard, setDiscard] = useState(false);
+
+  const pairs = useMemo(
+    () => (pairsState.dialog === dialog ? pairsState.selected : recommendedPairIds(dialog)),
+    [pairsState, dialog],
+  );
+
+  const setPairs = (updater: (value: Set<string>) => Set<string>) => {
+    setPairsState(current => {
+      const base = current.dialog === dialog ? current.selected : recommendedPairIds(dialog);
+      return { dialog, selected: updater(base) };
+    });
+  };
+
+  const pairColorMap = useMemo(() => {
+    const map = new Map<string, string>();
+    if (dialog.kind !== 'delete-node') return map;
+    dialog.preview.pair_candidates.forEach((pair, index) => {
+      map.set(pair.pair_id, PAIR_PREVIEW_COLORS[index % PAIR_PREVIEW_COLORS.length]);
+    });
+    return map;
+  }, [dialog]);
 
   useEffect(() => {
     const preferred =
@@ -32,28 +75,36 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
           ? dialog.preview.candidates.findIndex(candidate => candidate.id === dialog.preview.recommended_node)
           : 0;
     setChoice(Math.max(0, preferred));
+    setHoveredPairId(null);
     setDiscard(false);
-    if (dialog.kind === 'delete-node') {
-      const used = new Set<string>();
-      const selected = new Set<string>();
-      dialog.preview.pair_candidates
-        .filter(item => item.recommended)
-        .forEach(item => {
-          if (!used.has(item.left) && !used.has(item.right)) {
-            selected.add(item.pair_id);
-            used.add(item.left);
-            used.add(item.right);
-          }
-        });
-      setPairs(selected);
-    } else {
-      setPairs(new Set());
+    setPairsState({ dialog, selected: recommendedPairIds(dialog) });
+    if (dialog.kind === 'restore') {
+      const first = dialog.preview.candidates[0]?.geometry;
+      onPreview(first ? [{ geometry: first }] : []);
+    } else if (dialog.kind === 'snap') {
+      onPreview([{ geometry: dialog.preview.connector_geometry }]);
+    } else if (dialog.kind !== 'delete-node') {
+      onPreview([]);
     }
-    if (dialog.kind === 'restore') onPreview(dialog.preview.candidates[0]?.geometry ?? null);
-    else if (dialog.kind === 'snap') onPreview(dialog.preview.connector_geometry);
-    else onPreview(null);
-    return () => onPreview(null);
+    return () => onPreview([]);
   }, [dialog, onPreview]);
+
+  useEffect(() => {
+    if (dialog.kind !== 'delete-node') return;
+    const overlays: MapPreviewLine[] = [];
+    for (const pair of dialog.preview.pair_candidates) {
+      const checked = pairs.has(pair.pair_id);
+      const hovered = hoveredPairId === pair.pair_id;
+      if (!checked && !hovered) continue;
+      overlays.push({
+        geometry: pair.geometry,
+        color: pairColorMap.get(pair.pair_id),
+        emphasis: hovered,
+        dashed: !checked && hovered,
+      });
+    }
+    onPreview(overlays);
+  }, [dialog, pairs, hoveredPairId, pairColorMap, onPreview]);
 
   const unpaired = useMemo(() => {
     if (dialog.kind !== 'delete-node') return [];
@@ -176,7 +227,8 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                 onValueChange={value => {
                   const index = Number(value);
                   setChoice(index);
-                  onPreview(dialog.preview.candidates[index]?.geometry ?? null);
+                  const geometry = dialog.preview.candidates[index]?.geometry;
+                  onPreview(geometry ? [{ geometry }] : []);
                 }}
                 className="gap-2"
               >
@@ -184,7 +236,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                   <Label
                     key={candidate.candidate_id}
                     className="flex cursor-pointer items-start gap-2 rounded-lg border border-border bg-muted/40 p-2.5 font-normal hover:bg-accent/50"
-                    onMouseEnter={() => onPreview(candidate.geometry)}
+                    onMouseEnter={() => onPreview([{ geometry: candidate.geometry }])}
                   >
                     <RadioGroupItem value={String(index)} className="mt-0.5" />
                     <span className="min-w-0 break-words leading-normal text-foreground tabular-nums">
@@ -260,6 +312,7 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
               <div className="space-y-2">
                 {dialog.preview.pair_candidates.map(pair => {
                   const checked = pairs.has(pair.pair_id);
+                  const pairColor = pairColorMap.get(pair.pair_id);
                   return (
                     <Label
                       key={pair.pair_id}
@@ -268,7 +321,8 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                           ? 'border-primary/40 bg-background shadow-2xs'
                           : 'border-border bg-muted/35 hover:bg-accent/50'
                       }`}
-                      onMouseEnter={() => onPreview(pair.geometry)}
+                      onMouseEnter={() => setHoveredPairId(pair.pair_id)}
+                      onMouseLeave={() => setHoveredPairId(current => (current === pair.pair_id ? null : current))}
                     >
                       <Checkbox
                         className="mt-0.5"
@@ -297,9 +351,16 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                       />
                       <div className="min-w-0 flex-1 space-y-1.5">
                         <div className="flex items-center justify-between gap-2">
-                          <strong className="truncate text-xs font-semibold text-foreground tabular-nums">
-                            {pair.endpoints.join(' ↔ ')}
-                          </strong>
+                          <span className="flex min-w-0 items-center gap-1.5">
+                            <span
+                              className="inline-block h-2.5 w-2.5 shrink-0 rounded-full border border-border/60"
+                              style={{ backgroundColor: pairColor, opacity: checked ? 1 : 0.45 }}
+                              aria-hidden="true"
+                            />
+                            <strong className="truncate text-xs font-semibold text-foreground tabular-nums">
+                              {pair.endpoints.join(' ↔ ')}
+                            </strong>
+                          </span>
                           <span className="shrink-0 text-[11px] font-medium text-foreground tabular-nums">
                             {pair.angle_degrees}°
                           </span>
@@ -308,12 +369,19 @@ export function GraphDialog({ dialog, onClose, onPreview, onConfirm, onMergeCand
                           <span className="min-w-0 truncate font-mono text-[11px] text-muted-foreground" title={pair.source_ids.join(' → ')}>
                             {pair.source_ids.join(' → ')}
                           </span>
-                          <Badge
-                            variant={pair.same_source ? 'secondary' : 'outline'}
-                            className="shrink-0 px-1.5 py-0 text-[11px] font-normal"
-                          >
-                            {pair.same_source ? '同源' : '跨来源'}
-                          </Badge>
+                          <div className="flex shrink-0 items-center gap-1">
+                            {pair.recommended && (
+                              <Badge variant="default" className="px-1.5 py-0 text-[11px] font-normal">
+                                推荐
+                              </Badge>
+                            )}
+                            <Badge
+                              variant={pair.same_source ? 'secondary' : 'outline'}
+                              className="px-1.5 py-0 text-[11px] font-normal"
+                            >
+                              {pair.same_source ? '同源' : '跨来源'}
+                            </Badge>
+                          </div>
                         </div>
                       </div>
                     </Label>

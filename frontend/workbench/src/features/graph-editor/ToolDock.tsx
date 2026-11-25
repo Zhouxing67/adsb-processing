@@ -3,6 +3,7 @@ import type { ComponentType } from 'react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { EditorTool } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
+import { Card } from '@/components/ui/card';
 import { cn } from '@/lib/utils';
 
 const tools: Array<{ key: EditorTool; label: string; icon: ComponentType<{ className?: string }> }> = [
@@ -17,7 +18,7 @@ const tools: Array<{ key: EditorTool; label: string; icon: ComponentType<{ class
 
 const toolMessages: Record<EditorTool, string> = {
   inspect: '查看模式 · 点击节点或派生边查看详情',
-  split: '补充分割点 · 选择边后点击切分位置',
+  split: '补充分割点 · 选择边后点击边上或附近切分位置',
   draw: '直接绘制连接 · 选择起点、点击地图添加形状点、再选择终点',
   restore: '恢复来源连接 · 依次选择两个节点',
   merge: '合并节点 · 依次选择两个节点',
@@ -30,41 +31,36 @@ export function ToolDock() {
   if (!wb.state?.capabilities.can_edit_graph) return null;
 
   return (
-    <nav
-      className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted"
-      aria-label="编辑工具"
-    >
-      <div className="flex h-14 shrink-0 items-center border-b border-border px-4">
-        <span className="text-[15px] font-semibold text-foreground">编辑工具</span>
-      </div>
-      <div className="flex flex-1 flex-col gap-1 overflow-auto p-3">
-      {tools.map(tool => {
-        const Icon = tool.icon;
-        const active = wb.tool === tool.key;
-        const danger = tool.key === 'delete';
-        return (
-          <Button
-            key={tool.key}
-            variant={active && !danger ? 'default' : 'ghost'}
-            className={cn(
-              'h-auto w-full justify-start gap-2.5 px-3 py-2 text-left text-[13px] font-normal',
-              active && !danger && 'font-medium',
-              danger &&
-                (active
-                  ? 'bg-red-50 font-medium text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-red-50 hover:text-destructive'
-                  : 'text-destructive hover:bg-red-50/70 hover:text-destructive'),
-            )}
-            onClick={() => {
-              wb.dispatch({ type: 'tool', value: tool.key });
-              wb.dispatch({ type: 'status', value: toolMessages[tool.key] });
-            }}
-          >
-            <Icon className="h-4 w-4 shrink-0" />
-            <span className="truncate">{tool.label}</span>
-          </Button>
-        );
-      })}
-      </div>
-    </nav>
+    <Card className="absolute left-3.5 top-[62px] z-[800] w-[156px] bg-background/95 p-1.5 shadow-sm backdrop-blur-xs">
+      <nav className="flex flex-col gap-0.5" aria-label="编辑工具">
+        {tools.map(tool => {
+          const Icon = tool.icon;
+          const active = wb.tool === tool.key;
+          const danger = tool.key === 'delete';
+          return (
+            <Button
+              key={tool.key}
+              variant={active && !danger ? 'default' : 'ghost'}
+              size="sm"
+              className={cn(
+                'h-8 w-full justify-start gap-2 px-2.5 text-left text-xs font-normal',
+                active && !danger && 'font-medium',
+                danger &&
+                  (active
+                    ? 'bg-red-50 font-medium text-destructive ring-1 ring-inset ring-destructive/30 hover:bg-red-50 hover:text-destructive'
+                    : 'text-destructive hover:bg-red-50/70 hover:text-destructive'),
+              )}
+              onClick={() => {
+                wb.dispatch({ type: 'tool', value: tool.key });
+                wb.dispatch({ type: 'status', value: toolMessages[tool.key] });
+              }}
+            >
+              <Icon className="h-3.5 w-3.5 shrink-0" />
+              <span className="truncate">{tool.label}</span>
+            </Button>
+          );
+        })}
+      </nav>
+    </Card>
   );
 }

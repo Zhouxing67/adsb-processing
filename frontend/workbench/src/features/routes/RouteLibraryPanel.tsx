@@ -7,6 +7,7 @@ import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapRouteInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { Checkbox } from '@/components/ui/checkbox';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -19,9 +20,11 @@ import {
 import { ROUTE_STATUS_LABELS as statusLabels } from '@/domain/palette';
 import { runWithConcurrency } from '@/lib/async';
 import { cn } from '@/lib/utils';
+import { RouteBulkBar } from './RouteBulkBar';
 import { NULL_RUNWAY_VALUE, RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
 import type { RouteFilters } from './RouteFilterBar';
 import { RouteNoteCell, RouteStatusCell } from './RouteReviewCells';
+import { useRouteBatchSelection } from './useRouteBatchSelection';
 
 function routeOdLabel(item: RouteItem): string {
   const rwy = item.runway_ref ?? '无跑道';
@@ -59,6 +62,12 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
   const [savingReview, setSavingReview] = useState(false);
   const overlayAbortRef = useRef<AbortController | null>(null);
   const mountedRef = useRef(true);
+
+  const batch = useRouteBatchSelection({
+    items: data?.items ?? [],
+    splitView,
+    labelFor: routeOdLabel,
+  });
 
   useEffect(() => {
     mountedRef.current = true;
@@ -203,6 +212,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
           items: current.items.map(item => (item.route_id === routeId ? updated : item)),
         };
       });
+      batch.syncSelectedItem(updated);
       const existingMapRoute = wb.mapRoutes.get(routeId);
       if (existingMapRoute) {
         wb.dispatch({
@@ -280,6 +290,21 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         onRefresh={() => void load()}
       />
 
+      {data?.has_route_library && (
+        <RouteBulkBar
+          selectedCount={batch.selectedRoutes.size}
+          selectedOnMapCount={batch.selectedOnMapCount}
+          selectablePageCount={batch.selectablePageItems.length}
+          allPageSelected={batch.allPageSelected}
+          addingProgress={batch.addingProgress}
+          onTogglePage={batch.toggleSelectPage}
+          onClearSelection={batch.clearSelection}
+          onAddSelectedToMap={() => void batch.addSelectedToMap()}
+          onRemoveSelectedFromMap={batch.removeSelectedFromMap}
+          onCancelAddToMap={batch.cancelAddToMap}
+        />
+      )}
+
       <DataTableContainer loading={loading}>
         {!loading && data && !data.has_route_library ? (
           <Empty className="py-16">
@@ -294,9 +319,17 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
             <EmptyDescription>当前筛选条件下暂无路径记录</EmptyDescription>
           </Empty>
         ) : (
-          <Table className="min-w-[680px]">
+          <Table className="min-w-[720px]">
             <TableHeader>
               <TableRow className="bg-muted hover:bg-muted">
+                <TableHead className="w-9">
+                  <Checkbox
+                    aria-label="全选本页路径"
+                    disabled={batch.selectablePageItems.length === 0}
+                    checked={batch.selectablePageItems.length > 0 && batch.allPageSelected}
+                    onCheckedChange={batch.toggleSelectPage}
+                  />
+                </TableHead>
                 <TableHead>OD</TableHead>
                 <TableHead>长度</TableHead>
                 <TableHead>边数</TableHead>
@@ -308,11 +341,24 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
             <TableBody>
               {(data?.items ?? []).map(item => {
                 const onMap = wb.mapRoutes.has(item.route_id);
-                const busy = busyRouteId === item.route_id;
+                const checked = batch.selectedRoutes.has(item.route_id);
+                const busy = busyRouteId === item.route_id || batch.addingProgress !== null;
                 const odKey = `${item.movement}\0${item.stand_ref}\0${item.runway_ref ?? ''}`;
                 const sameOdCount = odCounts.get(odKey) ?? 1;
                 return (
-                  <TableRow key={item.route_id} data-state={onMap ? 'selected' : undefined} className="group">
+                  <TableRow
+                    key={item.route_id}
+                    data-state={onMap || checked ? 'selected' : undefined}
+                    className="group"
+                  >
+                    <TableCell>
+                      <Checkbox
+                        aria-label={`选择路径 ${routeOdLabel(item)}`}
+                        disabled={!item.matches_current_graph}
+                        checked={checked}
+                        onCheckedChange={next => batch.toggleSelectRoute(item, next === true)}
+                      />
+                    </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-1.5">
                         <Tooltip>

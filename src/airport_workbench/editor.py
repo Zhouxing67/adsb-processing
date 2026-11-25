@@ -766,11 +766,24 @@ class EditorSession:
             for segment in segments
         }
 
-    def _is_business_boundary(self, records: Sequence[dict[str, Any]]) -> bool:
-        kinds = {record["data"].get("aeroway") for record in records}
+    def _incident_aeroways(self, records: Sequence[dict[str, Any]]) -> set[str | None]:
+        kinds: set[str | None] = set()
         for record in records:
-            kinds.update(self._source_aeroways(edge_source_segments(record["data"])))
-        return len(kinds) > 1
+            raw = record["data"].get("aeroway")
+            normalized = raw.strip() if isinstance(raw, str) else raw
+            kinds.add(normalized if normalized else None)
+        return kinds
+
+    def _is_business_boundary(self, records: Sequence[dict[str, Any]]) -> bool:
+        return len(self._incident_aeroways(records)) > 1
+
+    def _check_business_boundary(self, records: Sequence[dict[str, Any]]) -> None:
+        kinds = self._incident_aeroways(records)
+        if len(kinds) > 1:
+            labels = "、".join(
+                sorted(kind if kind is not None else "未分类" for kind in kinds)
+            )
+            raise ValueError(f"{BUSINESS_BOUNDARY_ERROR}（当前连接：{labels}）")
 
     def _pair_segments(
         self, node: Any, left: dict[str, Any], right: dict[str, Any]
@@ -785,8 +798,7 @@ class EditorSession:
         with self._checked(expected_revision):
             self.require_node(node)
             records = self._incident_records(node)
-            if self._is_business_boundary(records):
-                raise ValueError(BUSINESS_BOUNDARY_ERROR)
+            self._check_business_boundary(records)
             candidates: list[_NodeDeletionCandidate] = []
             for index, (left, right) in enumerate(combinations(records, 2)):
                 if left["outer"] == right["outer"]:
@@ -862,8 +874,7 @@ class EditorSession:
         with self._checked(expected_revision):
             self.require_node(node)
             record_list = self._incident_records(node)
-            if self._is_business_boundary(record_list):
-                raise ValueError(BUSINESS_BOUNDARY_ERROR)
+            self._check_business_boundary(record_list)
             records = {record["half_id"]: record for record in record_list}
             candidates = {
                 f"p{index}": {

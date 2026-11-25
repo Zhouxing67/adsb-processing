@@ -142,15 +142,30 @@ def test_business_boundary_blocks_node_simplification_and_mixed_source_restore()
     airport.graph.edges["2", "3", 0]["aeroway"] = "runway"
     session = EditorSession(airport)
 
-    with pytest.raises(ValueError, match="必须保留"):
+    with pytest.raises(ValueError, match="必须保留.*runway.*taxiway"):
         session.node_deletion_plan("2", expected_revision=0)
-    with pytest.raises(ValueError, match="必须保留"):
+    with pytest.raises(ValueError, match="必须保留.*runway.*taxiway"):
         session.remove_node_with_pairs("2", [], discard_unpaired=True, expected_revision=0)
 
     assert session.revision == 0
     assert session.graph.degree("2") == 4
     assert session.connection_candidates("1", "3", expected_revision=0).value == []
     assert set(session.airport_graph.runway_interfaces) == {"2"}
+
+    # Updating the derived edge's aeroway to match incident edges allows simplification
+    # even though the immutable SourceEdge still keeps its original aeroway.
+    session.update_edge_attributes(
+        "2", "3", 0, {"aeroway": "taxiway"}, expected_revision=session.revision
+    )
+    plan = session.node_deletion_plan("2", expected_revision=session.revision).value
+    assert plan["pair_candidates"]
+
+    # Empty/whitespace aeroway normalizes to None ("未分类") instead of producing blank labels.
+    session.update_edge_attributes(
+        "2", "3", 0, {"aeroway": "   "}, expected_revision=session.revision
+    )
+    with pytest.raises(ValueError, match="必须保留.*taxiway、未分类"):
+        session.node_deletion_plan("2", expected_revision=session.revision)
 
 
 def test_degree_four_node_can_be_removed_with_independent_manual_pairings():

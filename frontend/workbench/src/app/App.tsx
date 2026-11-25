@@ -105,6 +105,10 @@ function Workspace() {
   }, [splitView, leftOpen, showRightRail, flightMode]);
 
   useEffect(() => {
+    if (wb.topologyOpen) setLeftOpen(true);
+  }, [wb.topologyOpen]);
+
+  useEffect(() => {
     if (hasRightContext) {
       setRightOpen(true);
     } else if (flightMode) {
@@ -169,15 +173,14 @@ function Workspace() {
   }
 
   const topologyLeft = leftOpen && wb.topologyOpen;
-  const editorLeft = !state.flight_mode && leftOpen && graphEditing;
   const flightLeft = state.flight_mode && leftOpen && !topologyLeft;
-  const shellLeft = topologyLeft || editorLeft || flightLeft;
+  const shellLeft = topologyLeft || flightLeft;
 
   const rightContent = editor.dialog ? (
     <GraphDialog
       dialog={editor.dialog}
       onClose={editor.reset}
-      onPreview={editor.setPreviewGeometry}
+      onPreview={editor.setPreviewOverlays}
       onConfirm={editor.confirmDialog}
       onMergeCandidate={editor.previewMerge}
     />
@@ -190,9 +193,7 @@ function Workspace() {
   const toggleEditing = () => {
     const next = !graphEditing;
     setGraphEditing(next);
-    if (next) {
-      setLeftOpen(true);
-    } else {
+    if (!next) {
       wb.dispatch({ type: 'tool', value: 'inspect' });
       editor.reset();
     }
@@ -284,7 +285,7 @@ function Workspace() {
           spreadRoutes={layers.spreadRoutes}
           selected={selectedFeatures}
           drawPoints={editor.drawPoints}
-          previewGeometry={editor.previewGeometry}
+          previewOverlays={editor.previewOverlays}
           focusFlightRequest={!dualMap || !isRouteMap || routeMapOverlayFlights ? wb.mapFocusRequest : null}
           focusRouteRequest={!dualMap || isRouteMap || flightMapOverlayRoutes ? wb.routeFocusRequest : null}
           focusFeatureRequest={wb.focusFeatureRequest}
@@ -316,6 +317,7 @@ function Workspace() {
           spreadRoutes={layers.spreadRoutes}
           onToggleSpreadRoutes={() => setLayers(current => ({ ...current, spreadRoutes: !current.spreadRoutes }))}
         />
+        {!state.flight_mode && graphEditing && <ToolDock />}
         <EditorToolOverlay
           revision={state.revision}
           mergeNodeIds={editor.mergeNodeIds}
@@ -382,8 +384,6 @@ function Workspace() {
 
       {topologyLeft ? (
         <TopologyPanel splitValidation={splitValidation} onSplitValidation={() => setSplitValidation(value => !value)} />
-      ) : editorLeft ? (
-        <ToolDock />
       ) : (
         flightLeft && (
           <MapSelectionRail
