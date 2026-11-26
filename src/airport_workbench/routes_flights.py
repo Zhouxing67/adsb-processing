@@ -41,7 +41,6 @@ def _flight_filter(item: FlightFilterRequest) -> FlightFilter:
         start_date=item.start_date,
         end_date=item.end_date,
         validation_only=item.validation_only,
-        whitelist_only=item.whitelist_only,
         issues_only=item.issues_only,
     )
 

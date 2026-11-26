@@ -16,7 +16,6 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Separator } from '@/components/ui/separator';
 import { FilterBar, PopoverFooter } from '@/components/ui/workbench-shell';
 import { MATCH_STATUS_LABELS as statusLabels } from '@/domain/palette';
-import { cn } from '@/lib/utils';
 
 const ALL_VALUE = '__all__';
 
@@ -40,7 +39,6 @@ export interface DraftFilters {
   start: string;
   end: string;
   validation: boolean;
-  whitelist: boolean;
   issues: boolean;
 }
 
@@ -283,32 +281,6 @@ export function FlightFilterBar({
                   onCheckedChange={checked => onDraftChange({ ...draft, validation: checked === true })}
                 />
                 <span>验证航班（≥30 点）</span>
-              </Label>
-            )}
-
-            {catalogue && (
-              <Label
-                className={cn(
-                  'flex items-center gap-2 font-normal',
-                  catalogue.supports_whitelist_filter
-                    ? 'cursor-pointer text-foreground'
-                    : 'cursor-not-allowed text-muted-foreground',
-                )}
-                title={
-                  catalogue.supports_whitelist_filter
-                    ? '仅显示通过轨迹质量白名单筛选的航班'
-                    : '当前数据库尚无 flight_whitelist 表，请先运行 scripts/build_flight_whitelist.py'
-                }
-              >
-                <Checkbox
-                  disabled={!catalogue.supports_whitelist_filter}
-                  checked={draft.whitelist && catalogue.supports_whitelist_filter}
-                  onCheckedChange={checked => onDraftChange({ ...draft, whitelist: checked === true })}
-                />
-                <span>
-                  白名单航班
-                  {!catalogue.supports_whitelist_filter && '（未生成）'}
-                </span>
               </Label>
             )}
 

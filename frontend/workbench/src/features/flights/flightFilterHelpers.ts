@@ -27,7 +27,6 @@ export function buildFlightQueryParams(
     start_date: filters.start || undefined,
     end_date: filters.end || undefined,
     validation_only: filters.validation || undefined,
-    whitelist_only: filters.whitelist || undefined,
     issues_only: filters.issues || undefined,
     page,
     page_size: page === undefined ? undefined : pageSize,
@@ -79,7 +78,6 @@ export function countAdvancedFlightFilters(filters: FlightFilters, datasetMax: n
   if (filters.maximum !== null && datasetMax !== null && filters.maximum < datasetMax) count += 1;
   if (filters.start || filters.end) count += 1;
   if (filters.validation) count += 1;
-  if (filters.whitelist) count += 1;
   if (filters.issues) count += 1;
   return count;
 }
@@ -108,7 +106,6 @@ export function buildFlightFilterChips(
     chips.push({ id: 'date', label: `日期: ${filters.start || '不限'} ~ ${filters.end || '不限'}`, clear: () => applyFilterPatch({ start: '', end: '' }) });
   }
   if (filters.validation) chips.push({ id: 'validation', label: '仅验证航班', clear: () => applyFilterPatch({ validation: false }) });
-  if (filters.whitelist) chips.push({ id: 'whitelist', label: '仅白名单航班', clear: () => applyFilterPatch({ whitelist: false }) });
   if (filters.issues) chips.push({ id: 'issues', label: '仅异常归档航班', clear: () => applyFilterPatch({ issues: false }) });
   return chips;
 }

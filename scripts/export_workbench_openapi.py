@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import argparse
 import json
+from datetime import datetime, timezone
 from pathlib import Path
-from tempfile import TemporaryDirectory
-from typing import Any
+from typing import Any, cast
 
 import networkx as nx
 from pyproj import Proj
@@ -15,8 +15,8 @@ from shapely.geometry import LineString
 from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
-from db import apply_core_schema
 from flight.flight_repository import FlightDatabase
+from flight.models import FlightSummary
 
 ROOT = Path(__file__).resolve().parents[1]
 OPENAPI_DIRECTORY = ROOT / "frontend" / "workbench" / "openapi"
@@ -36,35 +36,56 @@ def _session() -> EditorSession:
     return EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
 
 
-def _flight_database(path: Path) -> FlightDatabase:
-    import duckdb
+class _StubCatalogue:
+    def dataset_stats(self, *, display_timezone: str = "UTC") -> dict[str, Any]:
+        del display_timezone
+        return {
+            "total_flights": 1,
+            "dataset_max_points": 2,
+            "dataset_min_date": "2024-01-01",
+            "dataset_max_date": "2024-01-01",
+            "stand_options": ["A01"],
+        }
 
-    with duckdb.connect(str(path)) as connection:
-        apply_core_schema(connection)
-        connection.execute("""
-            INSERT INTO main.adsb_dep (
-                flight_id, number, timestamp, longitude, latitude, dep_stand_position, org_runway
-            ) VALUES
-                ('OPENAPI', 'OPENAPI', '2024-01-01 00:00:00', 116.59, 40.07, 'A01', NULL),
-                ('OPENAPI', 'OPENAPI', '2024-01-01 00:01:00', 116.595, 40.07, 'A01', NULL);
-        """)
-    return FlightDatabase(path)
+    def summaries(self) -> list[FlightSummary]:
+        return [
+            FlightSummary(
+                movement="departure",
+                flight_id="OPENAPI",
+                flight_number="OPENAPI",
+                number_count=1,
+                start_time=datetime(2024, 1, 1, 0, 0, tzinfo=timezone.utc),
+                end_time=datetime(2024, 1, 1, 0, 1, tzinfo=timezone.utc),
+                point_count=2,
+                stand_position="A01",
+                stand_count=1,
+            )
+        ]
+
+
+class _StubFlightDatabase:
+    """Minimal in-memory stand-in so OpenAPI export requires no live database."""
+
+    read_only = False
+    postgres = None
+    catalogue = _StubCatalogue()
+
+    def close(self) -> None:
+        return None
 
 
 def workbench_openapi_documents() -> dict[str, dict[str, Any]]:
     """Build contracts from the same application factory used in production."""
     graph_app = create_app(_session(), ROOT / "outputs" / "openapi-unused.json")
-    with TemporaryDirectory(dir=ROOT) as directory:
-        database = _flight_database(Path(directory) / "openapi.duckdb")
-        flight_app = create_app(
-            _session(),
-            ROOT / "outputs" / "openapi-unused.json",
-            flight_database=database,
-        )
-        return {
-            "graph.json": graph_app.openapi(),
-            "flight.json": flight_app.openapi(),
-        }
+    flight_app = create_app(
+        _session(),
+        ROOT / "outputs" / "openapi-unused.json",
+        flight_database=cast(FlightDatabase, _StubFlightDatabase()),
+    )
+    return {
+        "graph.json": graph_app.openapi(),
+        "flight.json": flight_app.openapi(),
+    }
 
 
 def _serialized(document: dict[str, Any]) -> str:

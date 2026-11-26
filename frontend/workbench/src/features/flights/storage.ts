@@ -8,7 +8,6 @@ export interface FlightFilters {
   start: string;
   end: string;
   validation: boolean;
-  whitelist: boolean;
   issues: boolean;
 }
 
@@ -38,7 +37,6 @@ export const defaultFlightFilters: FlightFilters = {
   start: '',
   end: '',
   validation: false,
-  whitelist: false,
   issues: false,
 };
 

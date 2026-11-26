@@ -1,4 +1,4 @@
-"""Background flight matching, result caching and task history."""
+"""Background flight matching, lazy result caching and task history."""
 
 from __future__ import annotations
 
@@ -47,6 +47,15 @@ class MatchResultItem:
         }
 
 
+class LazyMatchResults(dict[str, MatchResultItem]):
+    """Create MatchResultItem entries on demand so unmatched flights consume no RAM."""
+
+    def __missing__(self, key: str) -> MatchResultItem:
+        item = MatchResultItem(key)
+        self[key] = item
+        return item
+
+
 @dataclass(slots=True)
 class MatchTask:
     task_id: str
@@ -64,16 +73,17 @@ class FlightMatchTasks:
 
     def __init__(
         self,
-        flight_keys: Iterable[str],
         load_flight: Callable[[str], Flight],
         *,
         airport_graph: AirportGraph,
         lock: Any,
         config: MatchConfig,
+        validate_keys: Callable[[Sequence[str]], set[str]],
         load_flights_batch: Callable[[Sequence[str]], dict[str, Flight]] | None = None,
     ) -> None:
         self.load_flight = load_flight
         self.load_flights_batch = load_flights_batch
+        self.validate_keys = validate_keys
         self.lock = lock
         self.match_config = config
         self.graph_id = graph_id(airport_graph)
@@ -81,9 +91,7 @@ class FlightMatchTasks:
         self._closing = False
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="flight-match")
         self.tasks: dict[str, MatchTask] = {}
-        self.results: dict[str, MatchResultItem] = {}
-        for key in flight_keys:
-            self.results[key] = MatchResultItem(key)
+        self.results: dict[str, MatchResultItem] = LazyMatchResults()
 
     def close(self) -> None:
         with self.lock:
@@ -93,6 +101,18 @@ class FlightMatchTasks:
             for task in self.tasks.values():
                 self._fail_pending(task.flight_keys, task.task_id, "工作台已关闭")
 
+    def result_public(self, flight_key: str) -> dict[str, Any]:
+        existing = dict.get(self.results, flight_key)
+        if existing is None:
+            return MatchResultItem(flight_key).public()
+        return existing.public()
+
+    def keys_with_status(self, status: str) -> list[str]:
+        return [key for key, item in self.results.items() if item.status == status]
+
+    def non_unmatched_keys(self) -> list[str]:
+        return [key for key, item in self.results.items() if item.status != "unmatched"]
+
     @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat()
@@ -101,7 +121,8 @@ class FlightMatchTasks:
         keys = list(dict.fromkeys(flight_keys))
         if not keys:
             raise ValueError("至少选择一条航班")
-        if any(key not in self.results for key in keys):
+        known = self.validate_keys(keys)
+        if len(known) != len(keys):
             raise KeyError("未知 flight_key")
         task_id = hashlib.sha256(
             f"{self.graph_id}:{keys}:{self._now()}".encode()
