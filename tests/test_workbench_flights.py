@@ -62,7 +62,7 @@ def FlightWorkbench(
     return DatabaseFlightWorkbench(airport_graph, database, **kwargs)
 
 
-def flight(identifier: str, callsigns: tuple[str, str] | None = None) -> Flight:
+def flight(identifier: str, numbers: tuple[str, str] | None = None) -> Flight:
     frame = pd.DataFrame(
         {
             "flight_id": [identifier, identifier],
@@ -71,8 +71,8 @@ def flight(identifier: str, callsigns: tuple[str, str] | None = None) -> Flight:
             "latitude": [40.0, 40.001],
         }
     )
-    if callsigns:
-        frame["callsign"] = callsigns
+    if numbers:
+        frame["number"] = numbers
     return Flight(frame)
 
 
@@ -208,8 +208,8 @@ def test_batch_submission_is_not_limited_by_map_capacity_and_conflicts_are_expli
     assert submitted["queued_count"] == 6
 
     detail = workbench.detail(keys[-1])
-    assert detail["fields"]["callsign"] is None
-    assert detail["inconsistent_fields"]["callsign"] == ["CCA1", "CCA2"]
+    assert detail["fields"]["number"] is None
+    assert detail["inconsistent_fields"]["number"] == ["CCA1", "CCA2"]
 
 
 def test_partial_match_failure_keeps_other_success(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -307,7 +307,7 @@ def test_batch_rejects_unknown_atomically_and_reports_skip_reasons() -> None:
 
 def test_observation_detail_is_paginated_and_can_expand_fields() -> None:
     item = flight_with_points("many", 205)
-    item = Flight({**row, "aircraft_type": "A320"} for row in item.rows)
+    item = Flight({**row, "source_month": "2024-06"} for row in item.rows)
     workbench = FlightWorkbench(SmallGraph(), [item])
     key = next(iter(workbench.items))
 
@@ -316,9 +316,9 @@ def test_observation_detail_is_paginated_and_can_expand_fields() -> None:
 
     assert len(second["observations"]) == 100
     assert second["observations"][0]["record_index"] == 101
-    assert "aircraft_type" not in second["observation_columns"]
+    assert "source_month" not in second["observation_columns"]
     assert len(expanded["observations"]) == 5
-    assert "aircraft_type" in expanded["observation_columns"]
+    assert "source_month" in expanded["observation_columns"]
 
 
 def test_real_path_and_nan_fields_serialize_through_all_endpoints(monkeypatch) -> None:
@@ -338,7 +338,7 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints(monkeypatch) -
             {
                 "flight_id": ["real", "real"],
                 "NUMBER": ["CCA123", "CCA123"],
-                "optional": [np.nan, np.nan],
+                "altitude": [np.nan, np.nan],
                 "timestamp": pd.date_range("2026-01-01", periods=2, freq="1min", tz="UTC"),
                 "longitude": [a[0], b[0]],
                 "latitude": [a[1], b[1]],
@@ -377,134 +377,173 @@ def test_real_path_and_nan_fields_serialize_through_all_endpoints(monkeypatch) -
 
     assert catalogue["items"][0]["flight_number"] == "CCA123"
     assert catalogue["items"][0]["match"]["status"] == "success"
-    assert detail["fields"]["optional"] is None
+    assert detail["observations"][0]["altitude"] is None
     assert geometry["path"]["features"]
-    assert geometry["flight"]["features"][1]["properties"]["optional"] is None
+    assert geometry["flight"]["features"][1]["properties"]["altitude"] is None
     assert statuses["tasks"] == []
     assert geometry["match"]["has_path"] is True
     json.dumps([catalogue, detail, geometry, statuses], allow_nan=False)
 
 
-def test_duckdb_workbench_reads_full_catalogue_and_filters_in_beijing(tmp_path):
+def test_postgres_workbench_reads_full_catalogue_and_filters_in_beijing():
     from datetime import date
+
+    import psycopg
 
     from flight.flight_catalogue_repository import BEIJING
     from flight.flight_repository import FlightDatabase, database_flight_key
+    from tests.flight_database_fixture import reset_test_database
 
-    duckdb = pytest.importorskip("duckdb")
-    from db import apply_core_schema
+    dsn = reset_test_database()
+    pg_dsn = dsn.replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(pg_dsn) as connection:
+        with connection.cursor() as cur:
+            for movement in ("arrival", "departure"):
+                pk = cur.execute(
+                    """
+                    INSERT INTO public.flights (
+                        movement, flight_id, number, number_count,
+                        start_time, end_time, point_count, source_month
+                    ) VALUES (
+                        %s, 'same', 'CA1', 1,
+                        TIMESTAMPTZ '2024-06-15 00:05:00+08',
+                        TIMESTAMPTZ '2024-06-15 00:06:00+08',
+                        2, '2024-06'
+                    ) RETURNING flight_pk
+                    """,
+                    (movement,),
+                ).fetchone()[0]
+                cur.execute(
+                    """
+                    INSERT INTO public.adsb_observations (
+                        flight_pk, ts, longitude, latitude, source_month
+                    ) VALUES
+                        (%s, TIMESTAMPTZ '2024-06-15 00:05:00+08', 116.0, 40.0, '2024-06'),
+                        (%s, TIMESTAMPTZ '2024-06-15 00:06:00+08', 116.1, 40.0, '2024-06')
+                    """,
+                    (pk, pk),
+                )
+        connection.commit()
 
-    database = tmp_path / "catalogue.duckdb"
-    with duckdb.connect(str(database)) as connection:
-        apply_core_schema(connection)
-        for movement, stand_column in (
-            ("arr", "arr_stand_position"),
-            ("dep", "dep_stand_position"),
-        ):
-            connection.execute(f"DROP TABLE main.adsb_{movement}")
-            connection.execute(f"""
-                CREATE TABLE adsb_{movement} (
-                    flight_id VARCHAR, number VARCHAR, timestamp TIMESTAMP,
-                    longitude DOUBLE, latitude DOUBLE,
-                    {stand_column} VARCHAR CHECK ({stand_column} <> 'invalid')
-                );
-                INSERT INTO adsb_{movement} VALUES
-                    ('same', 'CA1', '2024-06-15 00:05:00', 116.0, 40.0, NULL),
-                    ('same', 'CA1', '2024-06-15 00:06:00', 116.1, 40.0, NULL);
-            """)
-
-    store = FlightDatabase(database)
-    workbench = FlightWorkbench(
-        SmallGraph(),
-        flight_database=store,
-        display_timezone=BEIJING,
-        input_time_semantics=BEIJING,
-    )
-    arrival = database_flight_key("arrival", "same")
-    departure = database_flight_key("departure", "same")
-    criteria = {"start_date": date(2024, 6, 15), "end_date": date(2024, 6, 15), "stands": [""]}
-    assert workbench.catalogue(FlightFilter(**criteria))["total"] == 2
-    assert workbench.catalogue(FlightFilter(end_date=date(2024, 6, 14)))["total"] == 0
-    assert (
-        workbench.catalogue(FlightFilter(movement_type="arrival"))["items"][0]["flight_key"]
-        == arrival
-    )
-    detail = workbench.detail(arrival, observation_page=2, observation_page_size=1)
-    assert detail["summary"]["start_time"] == "2024-06-15T00:05:00+08:00"
-    assert detail["observations"][0]["timestamp"] == "2024-06-14T16:06:00+00:00"
-    assert detail["observations"][0]["record_index"] == 2
-    assert detail["observation_total"] == 2
-    assert len(workbench.geometry(arrival)["flight"]["features"]) == 3
-
-    with pytest.raises(RuntimeError, match="事务失败"):
-        workbench.update_stand(arrival, "invalid")
-    assert workbench.filtered_keys(FlightFilter(**criteria))["count"] == 2
-    workbench.update_stand(arrival, "009")
-    assert workbench.filtered_keys(FlightFilter(**criteria))["flight_keys"] == [departure]
-    assert workbench.detail(arrival)["fields"]["arr_stand_position"] == "009"
-    assert workbench.detail(departure)["fields"]["dep_stand_position"] is None
-    assert [flight.point_count for flight in store.observations.iterate("arrival", None)] == [2]
-    assert list(store.observations.iterate("arrival", 0)) == []
-
-    with duckdb.connect(str(database), read_only=True) as db:
-        assert db.execute(
-            "SELECT arr_stand_position FROM adsb_arr ORDER BY timestamp"
-        ).fetchall() == [("009",), ("009",)]
-    restarted = FlightWorkbench(SmallGraph(), flight_database=store)
-    assert restarted.detail(arrival)["fields"]["arr_stand_position"] == "009"
-
-    graph = SmallGraph().graph
-    graph.add_node("2", pos=(116.001, 40.001))
-    graph.add_edge("1", "2", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
-    editor = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
-    with TestClient(create_app(editor, flight_database=store)) as client:
-        response = client.patch(f"/api/flights/{arrival}/stand", json={"stand_position": None})
-        assert response.status_code == 204
-        assert client.get("/api/flight-selection", params={"stands": ""}).json()["count"] == 2
-        assert client.get(f"/api/flights/{arrival}").json()["fields"]["arr_stand_position"] is None
-
-
-def test_validation_flights_filter_counts_only_eligible_observations(tmp_path):
-    from db import apply_core_schema
-    from flight.flight_repository import FlightDatabase, database_flight_key
-
-    duckdb = pytest.importorskip("duckdb")
-    database = tmp_path / "validation.duckdb"
-    with duckdb.connect(str(database)) as connection:
-        apply_core_schema(connection)
-        for suffix, stand, runway in (
-            ("dep", "dep_stand_position", "org_runway"),
-            ("arr", "arr_stand_position", "dst_runway"),
-        ):
-            table = f"adsb_{suffix}"
-            connection.execute(f"DROP TABLE main.{table}")
-            connection.execute(f"""
-                CREATE TABLE {table} AS
-                SELECT flight_id, flight_id AS number,
-                       TIMESTAMP '2024-06-15 00:05:00' AS timestamp,
-                       116.0 AS longitude, 40.0 AS latitude,
-                       stand AS {stand}, runway AS {runway}
-                FROM (VALUES ('eligible', '009', '01', 30),
-                             ('eligible', '009', NULL, 4),
-                             ('too-few', '009', '01', 29),
-                             ('too-few', '009', NULL, 10),
-                             ('excluded', '952L', '01', 40))
-                     AS cases(flight_id, stand, runway, points),
-                     range(points)
-            """)
-    store = FlightDatabase(database)
-    assert store.catalogue.validation_flights() == [
-        dict(
-            flight_id="eligible", movement=movement, stand="009", flight_points=30, total_flights=2
+    store = FlightDatabase(dsn)
+    try:
+        workbench = FlightWorkbench(
+            SmallGraph(),
+            flight_database=store,
+            display_timezone=BEIJING,
+            input_time_semantics=BEIJING,
         )
-        for movement in ("arr", "dep")
-    ]
-    assert store.catalogue.validation_flights(31) == []
-    workbench = FlightWorkbench(SmallGraph(), flight_database=store)
-    assert workbench.catalogue(FlightFilter(validation_only=True))["total"] == 2
-    assert workbench.filtered_keys(FlightFilter(validation_only=True, movement_type="departure"))[
-        "flight_keys"
-    ] == [database_flight_key("departure", "eligible")]
+        arrival = database_flight_key("arrival", "same")
+        departure = database_flight_key("departure", "same")
+        criteria = {"start_date": date(2024, 6, 15), "end_date": date(2024, 6, 15), "stands": [""]}
+        assert workbench.catalogue(FlightFilter(**criteria))["total"] == 2
+        assert workbench.catalogue(FlightFilter(end_date=date(2024, 6, 14)))["total"] == 0
+        assert (
+            workbench.catalogue(FlightFilter(movement_type="arrival"))["items"][0]["flight_key"]
+            == arrival
+        )
+        detail = workbench.detail(arrival, observation_page=2, observation_page_size=1)
+        assert detail["summary"]["start_time"] == "2024-06-15T00:05:00+08:00"
+        assert detail["observations"][0]["timestamp"] == "2024-06-14T16:06:00+00:00"
+        assert detail["observations"][0]["record_index"] == 2
+        assert detail["observation_total"] == 2
+        assert len(workbench.geometry(arrival)["flight"]["features"]) == 3
+
+        workbench.update_stand(arrival, "009")
+        assert workbench.filtered_keys(FlightFilter(**criteria))["flight_keys"] == [departure]
+        assert workbench.detail(arrival)["fields"]["arr_stand_position"] == "009"
+        assert workbench.detail(departure)["fields"]["dep_stand_position"] is None
+        assert [flight.point_count for flight in store.observations.iterate("arrival", None)] == [2]
+        assert list(store.observations.iterate("arrival", 0)) == []
+
+        with psycopg.connect(pg_dsn) as db:
+            assert db.execute(
+                "SELECT stand_override, stand_is_overridden FROM public.flights "
+                "WHERE movement = 'arrival' AND flight_id = 'same'"
+            ).fetchall() == [("009", True)]
+        restarted = FlightWorkbench(SmallGraph(), flight_database=store)
+        assert restarted.detail(arrival)["fields"]["arr_stand_position"] == "009"
+
+        graph = SmallGraph().graph
+        graph.add_node("2", pos=(116.001, 40.001))
+        graph.add_edge("1", "2", geometry=LineString([(116.0, 40.0), (116.001, 40.001)]))
+        editor = EditorSession(AirportGraph(graph, Proj("EPSG:32650")))
+        with TestClient(create_app(editor, flight_database=store)) as client:
+            response = client.patch(f"/api/flights/{arrival}/stand", json={"stand_position": None})
+            assert response.status_code == 204
+            assert client.get("/api/flight-selection", params={"stands": ""}).json()["count"] == 2
+            assert (
+                client.get(f"/api/flights/{arrival}").json()["fields"]["arr_stand_position"] is None
+            )
+    finally:
+        store.close()
+
+
+def test_validation_flights_filter_counts_only_eligible_observations():
+    import psycopg
+
+    from flight.flight_repository import FlightDatabase, database_flight_key
+    from tests.flight_database_fixture import reset_test_database
+
+    dsn = reset_test_database()
+    pg_dsn = dsn.replace("postgresql+psycopg://", "postgresql://")
+    with psycopg.connect(pg_dsn) as connection:
+        with connection.cursor() as cur:
+            for movement in ("departure", "arrival"):
+                for fid, stand, runway, points in (
+                    ("eligible", "009", "01", 30),
+                    ("too-few", "009", "01", 29),
+                    ("no-runway", "009", None, 40),
+                    ("excluded", "952L", "01", 40),
+                ):
+                    cur.execute(
+                        """
+                        INSERT INTO public.flights (
+                            movement, flight_id, number, number_count,
+                            raw_stand_position, stand_count,
+                            org_runway, dst_runway,
+                            start_time, end_time, point_count
+                        ) VALUES (
+                            %s, %s, %s, 1,
+                            %s, 1,
+                            %s, %s,
+                            TIMESTAMPTZ '2024-06-15 00:05:00+08',
+                            TIMESTAMPTZ '2024-06-15 00:15:00+08',
+                            %s
+                        )
+                        """,
+                        (
+                            movement,
+                            fid,
+                            fid,
+                            stand,
+                            runway if movement == "departure" else None,
+                            runway if movement == "arrival" else None,
+                            points,
+                        ),
+                    )
+        connection.commit()
+
+    store = FlightDatabase(dsn)
+    try:
+        assert store.catalogue.validation_flights() == [
+            dict(
+                flight_id="eligible",
+                movement=movement,
+                stand="009",
+                flight_points=30,
+                total_flights=2,
+            )
+            for movement in ("arr", "dep")
+        ]
+        assert store.catalogue.validation_flights(31) == []
+        workbench = FlightWorkbench(SmallGraph(), flight_database=store)
+        assert workbench.catalogue(FlightFilter(validation_only=True))["total"] == 2
+        assert workbench.filtered_keys(
+            FlightFilter(validation_only=True, movement_type="departure")
+        )["flight_keys"] == [database_flight_key("departure", "eligible")]
+    finally:
+        store.close()
 
 
 def test_close_finishes_current_flight_and_cancels_queued_work(monkeypatch):

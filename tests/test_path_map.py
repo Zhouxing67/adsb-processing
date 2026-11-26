@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 
-import duckdb
 import networkx as nx
 import pandas as pd
 import pytest
@@ -12,7 +11,6 @@ from shapely.geometry import LineString, Point
 
 from airport_surface import AirportGraph, graph_id, load_graph, save_graph
 from flight import Flight, MovementType
-from flight.flight_repository import FlightDatabase
 from path_map import (
     MapMatchingError,
     MapMatchingFailure,
@@ -24,6 +22,7 @@ from path_map import (
     get_od,
 )
 from path_map.candidates import Candidate
+from tests.flight_database_fixture import create_flight_database
 
 
 def straight_airport_graph() -> tuple[AirportGraph, Transformer]:
@@ -262,47 +261,45 @@ def test_database_flight_matches_using_its_od(
     airport_graph.rebuild_stand_index()
     airport_graph.rebuild_runway_interfaces()
 
-    database_path = tmp_path / "flights.duckdb"
+    del suffix, tmp_path
     points = [x + 12, x + 18, x + 26]
     expected = (("1", "2", 0), ("2", "3", 1))
     if movement == "arrival":
         points.reverse()
         expected = tuple((v, u, key) for u, v, key in reversed(expected))
-    table = f"adsb_{suffix}"
-    with duckdb.connect(str(database_path)) as connection:
-        connection.execute(
-            f"CREATE TABLE {table} (flight_id VARCHAR, timestamp TIMESTAMP, "
-            f"longitude DOUBLE, latitude DOUBLE, {stand_column} VARCHAR, {runway_column} VARCHAR, "
-            "number VARCHAR, sche_dep TIMESTAMP)"
-        )
-        connection.executemany(
-            f"INSERT INTO {table} VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
-                (
-                    "flight",
-                    f"2026-01-01 00:00:0{i}",
-                    *to_wgs84.transform(px, y),
-                    " 009 " if i == 1 else None,
-                    " 01 ",
-                    "CA123",
-                    "2026-01-01 08:00:00",
-                )
-                for i, px in enumerate(points)
-            ],
-        )
-
-    database = FlightDatabase(database_path)
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
-    for flight in (
-        database.observations.flight(movement, "flight"),
-        *database.observations.iterate(movement, None),
-    ):
-        assert (flight.stand_ref, flight.runway_ref) == ("009", "01")
-        assert flight.number == "CA123"
-        assert flight.sche_dep == datetime(2026, 1, 1, tzinfo=timezone.utc)
-        assert flight.observations[0].timestamp == datetime(2025, 12, 31, 16, tzinfo=timezone.utc)
-        assert flight.actual_dep is None
-        assert matcher.map_flight(flight).edge_ids == expected
+    sample_rows = [
+        {
+            "flight_id": "flight",
+            "timestamp": f"2026-01-01 00:00:0{i}+08:00",
+            "longitude": to_wgs84.transform(px, y)[0],
+            "latitude": to_wgs84.transform(px, y)[1],
+            stand_column: " 009 " if i == 1 else None,
+            runway_column: " 01 ",
+            "number": "CA123",
+            "sche_dep": "2026-01-01 08:00:00+08:00",
+        }
+        for i, px in enumerate(points)
+    ]
+    database = create_flight_database(
+        [Flight(sample_rows, movement=movement)],
+        movement_types=[movement],
+    )
+    try:
+        matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
+        for flight in (
+            database.observations.flight(movement, "flight"),
+            *database.observations.iterate(movement, None),
+        ):
+            assert (flight.stand_ref, flight.runway_ref) == ("009", "01")
+            assert flight.number == "CA123"
+            assert flight.sche_dep == datetime(2026, 1, 1, tzinfo=timezone.utc)
+            assert flight.observations[0].timestamp == datetime(
+                2025, 12, 31, 16, tzinfo=timezone.utc
+            )
+            assert flight.actual_dep is None
+            assert matcher.map_flight(flight).edge_ids == expected
+    finally:
+        database.close()
     missing_runway = Flight(
         [{**row, runway_column: None} for row in flight.rows],
         movement=movement,

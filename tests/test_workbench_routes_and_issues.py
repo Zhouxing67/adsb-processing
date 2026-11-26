@@ -1,9 +1,9 @@
-"""Focused tests for workbench whitelist, route library, match issues, and slim polling."""
+"""Focused tests for workbench route library, match issues, and slim polling."""
 
 from __future__ import annotations
 
 import networkx as nx
-import pytest
+import pandas as pd
 from fastapi.testclient import TestClient
 from pyproj import Proj
 from shapely.geometry import LineString
@@ -12,10 +12,10 @@ from airport_surface import AirportGraph
 from airport_workbench.app import create_app
 from airport_workbench.editor import EditorSession
 from airport_workbench.flights import FlightFilter, FlightWorkbench
-from db import apply_core_schema
-from flight.flight_repository import FlightDatabase, database_flight_key
+from flight import Flight
 from path_map import Path
 from route_library import RouteEntry, RouteLibraryRepository, RouteStatus
+from tests.flight_database_fixture import create_flight_database
 
 
 def _mini_graph() -> AirportGraph:
@@ -41,64 +41,28 @@ def _mini_graph() -> AirportGraph:
     return AirportGraph(graph, Proj("EPSG:32650"))
 
 
-def _single_flight_db(tmp_path):
-    duckdb = pytest.importorskip("duckdb")
-    database = tmp_path / "workbench.duckdb"
-    with duckdb.connect(str(database)) as connection:
-        apply_core_schema(connection)
-        connection.execute("""
-            INSERT INTO main.adsb_dep (
-                flight_id, number, timestamp, longitude, latitude, dep_stand_position, org_runway
-            ) VALUES
-                ('F1', 'CA1', '2024-06-15 00:05:00', 116.59, 40.07, '009', '01');
-        """)
-    return FlightDatabase(database)
+def _single_flight_db():
+    sample = Flight(
+        pd.DataFrame(
+            {
+                "flight_id": ["F1"],
+                "number": ["CA1"],
+                "timestamp": ["2024-06-15 00:05:00+08:00"],
+                "longitude": [116.59],
+                "latitude": [40.07],
+                "dep_stand_position": ["009"],
+                "org_runway": ["01"],
+            }
+        ),
+        movement="departure",
+    )
+    return create_flight_database([sample], movement_types=["departure"])
 
 
-def test_whitelist_filter_handles_empty_and_populated_whitelist_table(tmp_path):
-    duckdb = pytest.importorskip("duckdb")
-    database = tmp_path / "whitelist.duckdb"
-    with duckdb.connect(str(database)) as connection:
-        apply_core_schema(connection)
-        for suffix, stand, runway in (
-            ("dep", "dep_stand_position", "org_runway"),
-            ("arr", "arr_stand_position", "dst_runway"),
-        ):
-            connection.execute(f"DROP TABLE main.adsb_{suffix}")
-            connection.execute(f"""
-                CREATE TABLE adsb_{suffix} AS
-                SELECT flight_id, flight_id AS number,
-                       TIMESTAMP '2024-06-15 00:05:00' AS timestamp,
-                       116.0 AS longitude, 40.0 AS latitude,
-                       '009' AS {stand}, '01' AS {runway}
-                FROM (VALUES ('keep'), ('drop')) AS cases(flight_id), range(30)
-            """)
-
-    store = FlightDatabase(database)
-    workbench = FlightWorkbench(_mini_graph(), flight_database=store)
-
-    empty = workbench.catalogue(FlightFilter(whitelist_only=True))
-    assert empty["supports_whitelist_filter"] is True
-    assert empty["total"] == 0
-
-    with duckdb.connect(str(database)) as connection:
-        connection.execute(
-            "INSERT INTO main.flight_whitelist VALUES ('departure', 'keep', '009', '01')"
-        )
-
-    populated = workbench.catalogue(FlightFilter(whitelist_only=True))
-    assert populated["total"] == 1
-    assert populated["items"][0]["flight_key"] == database_flight_key("departure", "keep")
-    assert workbench.filtered_keys(FlightFilter(whitelist_only=True, validation_only=True)) == {
-        "flight_keys": [database_flight_key("departure", "keep")],
-        "count": 1,
-    }
-
-
-def test_route_library_endpoints_list_geometry_review_and_import(tmp_path):
+def test_route_library_endpoints_list_geometry_review_and_import():
     airport_graph = _mini_graph()
-    store = _single_flight_db(tmp_path)
-    routes = RouteLibraryRepository(store.duckdb)
+    store = _single_flight_db()
+    routes = RouteLibraryRepository(store.postgres)
     app = create_app(EditorSession(airport_graph), flight_database=store)
 
     with TestClient(app) as client:
@@ -154,9 +118,172 @@ def test_route_library_endpoints_list_geometry_review_and_import(tmp_path):
         assert imported.json()["graph_id"] == listed["current_graph_id"]
 
 
-def test_match_issues_archive_filter_remove_and_slim_polling(tmp_path):
+def test_route_coverage_endpoint_computes_fine_and_cluster_coverage():
+    from airport_surface import StandCluster
+
+    graph = nx.MultiGraph()
+    graph.add_node("1", pos=(116.59, 40.07))
+    graph.add_node("2", pos=(116.595, 40.07))
+    graph.add_node("3", pos=(116.60, 40.07))
+    graph.add_node("4", pos=(116.59, 40.075))
+    graph.add_node("5", pos=(116.605, 40.07))
+    graph.add_edge(
+        "1", "2", key=0, geometry=LineString([(116.59, 40.07), (116.595, 40.07)]),
+        aeroway="parking_position", ref="009",
+    )
+    graph.add_edge(
+        "4", "2", key=0, geometry=LineString([(116.59, 40.075), (116.595, 40.07)]),
+        aeroway="parking_position", ref="010",
+    )
+    graph.add_edge(
+        "2", "3", key=0, geometry=LineString([(116.595, 40.07), (116.60, 40.07)]),
+        aeroway="taxiway",
+    )
+    graph.add_edge(
+        "3", "5", key=0, geometry=LineString([(116.60, 40.07), (116.605, 40.07)]),
+        aeroway="runway", ref="01/19",
+    )
+    airport_graph = AirportGraph(
+        graph,
+        Proj("EPSG:32650"),
+        stand_clusters=[StandCluster(c_id=1, stands=(("1", "2", 0), ("4", "2", 0)), name="A区")],
+    )
+    store = _single_flight_db()
+    routes = RouteLibraryRepository(store.postgres)
+    routes.upsert_routes(
+        [
+            RouteEntry.from_path(
+                airport_graph,
+                Path(airport_graph, [("1", "2", 0), ("2", "3", 0)]),
+                movement="departure",
+                stand_ref="009",
+                runway_ref="01",
+            ),
+            RouteEntry.from_path(
+                airport_graph,
+                Path(airport_graph, [("3", "2", 0), ("2", "1", 0)]),
+                movement="arrival",
+                stand_ref="009",
+                runway_ref="19",
+                status=RouteStatus.REJECTED,
+            ),
+        ]
+    )
+    app = create_app(EditorSession(airport_graph), flight_database=store)
+    with TestClient(app) as client:
+        cov = client.get("/api/routes/coverage").json()
+        # 2 stands ("009", "010") x 2 runways ("01", "19") x 2 movements = 8 total ODs
+        assert cov["total_stands"] == 2
+        assert cov["clustered_stands"] == 2
+        assert cov["cluster_count"] == 1
+        assert cov["total_runways"] == 2
+        assert cov["covered_runways"] == 1
+        assert cov["uncovered_runways"] == ["19"]
+        assert cov["total_ods"] == 8
+        assert cov["fine_covered_ods"] == 1
+        assert cov["effective_covered_ods"] == 2
+        assert cov["fine_covered_stands"] == 1
+        assert cov["effective_covered_stands"] == 2
+        assert cov["uncovered_stands"] == []
+
+
+def test_route_anomaly_detection_flags_obvious_anomalies_without_false_positives():
+    graph = nx.MultiGraph()
+    graph.add_node("1", pos=(116.590, 40.070))
+    graph.add_node("2", pos=(116.595, 40.070))
+    graph.add_node("3", pos=(116.600, 40.070))
+    graph.add_node("4", pos=(116.600, 40.075))
+    graph.add_node("5", pos=(116.595, 40.075))
+    graph.add_edge(
+        "1", "2", key=0, geometry=LineString([(116.590, 40.070), (116.595, 40.070)]),
+        aeroway="parking_position", ref="009",
+    )
+    graph.add_edge(
+        "2", "3", key=0, geometry=LineString([(116.595, 40.070), (116.600, 40.070)]),
+        aeroway="taxiway",
+    )
+    graph.add_edge(
+        "3", "4", key=0, geometry=LineString([(116.600, 40.070), (116.600, 40.075)]),
+        aeroway="taxiway",
+    )
+    graph.add_edge(
+        "4", "5", key=0, geometry=LineString([(116.600, 40.075), (116.595, 40.075)]),
+        aeroway="taxiway",
+    )
+    graph.add_edge(
+        "5", "2", key=0, geometry=LineString([(116.595, 40.075), (116.595, 40.070)]),
+        aeroway="taxiway",
+    )
+    airport_graph = AirportGraph(graph, Proj("EPSG:32650"))
+    store = _single_flight_db()
+    routes = RouteLibraryRepository(store.postgres)
+
+    # Normal departure with a single pushback reversal on parking edge: MUST NOT be flagged
+    normal_pushback = RouteEntry.from_path(
+        airport_graph,
+        Path(airport_graph, [("2", "1", 0), ("1", "2", 0), ("2", "3", 0)]),
+        movement="departure",
+        stand_ref="009",
+        runway_ref="01",
+        flight_count=10,
+    )
+    # Normal clean departure: MUST NOT be flagged
+    normal_clean = RouteEntry.from_path(
+        airport_graph,
+        Path(airport_graph, [("1", "2", 0), ("2", "3", 0)]),
+        movement="departure",
+        stand_ref="009",
+        runway_ref="01",
+        flight_count=20,
+    )
+    # Obvious closed loop (2 -> 3 -> 4 -> 5 -> 2 -> 3): MUST be flagged
+    loop_anomaly = RouteEntry.from_path(
+        airport_graph,
+        Path(
+            airport_graph,
+            [("1", "2", 0), ("2", "3", 0), ("3", "4", 0), ("4", "5", 0), ("5", "2", 0), ("2", "3", 0)],
+        ),
+        movement="departure",
+        stand_ref="009",
+        runway_ref="01",
+        flight_count=1,
+    )
+    routes.upsert_routes([normal_clean, normal_pushback, loop_anomaly])
+
+    app = create_app(EditorSession(airport_graph), flight_database=store)
+    with TestClient(app) as client:
+        res = client.post(
+            "/api/routes/detect-anomalies",
+            json={
+                "route_ids": [normal_clean.route_id, loop_anomaly.route_id],
+            },
+        )
+        assert res.status_code == 200
+        payload = res.json()
+        assert payload["checked_count"] == 2
+        assert payload["anomalous_count"] == 1
+        assert payload["items"][0]["route_id"] == loop_anomaly.route_id
+        codes = {reason["code"] for reason in payload["items"][0]["reasons"]}
+        assert "closed_loop" in codes
+        assert "repeated_edge" in codes
+
+        # Batch reject the detected anomaly
+        rejected = client.post(
+            "/api/routes/batch-review",
+            json={
+                "route_ids": [loop_anomaly.route_id],
+                "status": "rejected",
+                "note": "异常检测自动驳回",
+            },
+        )
+        assert rejected.status_code == 200
+        assert rejected.json()["updated_count"] == 1
+        assert routes.get(loop_anomaly.route_id).status == RouteStatus.REJECTED
+
+
+def test_match_issues_archive_filter_remove_and_slim_polling():
     airport_graph = _mini_graph()
-    store = _single_flight_db(tmp_path)
+    store = _single_flight_db()
     app = create_app(EditorSession(airport_graph), flight_database=store)
 
     with TestClient(app) as client:
@@ -196,15 +323,15 @@ def test_match_issues_archive_filter_remove_and_slim_polling(tmp_path):
         assert [item["flight_key"] for item in slim_tracked["tasks"][0]["items"]] == [flight_key]
 
 
-def test_import_matched_routes_reuses_graph_id_and_catalogue_avoids_rescan(tmp_path, monkeypatch):
+def test_import_matched_routes_reuses_graph_id_and_catalogue_avoids_rescan(monkeypatch):
     airport_graph = _mini_graph()
-    store = _single_flight_db(tmp_path)
+    store = _single_flight_db()
     workbench = FlightWorkbench(airport_graph, flight_database=store)
     flight_key = next(iter(workbench.items))
 
-    # Catalogue refresh must filter in-memory items without re-scanning adsb_dep/adsb_arr.
+    # Catalogue refresh must filter in-memory items without re-scanning flights table.
     def fail_summaries(*_args, **_kwargs):
-        raise AssertionError("catalogue() must not rescan raw ADS-B tables")
+        raise AssertionError("catalogue() must not rescan flights table")
 
     monkeypatch.setattr(store.catalogue, "summaries", fail_summaries)
     refreshed = workbench.catalogue(FlightFilter(query="F1"))
@@ -231,19 +358,11 @@ def test_import_matched_routes_reuses_graph_id_and_catalogue_avoids_rescan(tmp_p
     workbench.close()
 
 
-def test_quack_connection_uses_queue_pool_while_local_file_uses_null_pool(tmp_path):
-    from sqlalchemy.pool import NullPool, QueuePool
+def test_postgres_connection_uses_queue_pool():
+    from sqlalchemy.pool import QueuePool
 
-    from db import DuckDBConnection
-
-    store = _single_flight_db(tmp_path)
-    assert isinstance(store.duckdb._engine.pool, NullPool)
-    store.close()
-
-    quack_conn = DuckDBConnection(
-        tmp_path / "workbench.duckdb",
-        read_only=False,
-        quack_uri="quack:127.0.0.1:9494",
-    )
-    assert isinstance(quack_conn._engine.pool, QueuePool)
-    quack_conn.close()
+    store = _single_flight_db()
+    try:
+        assert isinstance(store.postgres._engine.pool, QueuePool)
+    finally:
+        store.close()

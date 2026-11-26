@@ -23,16 +23,14 @@ def flight_samples():
 
 
 @pytest.fixture
-def flight_database_factory(tmp_path):
-    counter = 0
+def flight_database_factory():
+    opened = []
 
     def create(flights, movement_types=None):
-        nonlocal counter
-        counter += 1
-        return create_flight_database(
-            tmp_path / f"flight-fixture-{counter}.duckdb",
-            flights,
-            movement_types,
-        )
+        database = create_flight_database(flights, movement_types)
+        opened.append(database)
+        return database
 
-    return create
+    yield create
+    for database in opened:
+        database.close()

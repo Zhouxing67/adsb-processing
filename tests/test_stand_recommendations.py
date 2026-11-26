@@ -1,8 +1,7 @@
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 
-import duckdb
 import networkx as nx
+import psycopg
 import pytest
 from pyproj import Proj, Transformer
 from shapely.geometry import LineString
@@ -11,6 +10,7 @@ from airport_surface import AirportGraph
 from airport_workbench.stand_recommendations import StandGeometryIndex
 from flight import Flight
 from flight.flight_repository import FlightDatabase
+from tests.flight_database_fixture import reset_test_database
 
 
 @pytest.mark.parametrize("movement", ["arrival", "departure"])
@@ -42,24 +42,36 @@ def test_stand_geometry_uses_event_side_and_distinct_neighbour(movement):
     assert candidates([(0, 100), (10, 6), (20, 6)])[0].consecutive_points == 2
 
 
-def test_historical_stands_count_flights_and_exclude_only_known_occupancy(tmp_path):
-    path = tmp_path / "history.duckdb"
-    schema = Path(__file__).resolve().parents[1] / "sql/schema/01_core_tables.sql"
+def test_historical_stands_count_flights_and_exclude_only_known_occupancy():
+    dsn = reset_test_database()
+    pg_dsn = dsn.replace("postgresql+psycopg://", "postgresql://")
     event = datetime(2024, 6, 1, 4, tzinfo=timezone.utc)  # noon in Beijing
-    with duckdb.connect(str(path)) as conn:
-        conn.execute(schema.read_text(encoding="utf-8"))
-        conn.execute("""
-            INSERT INTO adsb_dep (flight_id, number, a_num, dep_stand_position, actual_dep) VALUES
-            ('1','CA1','T1','A','2024-05-01'), ('1','CA1','T1','A','2024-05-01'),
-            ('2','CA1','T2','A','2024-05-03'), ('3','CA1','T3','B','2024-05-04'),
-            ('4','CA1','T4','C','2024-05-05'), ('5','CA1','T5','D','2024-01-01'),
-            ('6','CA1','T6','E','2024-06-02'), ('7','CA2','T7','F','2024-05-01'),
-            ('8','CA2','OCC','B','2024-06-01 12:15'), ('9','CA2','OTHER','C','2024-06-01 13:00');
-            INSERT INTO adsb_arr (flight_id, number, a_num, arr_stand_position, actual_arr) VALUES
-            ('10','CA2','OCC','B','2024-06-01 11:45'),
-            ('11','CA2','DIFFERENT','C','2024-06-01 11:00');
-        """)
-    stands = FlightDatabase(path).stands
-    assert stands.historical_candidates("departure", "target", "CA1", event, None) == [
-        ("A", 2, 4), ("C", 1, 4)
-    ]
+    with psycopg.connect(pg_dsn) as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO public.flights (
+                    movement, flight_id, number, a_num, raw_stand_position, actual_dep
+                ) VALUES
+                ('departure','1','CA1','T1','A', TIMESTAMPTZ '2024-05-01 00:00:00+08'),
+                ('departure','2','CA1','T2','A', TIMESTAMPTZ '2024-05-03 00:00:00+08'),
+                ('departure','3','CA1','T3','B', TIMESTAMPTZ '2024-05-04 00:00:00+08'),
+                ('departure','4','CA1','T4','C', TIMESTAMPTZ '2024-05-05 00:00:00+08'),
+                ('departure','5','CA1','T5','D', TIMESTAMPTZ '2024-01-01 00:00:00+08'),
+                ('departure','6','CA1','T6','E', TIMESTAMPTZ '2024-06-02 00:00:00+08'),
+                ('departure','7','CA2','T7','F', TIMESTAMPTZ '2024-05-01 00:00:00+08'),
+                ('departure','8','CA2','OCC','B', TIMESTAMPTZ '2024-06-01 12:15:00+08'),
+                ('departure','9','CA2','OTHER','C', TIMESTAMPTZ '2024-06-01 13:00:00+08');
+                INSERT INTO public.flights (
+                    movement, flight_id, number, a_num, raw_stand_position, actual_arr
+                ) VALUES
+                ('arrival','10','CA2','OCC','B', TIMESTAMPTZ '2024-06-01 11:45:00+08'),
+                ('arrival','11','CA2','DIFFERENT','C', TIMESTAMPTZ '2024-06-01 11:00:00+08');
+            """)
+        conn.commit()
+    database = FlightDatabase(dsn)
+    try:
+        assert database.stands.historical_candidates("departure", "target", "CA1", event, None) == [
+            ("A", 2, 4), ("C", 1, 4)
+        ]
+    finally:
+        database.close()

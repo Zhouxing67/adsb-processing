@@ -2,7 +2,6 @@
 
 import argparse
 from pathlib import Path
-from tempfile import TemporaryDirectory
 
 import networkx as nx
 import pandas as pd
@@ -47,9 +46,7 @@ flights = [
     )
     for i in range(args.flights)
 ]
-database_directory = TemporaryDirectory()
 database = create_flight_database(
-    Path(database_directory.name) / "browser.duckdb",
     flights,
     ["arrival" if i % 2 == 0 else "departure" for i in range(args.flights)],
 )

@@ -8,14 +8,16 @@ from config import load_settings
 from flight import flight_repository
 from path_map import MatchConfig
 
+SAMPLE_DSN = "postgresql+psycopg://postgres:secret@127.0.0.1:5432/adsb"
+
 
 @pytest.fixture
 def database_calls(monkeypatch, tmp_path):
     calls = []
 
-    def connect(path, *, read_only, quack_uri=None):
-        calls.append((path, read_only))
-        return SimpleNamespace(path=path, database_error=RuntimeError)
+    def connect(dsn, *, read_only):
+        calls.append((dsn, read_only))
+        return SimpleNamespace(dsn=dsn, database_error=RuntimeError, close=lambda: None)
 
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(flight_repository, "FlightDatabase", connect)
@@ -56,19 +58,18 @@ def test_missing_database_reports_configuration(database_calls, capsys):
 
 
 def write_config(config=""):
-    Path("configured.duckdb").touch()
     Path("config.local.toml").write_text(
-        "graph_path = 'custom-graph.json'\n[database]\npath = 'configured.duckdb'\n" + config,
+        f"graph_path = 'custom-graph.json'\n[database]\ndsn = '{SAMPLE_DSN}'\n" + config,
         "utf-8",
     )
 
 
-def test_invalid_database_path_fails_before_connecting(database_calls, capsys):
-    Path("config.local.toml").write_text("[database]\npath = 'missing.duckdb'\n", "utf-8")
+def test_empty_database_dsn_fails_before_connecting(database_calls, capsys):
+    Path("config.local.toml").write_text("[database]\ndsn = '   '\n", "utf-8")
     with pytest.raises(SystemExit) as error:
         matching_cli.main([])
     assert error.value.code == 2
-    assert "database.path" in capsys.readouterr().err
+    assert "database.dsn" in capsys.readouterr().err
     assert database_calls == []
 
 
@@ -86,7 +87,7 @@ def test_batch_uses_configured_database_and_both_movements(monkeypatch, database
     monkeypatch.setattr(matching_cli, "BatchMatchingRunner", RecordingRunner)
     matching_cli.main([])
 
-    assert database_calls == [(Path("configured.duckdb"), True)]
+    assert database_calls == [(SAMPLE_DSN, True)]
     (graph, datasets, output), options = calls[0]
     assert (graph, output) == (Path("custom-graph.json"), Path("custom-output"))
     assert options == {"match_config": MatchConfig(), "limit": 3}
@@ -120,8 +121,8 @@ turn_tangent_sample_m = 8
     )
     matching_cli.main(["--workbench"])
 
-    assert database_calls == [(Path("configured.duckdb"), False)]
-    assert captured["flight_database"].path == Path("configured.duckdb")
+    assert database_calls == [(SAMPLE_DSN, False)]
+    assert captured["flight_database"].dsn == SAMPLE_DSN
     assert captured["input_time_semantics"] == "Asia/Shanghai"
     assert captured["display_timezone"] == "UTC"
     assert captured["host"] == "localhost"

@@ -30,7 +30,7 @@ ALLOWED_PACKAGE_DEPS: dict[str, set[str]] = {
 }
 
 PURE_DOMAIN_PACKAGES = {"airport_surface", "path_map"}
-FORBIDDEN_IN_PURE_DOMAIN = {"fastapi", "starlette", "uvicorn", "duckdb", "sqlalchemy"}
+FORBIDDEN_IN_PURE_DOMAIN = {"fastapi", "starlette", "uvicorn", "duckdb", "psycopg", "sqlalchemy"}
 
 
 def _imported_top_modules(path: Path) -> set[str]:
