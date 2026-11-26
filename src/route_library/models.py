@@ -36,11 +36,11 @@ def normalize_stand_ref(stand_ref: str) -> str:
     return value
 
 
-def normalize_runway_ref(runway_ref: str | None) -> str | None:
-    if runway_ref is None:
-        return None
+def normalize_runway_ref(runway_ref: str) -> str:
     value = runway_ref.strip().upper()
-    return value or None
+    if not value:
+        raise ValueError("runway_ref must be a non-empty string")
+    return value
 
 
 def normalize_movement(movement: str) -> str:
@@ -65,7 +65,7 @@ def make_route_id(
     graph_identity: str,
     movement: str,
     stand_ref: str,
-    runway_ref: str | None,
+    runway_ref: str,
     edges_json: str,
 ) -> str:
     """Build a deterministic, idempotent route identifier scoped to graph and OD."""
@@ -74,7 +74,7 @@ def make_route_id(
             graph_identity,
             normalize_movement(movement),
             normalize_stand_ref(stand_ref),
-            normalize_runway_ref(runway_ref) or "",
+            normalize_runway_ref(runway_ref),
             edges_json,
         )
     ).encode("utf-8")
@@ -99,13 +99,13 @@ class RouteFlightMatch:
 
 @dataclass(frozen=True, slots=True)
 class RouteEntry:
-    """One deduplicated taxi route template stored in DuckDB."""
+    """One deduplicated taxi route template stored in PostgreSQL."""
 
     route_id: str
     graph_id: str
     movement: str
     stand_ref: str
-    runway_ref: str | None
+    runway_ref: str
     runway_interface_node: str
     edges: tuple[DirectedEdge, ...]
     edge_count: int
@@ -139,7 +139,7 @@ class RouteEntry:
         *,
         movement: str,
         stand_ref: str,
-        runway_ref: str | None = None,
+        runway_ref: str,
         graph_identity: str | None = None,
         flight_count: int = 0,
         status: RouteStatus = RouteStatus.CANDIDATE,

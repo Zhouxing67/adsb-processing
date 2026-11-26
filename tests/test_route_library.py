@@ -156,7 +156,7 @@ def test_batch_matching_persists_od_and_imports_into_route_library(tmp_path):
     assert by_id["DEP1"]["stand_ref"] == "009"
     assert by_id["DEP1"]["runway_ref"] == "01"
     assert by_id["DEP_NO_RWY"]["stand_ref"] == "009"
-    assert by_id["DEP_NO_RWY"]["runway_ref"] is None
+    assert by_id["DEP_NO_RWY"]["runway_ref"] == "01/19"
     assert by_id["ARR1"]["stand_ref"] == "009"
     assert by_id["ARR1"]["runway_ref"] == "01"
 
@@ -184,14 +184,14 @@ def test_batch_matching_persists_od_and_imports_into_route_library(tmp_path):
     assert dep_01[0].total_length_m == pytest.approx(20.0, abs=0.1)
     assert dep_01[0].resolve(airport_graph).edge_ids == (("1", "2", 0), ("2", "3", 1))
 
-    dep_null_rwy = routes.find_by_od(
+    dep_inferred_rwy = routes.find_by_od(
         graph_id=expected_graph_id,
         movement="departure",
         stand_ref="009",
-        runway_is_null=True,
+        runway_ref="01/19",
     )
-    assert len(dep_null_rwy) == 1
-    assert dep_null_rwy[0].runway_ref is None
+    assert len(dep_inferred_rwy) == 1
+    assert dep_inferred_rwy[0].runway_ref == "01/19"
 
     arr_01 = routes.find_by_od(
         graph_id=expected_graph_id,
@@ -234,9 +234,55 @@ def test_batch_matching_persists_od_and_imports_into_route_library(tmp_path):
     )
     assert [entry.route_id for entry in verified_only] == [dep_01[0].route_id]
 
-    assert routes.delete(dep_null_rwy[0].route_id) is True
-    assert routes.get(dep_null_rwy[0].route_id) is None
-    assert routes.delete(dep_null_rwy[0].route_id) is False
+    assert routes.delete(dep_inferred_rwy[0].route_id) is True
+    assert routes.get(dep_inferred_rwy[0].route_id) is None
+    assert routes.delete(dep_inferred_rwy[0].route_id) is False
+
+
+def test_runway_ref_required_and_enforced_by_database(tmp_path):
+    airport_graph, to_wgs84 = _persisted_od_graph()
+    path = Path(airport_graph, (DirectedEdge("1", "2", 0), DirectedEdge("2", "3", 1)))
+
+    with pytest.raises(ValueError, match="runway_ref"):
+        RouteEntry.from_path(
+            airport_graph,
+            path,
+            movement="departure",
+            stand_ref="009",
+            runway_ref="   ",
+        )
+
+    # PostgreSQL schema itself enforces NOT NULL and non-blank CHECK on runway_ref.
+    flight = _make_flight(
+        "DEP1", "departure", (450_001.0, 450_009.0, 450_019.0), to_wgs84, runway_ref="01"
+    )
+    database = create_flight_database([flight], movement_types=("departure",))
+    with pytest.raises(database.database_error):
+        with database.postgres.connection(write=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO public.route_library (
+                    route_id, graph_id, movement, stand_ref, runway_ref,
+                    runway_interface_node, edges_json, edge_count, total_length_m
+                ) VALUES (
+                    'r-null-test', 'g1', 'departure', '009', NULL,
+                    '3', '[["1","2",0]]', 1, 10.0
+                )
+                """
+            )
+    with pytest.raises(database.database_error):
+        with database.postgres.connection(write=True) as conn:
+            conn.execute(
+                """
+                INSERT INTO public.route_library (
+                    route_id, graph_id, movement, stand_ref, runway_ref,
+                    runway_interface_node, edges_json, edge_count, total_length_m
+                ) VALUES (
+                    'r-blank-test', 'g1', 'departure', '009', '   ',
+                    '3', '[["1","2",0]]', 1, 10.0
+                )
+                """
+            )
 
 
 def test_import_skips_legacy_match_rows_without_stand_ref(tmp_path):

@@ -24,7 +24,7 @@ import { cn } from '@/lib/utils';
 import { RouteAnomalyBar } from './RouteAnomalyBar';
 import { RouteBulkBar } from './RouteBulkBar';
 import { RouteCoverageBar } from './RouteCoverageBar';
-import { NULL_RUNWAY_VALUE, RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
+import { RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
 import type { RouteFilters } from './RouteFilterBar';
 import { RouteNoteCell, RouteStatusCell } from './RouteReviewCells';
 import { useRouteBatchSelection } from './useRouteBatchSelection';
@@ -35,8 +35,7 @@ function paramsFor(filters: RouteFilters, page: number, pageSize: number): Route
     q: filters.query.trim() || undefined,
     movement: filters.movement || undefined,
     stand_ref: filters.stand || undefined,
-    runway_ref: filters.runway && filters.runway !== NULL_RUNWAY_VALUE ? filters.runway : undefined,
-    runway_is_null: filters.runway === NULL_RUNWAY_VALUE ? true : undefined,
+    runway_ref: filters.runway || undefined,
     status: filters.status || undefined,
     all_graphs: filters.allGraphs || undefined,
     page,

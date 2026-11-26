@@ -104,7 +104,6 @@ class RouteLibraryService:
         movement: str | None = None,
         stand_ref: str | None = None,
         runway_ref: str | None = None,
-        runway_is_null: bool = False,
         status: str | None = None,
         all_graphs: bool = False,
         page: int = 1,
@@ -114,7 +113,9 @@ class RouteLibraryService:
             raise ValueError("page must be >= 1 and page_size must be between 1 and 200")
         normalized_movement = normalize_movement(movement) if movement else None
         normalized_stand = stand_ref.strip() if stand_ref and stand_ref.strip() else None
-        normalized_runway = normalize_runway_ref(runway_ref) if runway_ref else None
+        normalized_runway = (
+            normalize_runway_ref(runway_ref) if runway_ref and runway_ref.strip() else None
+        )
         normalized_status = RouteStatus(status).value if status else None
         start = (page - 1) * page_size
 
@@ -123,7 +124,6 @@ class RouteLibraryService:
             movement=normalized_movement,
             stand_ref=normalized_stand,
             runway_ref=normalized_runway,
-            runway_is_null=runway_is_null,
             status=normalized_status,
             query=query,
             offset=start,
@@ -383,6 +383,9 @@ class RouteLibraryService:
         for flight_id, movement, stand_ref, runway_ref, path in matched_records:
             if not stand_ref or not stand_ref.strip():
                 skipped_missing_stand += 1
+                continue
+            if not runway_ref or not runway_ref.strip():
+                skipped_invalid_path += 1
                 continue
             try:
                 entry = RouteEntry.from_path(

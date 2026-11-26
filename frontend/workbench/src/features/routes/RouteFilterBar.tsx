@@ -12,7 +12,6 @@ import { ROUTE_STATUS_LABELS as statusLabels } from '@/domain/palette';
 import { cn } from '@/lib/utils';
 
 export const ALL_VALUE = '__all__';
-export const NULL_RUNWAY_VALUE = '__null__';
 export const STATUS_ORDER = ['candidate', 'verified', 'rejected', 'manual'] as const;
 
 export interface RouteFilters {
@@ -117,7 +116,6 @@ export function RouteFilterBar({
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL_VALUE}>全部跑道</SelectItem>
-            <SelectItem value={NULL_RUNWAY_VALUE}>缺失跑道</SelectItem>
             {(data?.runway_options ?? []).map(rwy => (
               <SelectItem key={rwy} value={rwy}>
                 {rwy}

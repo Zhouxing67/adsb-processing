@@ -32,10 +32,11 @@ export function formatClusterLabel(cluster: Pick<StandCluster, 'c_id' | 'name'>)
 export function formatRouteOd(route: {
   movement: string;
   stand_ref: string;
-  runway_ref: string | null;
+  runway_ref: string;
 }): string {
-  const rwy = route.runway_ref ?? '无跑道';
-  return route.movement === 'departure' ? `${route.stand_ref} → ${rwy}` : `${rwy} → ${route.stand_ref}`;
+  return route.movement === 'departure'
+    ? `${route.stand_ref} → ${route.runway_ref}`
+    : `${route.runway_ref} → ${route.stand_ref}`;
 }
 
 export function isSameEdge(

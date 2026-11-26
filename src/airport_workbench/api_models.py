@@ -380,7 +380,6 @@ class RouteListRequest(ApiModel):
     movement: str | None = None
     stand_ref: str | None = None
     runway_ref: str | None = None
-    runway_is_null: bool = False
     status: str | None = None
     all_graphs: bool = False
     page: int = Field(default=1, ge=1)
@@ -393,7 +392,7 @@ class RouteItemResponse(ApiModel):
     matches_current_graph: bool
     movement: str
     stand_ref: str
-    runway_ref: str | None
+    runway_ref: str
     runway_interface_node: str
     edge_count: int
     total_length_m: float
@@ -483,7 +482,7 @@ class RouteAnomalyItemResponse(ApiModel):
     route_id: str
     movement: str
     stand_ref: str
-    runway_ref: str | None
+    runway_ref: str
     total_length_m: float
     flight_count: int
     status: str

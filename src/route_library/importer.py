@@ -10,7 +10,7 @@ from airport_surface import graph_id, load_graph
 from path_map import Path as MatchedPath
 from path_map import PathRecord
 
-from .models import RouteEntry, RouteFlightMatch, normalize_movement, normalize_runway_ref
+from .models import RouteEntry, RouteFlightMatch, normalize_movement
 from .repository import RouteLibraryRepository
 
 
@@ -84,13 +84,16 @@ def import_batch_run(
                 continue
             matched_rows += 1
             raw_stand = item.get("stand_ref")
-            if raw_stand is None or not str(raw_stand).strip():
+            raw_runway = item.get("runway_ref")
+            if (
+                raw_stand is None
+                or not str(raw_stand).strip()
+                or raw_runway is None
+                or not str(raw_runway).strip()
+            ):
                 skipped_missing_od += 1
                 continue
             movement = normalize_movement(str(item["movement_type"]))
-            runway_ref = normalize_runway_ref(
-                str(item["runway_ref"]) if item.get("runway_ref") is not None else None
-            )
             matched_path = resolved_paths.get(int(path_id))
             if matched_path is None:
                 raise ValueError(f"matches.jsonl references unknown path_id: {path_id!r}")
@@ -99,7 +102,7 @@ def import_batch_run(
                 matched_path,
                 movement=movement,
                 stand_ref=str(raw_stand),
-                runway_ref=runway_ref,
+                runway_ref=str(raw_runway),
                 graph_identity=graph_identity,
             )
             unique_entries.setdefault(entry.route_id, entry)

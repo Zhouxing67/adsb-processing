@@ -110,8 +110,8 @@ def _weighted_median_length(entries: Sequence[RouteEntry]) -> float:
     return weighted[-1][0]
 
 
-def _runway_bucket(runway_ref: str | None) -> str:
-    return runway_ref or ""
+def _runway_bucket(runway_ref: str) -> str:
+    return runway_ref
 
 
 def _detect_extreme_detour(

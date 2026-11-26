@@ -63,7 +63,7 @@ def _row_to_entry(row: Mapping[str, Any]) -> RouteEntry:
         graph_id=str(row["graph_id"]),
         movement=str(row["movement"]),
         stand_ref=str(row["stand_ref"]),
-        runway_ref=str(row["runway_ref"]) if row["runway_ref"] is not None else None,
+        runway_ref=str(row["runway_ref"]),
         runway_interface_node=str(row["runway_interface_node"]),
         edges=deserialize_edges(str(row["edges_json"])),
         edge_count=int(row["edge_count"]),
@@ -271,7 +271,7 @@ class RouteLibraryRepository:
     def list_active_od_keys(
         self,
         graph_id: str,
-    ) -> list[tuple[str, str, str | None]]:
+    ) -> list[tuple[str, str, str]]:
         """Return distinct (movement, stand_ref, runway_ref) for non-rejected routes."""
         with self._database.connection() as connection:
             rows = connection.execute(
@@ -279,10 +279,7 @@ class RouteLibraryRepository:
                 "WHERE graph_id = :graph_id AND status <> :rejected_status",
                 {"graph_id": graph_id, "rejected_status": RouteStatus.REJECTED.value},
             ).fetchall()
-            return [
-                (str(row[0]), str(row[1]), str(row[2]) if row[2] is not None else None)
-                for row in rows
-            ]
+            return [(str(row[0]), str(row[1]), str(row[2])) for row in rows]
 
     def find_by_od(
         self,
@@ -293,7 +290,6 @@ class RouteLibraryRepository:
         stand_refs: Sequence[str] | None = None,
         runway_ref: str | None = None,
         runway_refs: Sequence[str] | None = None,
-        runway_is_null: bool = False,
         status: RouteStatus | str | None = None,
         exclude_rejected: bool = False,
     ) -> list[RouteEntry]:
@@ -315,12 +311,10 @@ class RouteLibraryRepository:
         elif stand_ref is not None:
             clauses.append("stand_ref = :stand_ref")
             params["stand_ref"] = normalize_stand_ref(stand_ref)
-        if runway_is_null:
-            clauses.append("runway_ref IS NULL")
-        elif runway_refs is not None:
+        if runway_refs is not None:
             normalized_runways = list(
                 dict.fromkeys(
-                    ref for raw in runway_refs if (ref := normalize_runway_ref(raw)) is not None
+                    normalize_runway_ref(raw) for raw in runway_refs if raw.strip()
                 )
             )
             if not normalized_runways:
@@ -342,7 +336,7 @@ class RouteLibraryRepository:
         with self._database.connection() as connection:
             rows = connection.execute(
                 f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE}{where} "
-                "ORDER BY movement, runway_ref NULLS LAST, "
+                "ORDER BY movement, runway_ref, "
                 "flight_count DESC, total_length_m, route_id",
                 params,
             ).mappings()
@@ -359,7 +353,7 @@ class RouteLibraryRepository:
         with self._database.connection() as connection:
             rows = connection.execute(
                 f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE}{where} "
-                "ORDER BY movement, stand_ref, runway_ref NULLS LAST, "
+                "ORDER BY movement, stand_ref, runway_ref, "
                 "flight_count DESC, total_length_m, route_id",
                 params,
             ).mappings()
@@ -372,7 +366,7 @@ class RouteLibraryRepository:
             "graph_id": str(row["graph_id"]),
             "movement": str(row["movement"]),
             "stand_ref": str(row["stand_ref"]),
-            "runway_ref": str(row["runway_ref"]) if row["runway_ref"] is not None else None,
+            "runway_ref": str(row["runway_ref"]),
             "runway_interface_node": str(row["runway_interface_node"]),
             "edge_count": int(row["edge_count"]),
             "total_length_m": float(row["total_length_m"]),
@@ -391,7 +385,6 @@ class RouteLibraryRepository:
         movement: str | None = None,
         stand_ref: str | None = None,
         runway_ref: str | None = None,
-        runway_is_null: bool = False,
         status: RouteStatus | str | None = None,
         query: str = "",
         offset: int = 0,
@@ -413,9 +406,7 @@ class RouteLibraryRepository:
         if stand_ref is not None:
             filter_clauses.append("stand_ref = :stand_ref")
             filter_params["stand_ref"] = normalize_stand_ref(stand_ref)
-        if runway_is_null:
-            filter_clauses.append("runway_ref IS NULL")
-        elif runway_ref is not None:
+        if runway_ref is not None:
             filter_clauses.append("runway_ref = :runway_ref")
             filter_params["runway_ref"] = normalize_runway_ref(runway_ref)
         if status is not None:
@@ -427,7 +418,7 @@ class RouteLibraryRepository:
                 "("
                 "strpos(lower(route_id), :search) > 0 "
                 "OR strpos(lower(stand_ref), :search) > 0 "
-                "OR strpos(lower(COALESCE(runway_ref, '')), :search) > 0 "
+                "OR strpos(lower(runway_ref), :search) > 0 "
                 "OR strpos(lower(runway_interface_node), :search) > 0 "
                 "OR strpos(lower(COALESCE(note, '')), :search) > 0"
                 ")"
@@ -448,9 +439,7 @@ class RouteLibraryRepository:
             runway_options = [
                 str(r[0])
                 for r in connection.execute(
-                    f"SELECT DISTINCT runway_ref FROM {ROUTE_LIBRARY_TABLE}"
-                    f"{scope_where + ' AND ' if scope_where else ' WHERE '}"
-                    "runway_ref IS NOT NULL AND runway_ref <> '' "
+                    f"SELECT DISTINCT runway_ref FROM {ROUTE_LIBRARY_TABLE}{scope_where} "
                     "ORDER BY runway_ref",
                     scope_params,
                 ).fetchall()
@@ -470,7 +459,7 @@ class RouteLibraryRepository:
 
             page_rows = connection.execute(
                 f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE}{filter_where} "
-                "ORDER BY movement, stand_ref, runway_ref NULLS LAST, total_length_m, route_id "
+                "ORDER BY movement, stand_ref, runway_ref, total_length_m, route_id "
                 "LIMIT :limit OFFSET :offset",
                 {**filter_params, "limit": limit, "offset": offset},
             ).mappings()

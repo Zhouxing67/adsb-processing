@@ -7,10 +7,37 @@ from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass, field
 from time import perf_counter
 
+from airport_surface import AirportGraph
 from flight import Flight
 
 from .matcher import MapMatchingError, Matcher
 from .path import Path
+
+
+def _infer_runway_ref(
+    airport_graph: AirportGraph,
+    path: Path,
+    movement: str | None,
+) -> str | None:
+    if not path.edges or movement not in ("departure", "arrival"):
+        return None
+    if movement == "departure":
+        interface_node = path.edges[-1].to_
+        boundary_edge = path.edges[-1].id
+    else:
+        interface_node = path.edges[0].from_
+        boundary_edge = path.edges[0].id
+    refs: set[str] = set()
+    interface = airport_graph.runway_interfaces.get(interface_node)
+    if interface is not None:
+        for edge_id in interface["runway"]:
+            raw_ref = str(airport_graph.graph.edges[edge_id].get("ref") or "").upper()
+            refs.update(part.strip() for part in raw_ref.split("/") if part.strip())
+    if not refs:
+        edge_runways = airport_graph.runways_for_edge(boundary_edge)
+        if edge_runways:
+            refs.update(edge_runways)
+    return "/".join(sorted(refs)) if refs else None
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +76,8 @@ def match_batch(
             runway_ref = flight.runway_ref
             started = perf_counter()
             path = matcher.map_flight(flight)
+            if not runway_ref and hasattr(matcher, "airport_graph") and isinstance(path, Path):
+                runway_ref = _infer_runway_ref(matcher.airport_graph, path, flight.movement)
         except MapMatchingError as error:
             reason = str(error)
             yield MatchOutcome(

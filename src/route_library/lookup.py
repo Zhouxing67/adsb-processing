@@ -33,9 +33,9 @@ class HistoricalRouteLookup:
 
 
 def _runway_candidates(runway_ref: str | None) -> tuple[str, ...] | None:
-    normalized = normalize_runway_ref(runway_ref)
-    if normalized is None:
+    if runway_ref is None or not runway_ref.strip():
         return None
+    normalized = normalize_runway_ref(runway_ref)
     parts = [part.strip() for part in normalized.split("/") if part.strip()]
     return tuple(dict.fromkeys([normalized, *parts]))
 

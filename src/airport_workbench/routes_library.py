@@ -36,7 +36,6 @@ def build_route_library_router(flight_workbench: FlightWorkbench) -> APIRouter:
                 movement=filters.movement,
                 stand_ref=filters.stand_ref,
                 runway_ref=filters.runway_ref,
-                runway_is_null=filters.runway_is_null,
                 status=filters.status,
                 all_graphs=filters.all_graphs,
                 page=filters.page,

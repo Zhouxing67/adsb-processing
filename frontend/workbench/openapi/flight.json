@@ -1666,15 +1666,8 @@
             "type": "string"
           },
           "runway_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runway Ref"
+            "title": "Runway Ref",
+            "type": "string"
           },
           "stand_ref": {
             "title": "Stand Ref",
@@ -1899,15 +1892,8 @@
             "type": "string"
           },
           "runway_ref": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Runway Ref"
+            "title": "Runway Ref",
+            "type": "string"
           },
           "source": {
             "title": "Source",
@@ -3318,16 +3304,6 @@
                 }
               ],
               "title": "Runway Ref"
-            }
-          },
-          {
-            "in": "query",
-            "name": "runway_is_null",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Runway Is Null",
-              "type": "boolean"
             }
           },
           {

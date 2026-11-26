@@ -891,7 +891,7 @@ export interface components {
             /** Route Id */
             route_id: string;
             /** Runway Ref */
-            runway_ref: string | null;
+            runway_ref: string;
             /** Stand Ref */
             stand_ref: string;
             /** Status */
@@ -972,7 +972,7 @@ export interface components {
             /** Runway Interface Node */
             runway_interface_node: string;
             /** Runway Ref */
-            runway_ref: string | null;
+            runway_ref: string;
             /** Source */
             source: string;
             /** Stand Ref */
@@ -1611,7 +1611,6 @@ export interface operations {
                 movement?: string | null;
                 stand_ref?: string | null;
                 runway_ref?: string | null;
-                runway_is_null?: boolean;
                 status?: string | null;
                 all_graphs?: boolean;
                 page?: number;

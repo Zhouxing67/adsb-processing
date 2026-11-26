@@ -151,7 +151,7 @@ CREATE TABLE IF NOT EXISTS public.route_library (
     graph_id              TEXT NOT NULL,
     movement              TEXT NOT NULL CHECK (movement IN ('arrival', 'departure')),
     stand_ref             TEXT NOT NULL,
-    runway_ref            TEXT,
+    runway_ref            TEXT NOT NULL CONSTRAINT chk_route_library_runway_ref_not_blank CHECK (btrim(runway_ref) <> ''),
     runway_interface_node TEXT NOT NULL,
     edges_json            TEXT NOT NULL,
     edge_count            INTEGER NOT NULL,
@@ -169,6 +169,23 @@ ON public.route_library (graph_id, movement, stand_ref, runway_ref);
 
 ALTER TABLE public.route_library
 ADD COLUMN IF NOT EXISTS flight_count INTEGER NOT NULL DEFAULT 0;
+
+ALTER TABLE public.route_library
+ALTER COLUMN runway_ref SET NOT NULL;
+
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_constraint
+        WHERE conname = 'chk_route_library_runway_ref_not_blank'
+          AND conrelid = 'public.route_library'::regclass
+    ) THEN
+        ALTER TABLE public.route_library
+        ADD CONSTRAINT chk_route_library_runway_ref_not_blank
+        CHECK (btrim(runway_ref) <> '');
+    END IF;
+END $$;
 
 CREATE TABLE IF NOT EXISTS public.route_flight_matches (
     route_id  TEXT NOT NULL REFERENCES public.route_library(route_id) ON DELETE CASCADE,
