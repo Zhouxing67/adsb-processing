@@ -44,6 +44,7 @@ function Workspace() {
   const [splitValidation, setSplitValidation] = useState(false);
   const [angleMeasureActive, setAngleMeasureActive] = useState(false);
   const [angleEdges, setAngleEdges] = useState<AngleMeasureEdge[]>([]);
+  const [inspectedClusterEdges, setInspectedClusterEdges] = useState<AngleMeasureEdge[]>([]);
   const [graphEditing, setGraphEditing] = useState(false);
   const [splitViews, setSplitViews] = useState<[MainView, MainView] | null>(null);
   const splitView = splitViews !== null;
@@ -96,8 +97,9 @@ function Workspace() {
 
   const selectedFeatures = useMemo(() => {
     const base = wb.selected ? [...editor.selection, wb.selected] : [...editor.selection];
-    return angleEdges.length ? [...base, ...angleEdges] : base;
-  }, [editor.selection, wb.selected, angleEdges]);
+    const withAngles = angleEdges.length ? [...base, ...angleEdges] : base;
+    return inspectedClusterEdges.length ? [...withAngles, ...inspectedClusterEdges] : withAngles;
+  }, [editor.selection, wb.selected, angleEdges, inspectedClusterEdges]);
 
   useEffect(() => {
     if (!dualMap) {
@@ -117,6 +119,7 @@ function Workspace() {
     } else {
       setAngleMeasureActive(false);
       setAngleEdges([]);
+      setInspectedClusterEdges([]);
     }
   }, [wb.topologyOpen]);
 
@@ -450,6 +453,7 @@ function Workspace() {
             });
           }}
           onClearAngleEdges={() => setAngleEdges([])}
+          onHighlightClusterEdges={setInspectedClusterEdges}
         />
       ) : (
         flightLeft && (

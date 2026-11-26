@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
-import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, Play, RotateCcw, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronLeft, ChevronRight, Crosshair, RotateCcw, X } from 'lucide-react';
 import type { EdgeProperties, GeoFeature, LineGeometry, SelectedFeature } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Toggle } from '@/components/ui/toggle';
 import { IconActionButton } from '@/components/ui/workbench-shell';
-import { formatEdgeId } from '@/domain/features';
+import { formatClusterLabel, formatEdgeId, isSameEdge } from '@/domain/features';
 import { computeConnectedEdgesAngles } from '@/domain/geometry';
 import type { LngLat } from '@/domain/geometry';
 import { cn } from '@/lib/utils';
+import { SequentialReviewSection } from './SequentialReviewSection';
 
 export type AngleMeasureEdge = GeoFeature<LineGeometry, EdgeProperties>;
 
@@ -20,6 +21,7 @@ interface TopologyPanelProps {
   angleEdges: AngleMeasureEdge[];
   onToggleAngleMeasure(): void;
   onClearAngleEdges(): void;
+  onHighlightClusterEdges(edges: AngleMeasureEdge[]): void;
 }
 
 type AnomalyKey = 'isolated' | 'parallel' | 'deadend' | 'islands';
@@ -38,10 +40,13 @@ export function TopologyPanel({
   angleEdges,
   onToggleAngleMeasure,
   onClearAngleEdges,
+  onHighlightClusterEdges,
 }: TopologyPanelProps) {
   const wb = useWorkbench();
   const topology = wb.state?.topology;
+  const standClusters = wb.state?.stand_clusters ?? [];
   const [reviewIndex, setReviewIndex] = useState(-1);
+  const [clusterReviewIndex, setClusterReviewIndex] = useState(-1);
   const [openGroup, setOpenGroup] = useState<AnomalyKey | null>(null);
   const [groupCursor, setGroupCursor] = useState<Record<AnomalyKey, number>>({
     isolated: 0,
@@ -144,6 +149,17 @@ export function TopologyPanel({
     setReviewIndex(current => (current >= nodes.length ? (nodes.length ? nodes.length - 1 : -1) : current));
   }, [nodes.length]);
 
+  useEffect(() => {
+    setClusterReviewIndex(current => {
+      if (current < 0) return -1;
+      if (!standClusters.length) {
+        onHighlightClusterEdges([]);
+        return -1;
+      }
+      return current >= standClusters.length ? standClusters.length - 1 : current;
+    });
+  }, [standClusters.length, onHighlightClusterEdges]);
+
   const focusAnomaly = (key: AnomalyKey, index: number) => {
     const list = anomalyGroups[key];
     const item = list[index];
@@ -155,6 +171,8 @@ export function TopologyPanel({
   const showReview = (index: number) => {
     const feature = nodes[index];
     if (!feature) return;
+    setClusterReviewIndex(-1);
+    onHighlightClusterEdges([]);
     setReviewIndex(index);
     wb.dispatch({ type: 'selected', value: feature, focus: true });
     wb.dispatch({
@@ -166,7 +184,39 @@ export function TopologyPanel({
     });
   };
 
+  const showClusterReview = (index: number) => {
+    const cluster = standClusters[index];
+    if (!cluster) return;
+    setReviewIndex(-1);
+    setClusterReviewIndex(index);
+    const matchedEdges = edges.filter(edge =>
+      cluster.stands.some(standEdge => isSameEdge(edge.properties, standEdge)),
+    );
+    onHighlightClusterEdges(matchedEdges);
+    if (matchedEdges.length > 0) {
+      wb.dispatch({ type: 'selected', value: matchedEdges[0], focus: true });
+    } else {
+      wb.dispatch({ type: 'selected', value: null });
+    }
+    const label = formatClusterLabel(cluster);
+    wb.dispatch({
+      type: 'status',
+      value: `机位聚类检查 ${index + 1} / ${standClusters.length} · ${label}（${matchedEdges.length} 条机位边）`,
+    });
+  };
+
   if (!wb.topologyOpen || !topology) return null;
+
+  const summaryMetrics = [
+    {
+      label: '连通分量',
+      value: topology.component_count,
+      tone: topology.component_count > 1 ? 'text-accent-amber' : 'text-accent-teal',
+    },
+    { label: '最大分量', value: topology.largest_component, tone: 'text-accent-teal' },
+    { label: '度为 1', value: topology.dangling_count, tone: 'text-accent-amber' },
+    { label: '机位聚类', value: standClusters.length, tone: 'text-primary' },
+  ];
 
   const anomalyRows: Array<{ key: AnomalyKey; label: string; items: AnomalyItem[] }> = [
     { key: 'isolated', label: '孤立节点', items: anomalyGroups.isolated },
@@ -176,8 +226,6 @@ export function TopologyPanel({
       ? [{ key: 'islands' as const, label: '离散孤岛', items: anomalyGroups.islands }]
       : []),
   ];
-
-  const reviewing = reviewIndex >= 0;
 
   return (
     <aside className="relative z-[900] col-start-1 row-start-2 flex h-full min-h-0 min-w-0 flex-col border-r border-border bg-muted">
@@ -195,30 +243,15 @@ export function TopologyPanel({
 
       <ScrollArea className="min-h-0 flex-1">
         <div className="divide-y divide-border px-4">
-          <div className="grid grid-cols-3 gap-2 py-4 tabular-nums">
-            <div className="rounded-md border border-border/70 bg-background px-2.5 py-2">
-              <strong
-                className={cn(
-                  'block text-lg leading-tight font-semibold',
-                  topology.component_count > 1 ? 'text-accent-amber' : 'text-accent-teal',
-                )}
-              >
-                {topology.component_count}
-              </strong>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">连通分量</span>
-            </div>
-            <div className="rounded-md border border-border/70 bg-background px-2.5 py-2">
-              <strong className="block text-lg leading-tight font-semibold text-accent-teal">
-                {topology.largest_component}
-              </strong>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">最大分量</span>
-            </div>
-            <div className="rounded-md border border-border/70 bg-background px-2.5 py-2">
-              <strong className="block text-lg leading-tight font-semibold text-accent-amber">
-                {topology.dangling_count}
-              </strong>
-              <span className="mt-0.5 block text-[11px] text-muted-foreground">度为 1</span>
-            </div>
+          <div className="grid grid-cols-2 gap-2 py-4 tabular-nums">
+            {summaryMetrics.map(metric => (
+              <div key={metric.label} className="rounded-md border border-border/70 bg-background px-2.5 py-2">
+                <strong className={cn('block text-lg leading-tight font-semibold', metric.tone)}>
+                  {metric.value}
+                </strong>
+                <span className="mt-0.5 block text-[11px] text-muted-foreground">{metric.label}</span>
+              </div>
+            ))}
           </div>
 
           <section className="space-y-1.5 py-4">
@@ -411,52 +444,38 @@ export function TopologyPanel({
             )}
           </section>
 
-          <section className="space-y-2.5 py-4">
-            <div className="flex items-center justify-between gap-2">
-              <h3 className="m-0 text-xs font-semibold text-foreground">逐点检查</h3>
-              {reviewing && (
-                <span className="truncate text-[11px] text-primary tabular-nums">
-                  {reviewIndex + 1} / {nodes.length} · {nodes[reviewIndex]?.properties.id}
-                </span>
-              )}
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <Button
-                variant={reviewing ? 'outline' : 'default'}
-                size="sm"
-                disabled={!nodes.length}
-                onClick={() => {
-                  if (reviewing) {
-                    setReviewIndex(-1);
-                    wb.dispatch({ type: 'selected', value: null });
-                  } else {
-                    showReview(0);
-                  }
-                }}
-              >
-                {reviewing ? <Square className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                {reviewing ? '结束' : '开始'}
-              </Button>
-              <div className="flex items-center gap-1">
-                <IconActionButton
-                  variant="outline"
-                  label="上一个"
-                  disabled={reviewIndex <= 0}
-                  onClick={() => showReview(reviewIndex - 1)}
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </IconActionButton>
-                <IconActionButton
-                  variant="outline"
-                  label="下一个"
-                  disabled={!reviewing || reviewIndex >= nodes.length - 1}
-                  onClick={() => showReview(reviewIndex + 1)}
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </IconActionButton>
-              </div>
-            </div>
-          </section>
+          <SequentialReviewSection
+            title="逐点检查"
+            total={nodes.length}
+            currentIndex={reviewIndex}
+            currentLabel={reviewIndex >= 0 ? nodes[reviewIndex]?.properties.id : undefined}
+            onStart={() => showReview(0)}
+            onStop={() => {
+              setReviewIndex(-1);
+              wb.dispatch({ type: 'selected', value: null });
+            }}
+            onPrev={() => showReview(reviewIndex - 1)}
+            onNext={() => showReview(reviewIndex + 1)}
+          />
+
+          <SequentialReviewSection
+            title="逐机位聚类检查"
+            total={standClusters.length}
+            currentIndex={clusterReviewIndex}
+            currentLabel={
+              clusterReviewIndex >= 0 && standClusters[clusterReviewIndex]
+                ? `${formatClusterLabel(standClusters[clusterReviewIndex])}（${standClusters[clusterReviewIndex].stands.length}）`
+                : undefined
+            }
+            onStart={() => showClusterReview(0)}
+            onStop={() => {
+              setClusterReviewIndex(-1);
+              onHighlightClusterEdges([]);
+              wb.dispatch({ type: 'selected', value: null });
+            }}
+            onPrev={() => showClusterReview(clusterReviewIndex - 1)}
+            onNext={() => showClusterReview(clusterReviewIndex + 1)}
+          />
         </div>
       </ScrollArea>
     </aside>

@@ -296,6 +296,7 @@ class EditorSession:
         with self._checked(expected_revision):
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
+            self.airport_graph.prune_empty_clusters()
             output = save_graph(self.airport_graph, path)
             return CommandResult(output, self.revision)
 
@@ -310,6 +311,7 @@ class EditorSession:
         with self._checked(expected_revision):
             validate_edge_endpoints(self.airport_graph)
             validate_edge_sources(self.airport_graph)
+            self.airport_graph.prune_empty_clusters()
             output = save_graph(self.airport_graph, path)
             on_finish()
             return CommandResult(output, self.revision)

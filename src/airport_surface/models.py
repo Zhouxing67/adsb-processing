@@ -336,6 +336,16 @@ class AirportGraph:
         """Return the next unused positive integer cluster id."""
         return max(self.stand_clusters, default=0) + 1
 
+    def prune_empty_clusters(self) -> int:
+        """Remove any StandCluster with no assigned stand edges and rebuild indices."""
+        empty_ids = [c_id for c_id, cluster in self.stand_clusters.items() if not cluster.stands]
+        if not empty_ids:
+            return 0
+        for c_id in empty_ids:
+            del self.stand_clusters[c_id]
+        self.rebuild_cluster_index()
+        return len(empty_ids)
+
     @property
     def components(self) -> list[int]:
         return [len(component) for component in nx.connected_components(self.graph)]

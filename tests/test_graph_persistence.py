@@ -279,3 +279,19 @@ def test_workbench_stand_cluster_endpoints_and_undo():
         undone = client.post("/api/undo", json={"expected_revision": 4})
         assert undone.status_code == 200
         assert len(client.get("/api/state").json()["stand_clusters"]) == 1
+
+        # Remove all stands from cluster #1, leaving it empty, then save -> empty cluster pruned.
+        unassigned = client.post(
+            "/api/stand-clusters/assign",
+            json={
+                "edges": [{"u": "1", "v": "2", "key": 0}, {"u": "2", "v": "3", "key": 0}],
+                "c_id": None,
+                "expected_revision": 5,
+            },
+        )
+        assert unassigned.status_code == 200
+        assert len(client.get("/api/state").json()["stand_clusters"]) == 1
+        assert client.get("/api/state").json()["stand_clusters"][0]["stands"] == []
+
+        session.airport_graph.prune_empty_clusters()
+        assert session.airport_graph.stand_clusters == {}
