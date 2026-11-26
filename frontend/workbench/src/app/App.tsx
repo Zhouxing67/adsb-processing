@@ -6,13 +6,14 @@ import { Button } from '@/components/ui/button';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
-import { isNodeFeature } from '@/domain/features';
+import { isNodeFeature, isParkingEdgeFeature, isSameEdge } from '@/domain/features';
 import { lineIntersectsBounds } from '@/domain/geometry';
 import type { GeoBounds } from '@/domain/geometry';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
 import { useFlightSession } from '@/features/flights/useFlightSession';
+import { RouteCoveragePanel } from '@/features/routes/RouteCoveragePanel';
 import { RouteLibraryPanel } from '@/features/routes/RouteLibraryPanel';
 import { EditorToolOverlay } from '@/features/graph-editor/EditorToolOverlay';
 import { FeatureDetails } from '@/features/graph-editor/FeatureDetails';
@@ -45,6 +46,7 @@ function Workspace() {
   const [angleMeasureActive, setAngleMeasureActive] = useState(false);
   const [angleEdges, setAngleEdges] = useState<AngleMeasureEdge[]>([]);
   const [inspectedClusterEdges, setInspectedClusterEdges] = useState<AngleMeasureEdge[]>([]);
+  const [zoomLocked, setZoomLocked] = useState(false);
   const [graphEditing, setGraphEditing] = useState(false);
   const [splitViews, setSplitViews] = useState<[MainView, MainView] | null>(null);
   const splitView = splitViews !== null;
@@ -75,7 +77,7 @@ function Workspace() {
   const workspaceRef = useRef<HTMLElement>(null);
   const editor = useGraphEditorMachine();
 
-  const hasRightContext = Boolean(editor.dialog || (wb.selected && wb.detailsOpen));
+  const hasRightContext = Boolean(editor.dialog || (wb.selected && wb.detailsOpen) || wb.coverageOpen);
   const dualMap = flightMode && wb.mapFlights.size > 0 && wb.mapRoutes.size > 0;
   const showRightRail = flightMode ? rightOpen && hasRightContext : rightOpen;
 
@@ -191,6 +193,39 @@ function Workspace() {
   const flightLeft = state.flight_mode && leftOpen && !topologyLeft;
   const shellLeft = topologyLeft || flightLeft;
 
+  const focusEdgesOnMap = (matchedEdges: AngleMeasureEdge[], statusText: string) => {
+    setInspectedClusterEdges(matchedEdges);
+    if (matchedEdges.length > 0) {
+      wb.dispatch({ type: 'selected', value: matchedEdges[0], focus: true });
+      if (!splitView) wb.dispatch({ type: 'view', value: 'map' });
+    }
+    wb.dispatch({ type: 'status', value: statusText });
+  };
+
+  const handleFocusStand = (standRef: string) => {
+    const matched = state.edges.features.filter(
+      edge => isParkingEdgeFeature(edge) && edge.properties.ref === standRef,
+    );
+    focusEdgesOnMap(
+      matched,
+      matched.length ? `已在地图定位机位 ${standRef}` : `图上未找到机位 ${standRef} 对应的边`,
+    );
+  };
+
+  const handleFocusCluster = (clusterId: number) => {
+    const cluster = (state.stand_clusters ?? []).find(item => item.c_id === clusterId);
+    if (!cluster) return;
+    const matched = state.edges.features.filter(edge =>
+      cluster.stands.some(standEdge => isSameEdge(edge.properties, standEdge)),
+    );
+    focusEdgesOnMap(
+      matched,
+      matched.length
+        ? `已在地图高亮机位组 #${clusterId}（${matched.length} 条机位边）`
+        : `机位组 #${clusterId} 在当前图上没有匹配的机位边`,
+    );
+  };
+
   const rightContent = editor.dialog ? (
     <GraphDialog
       dialog={editor.dialog}
@@ -198,6 +233,15 @@ function Workspace() {
       onPreview={editor.setPreviewOverlays}
       onConfirm={editor.confirmDialog}
       onMergeCandidate={editor.previewMerge}
+    />
+  ) : wb.coverageOpen ? (
+    <RouteCoveragePanel
+      onFocusStand={handleFocusStand}
+      onFocusCluster={handleFocusCluster}
+      onClose={() => {
+        setInspectedClusterEdges([]);
+        wb.dispatch({ type: 'panel', panel: 'coverageOpen', value: false });
+      }}
     />
   ) : wb.selected && wb.detailsOpen ? (
     <FeatureDetails />
@@ -330,6 +374,7 @@ function Workspace() {
           showNodes={layers.nodes || wb.topologyOpen || graphEditing}
           spreadRoutes={layers.spreadRoutes}
           colorByCluster={layers.colorByCluster || wb.tool === 'cluster'}
+          zoomLocked={zoomLocked}
           boxSelectEnabled={wb.tool === 'cluster'}
           boxSelectSticky={editor.clusterBoxSelect}
           selected={selectedFeatures}
@@ -356,6 +401,8 @@ function Workspace() {
         <MapToolbar
           editing={graphEditing}
           onEditing={toggleEditing}
+          zoomLocked={zoomLocked}
+          onToggleZoomLocked={() => setZoomLocked(value => !value)}
           dualMap={dualMap}
           mapKind={kind}
           overlayOther={isRouteMap ? routeMapOverlayFlights : flightMapOverlayRoutes}

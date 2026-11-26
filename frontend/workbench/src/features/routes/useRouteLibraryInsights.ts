@@ -1,50 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { MutableRefObject } from 'react';
 import { api } from '@/api/client';
-import type { RouteAnomalyResult, RouteCoverage } from '@/api/types';
+import type { DetectRouteAnomaliesRequest, RouteAnomalyResult } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 
 interface UseRouteLibraryInsightsOptions {
-  active: boolean;
   mountedRef: MutableRefObject<boolean>;
   onReloadRoutes(): Promise<void>;
 }
 
 export function useRouteLibraryInsights({
-  active,
   mountedRef,
   onReloadRoutes,
 }: UseRouteLibraryInsightsOptions) {
   const wb = useWorkbench();
-  const [coverage, setCoverage] = useState<RouteCoverage | null>(null);
   const [anomalyResult, setAnomalyResult] = useState<RouteAnomalyResult | null>(null);
   const [detectingAnomalies, setDetectingAnomalies] = useState(false);
   const [rejectingAnomalies, setRejectingAnomalies] = useState(false);
 
-  const loadCoverage = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const summary = await api.routeCoverage(signal);
-      if (mountedRef.current) setCoverage(summary);
-    } catch (failure) {
-      if ((failure as Error).name !== 'AbortError' && mountedRef.current) {
-        setCoverage(null);
-      }
-    }
-  }, [mountedRef]);
-
-  useEffect(() => {
-    if (!active) return;
-    const controller = new AbortController();
-    void loadCoverage(controller.signal);
-    return () => controller.abort();
-  }, [active, loadCoverage, wb.routeLibraryVersion]);
-
   const detectAnomalies = useCallback(
-    async (routeIds: string[]) => {
-      if (!routeIds.length) return;
+    async (payload: DetectRouteAnomaliesRequest) => {
+      if (payload.route_ids && payload.route_ids.length === 0) return;
       setDetectingAnomalies(true);
       try {
-        const result = await api.detectRouteAnomalies(routeIds);
+        const result = await api.detectRouteAnomalies(payload);
         if (!mountedRef.current) return;
         setAnomalyResult(result);
         wb.dispatch({
@@ -87,8 +66,8 @@ export function useRouteLibraryInsights({
             : current,
         );
         wb.dispatch({ type: 'status', value: `已批量驳回 ${summary.updated_count} 条异常路径` });
+        wb.dispatch({ type: 'routes-updated' });
         void onReloadRoutes();
-        void loadCoverage();
       } catch (failure) {
         if (mountedRef.current) {
           wb.dispatch({
@@ -100,7 +79,7 @@ export function useRouteLibraryInsights({
         if (mountedRef.current) setRejectingAnomalies(false);
       }
     },
-    [loadCoverage, mountedRef, onReloadRoutes, wb],
+    [mountedRef, onReloadRoutes, wb],
   );
 
   const anomalousIdSet = useMemo(
@@ -111,8 +90,6 @@ export function useRouteLibraryInsights({
   const dismissAnomalies = useCallback(() => setAnomalyResult(null), []);
 
   return {
-    coverage,
-    loadCoverage,
     anomalyResult,
     anomalousIdSet,
     detectingAnomalies,

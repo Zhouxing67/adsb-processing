@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Crosshair, Layers, MapPinOff, MapPinPlus } from 'lucide-react';
+import { BarChart3, Crosshair, Layers, MapPinOff, MapPinPlus } from 'lucide-react';
 import { ApiError, api } from '@/api/client';
 import type { RouteListQuery } from '@/api/client';
 import type { RouteAnomalyItem, RouteItem, RouteList } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapRouteInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Empty, EmptyDescription, EmptyTitle } from '@/components/ui/empty';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
@@ -23,7 +24,6 @@ import { MapBatchConfirmDialog } from '@/features/map/MapBatchConfirmDialog';
 import { cn } from '@/lib/utils';
 import { RouteAnomalyBar } from './RouteAnomalyBar';
 import { RouteBulkBar } from './RouteBulkBar';
-import { RouteCoverageBar } from './RouteCoverageBar';
 import { RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
 import type { RouteFilters } from './RouteFilterBar';
 import { RouteNoteCell, RouteStatusCell } from './RouteReviewCells';
@@ -115,7 +115,6 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
   }, [active, load, wb.routeLibraryVersion]);
 
   const insights = useRouteLibraryInsights({
-    active,
     mountedRef,
     onReloadRoutes: () => load(),
   });
@@ -200,7 +199,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         });
       }
       wb.dispatch({ type: 'status', value: `已更新路径状态为「${statusLabels[updated.status] ?? updated.status}」` });
-      void insights.loadCoverage();
+      wb.dispatch({ type: 'routes-updated' });
       return true;
     } catch (failure) {
       wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '路径审校更新失败' });
@@ -228,12 +227,43 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
   };
 
   const handleAddAnomaliesToMap = (items: RouteAnomalyItem[]) => {
-    const candidates = items
-      .map(item => batch.selectedRoutes.get(item.route_id) ?? data?.items.find(row => row.route_id === item.route_id))
-      .filter((item): item is RouteItem => Boolean(item && item.matches_current_graph));
-    if (candidates.length) {
-      batch.addRouteItemsToMap(candidates);
+    const candidates: RouteItem[] = items.map(
+      item =>
+        batch.selectedRoutes.get(item.route_id) ??
+        data?.items.find(row => row.route_id === item.route_id) ?? {
+          route_id: item.route_id,
+          graph_id: data?.current_graph_id ?? '',
+          matches_current_graph: true,
+          movement: item.movement,
+          stand_ref: item.stand_ref,
+          runway_ref: item.runway_ref,
+          runway_interface_node: '',
+          edge_count: 0,
+          total_length_m: item.total_length_m,
+          flight_count: item.flight_count,
+          status: item.status,
+          source: 'matched',
+          note: null,
+          created_at: null,
+          updated_at: null,
+        },
+    );
+    const valid = candidates.filter(item => item.matches_current_graph);
+    if (valid.length) {
+      batch.addRouteItemsToMap(valid);
     }
+  };
+
+  const handleDetectAllAnomalies = () => {
+    void insights.detectAnomalies({
+      q: filters.query.trim(),
+      movement: filters.movement || null,
+      stand_ref: filters.stand || null,
+      runway_ref: filters.runway || null,
+      runway_is_null: false,
+      status: filters.status || null,
+      all_graphs: filters.allGraphs,
+    });
   };
 
   const odCounts = useMemo(() => {
@@ -259,6 +289,18 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
     >
       <ViewHeader>
         <h2 className="m-0 text-[15px] font-semibold text-foreground">路径库</h2>
+        {data?.has_route_library && (
+          <Button
+            variant={wb.coverageOpen ? 'secondary' : 'outline'}
+            size="sm"
+            onClick={() =>
+              wb.dispatch({ type: 'panel', panel: 'coverageOpen', value: !wb.coverageOpen })
+            }
+          >
+            <BarChart3 className="h-3.5 w-3.5" />
+            <span>覆盖率</span>
+          </Button>
+        )}
       </ViewHeader>
 
       <RouteFilterBar
@@ -274,17 +316,16 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         onReset={resetFilters}
         onRefresh={() => {
           void load();
-          void insights.loadCoverage();
+          wb.dispatch({ type: 'routes-updated' });
         }}
       />
-
-      {data?.has_route_library && <RouteCoverageBar coverage={insights.coverage} loading={loading} />}
 
       {data?.has_route_library && (
         <RouteBulkBar
           selectedCount={batch.selectedRoutes.size}
           selectedOnMapCount={batch.selectedOnMapCount}
           selectablePageCount={batch.selectablePageItems.length}
+          totalFilteredCount={data.total}
           allPageSelected={batch.allPageSelected}
           addingProgress={batch.addingProgress}
           detectingAnomalies={insights.detectingAnomalies}
@@ -294,7 +335,10 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
           onReplacePageToMap={() => void batch.replaceItemsOnMap(batch.selectablePageItems, data.page || page)}
           onRemoveSelectedFromMap={batch.removeSelectedFromMap}
           onCancelAddToMap={batch.cancelAddToMap}
-          onDetectAnomalies={() => void insights.detectAnomalies([...batch.selectedRoutes.keys()])}
+          onDetectSelectedAnomalies={() =>
+            void insights.detectAnomalies({ route_ids: [...batch.selectedRoutes.keys()] })
+          }
+          onDetectAllAnomalies={handleDetectAllAnomalies}
         />
       )}
 

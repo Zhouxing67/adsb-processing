@@ -278,6 +278,15 @@ def test_route_anomaly_detection_flags_obvious_anomalies_without_false_positives
         assert "closed_loop" in codes
         assert "repeated_edge" in codes
 
+        # Filter-scoped full detection (without explicit route_ids) checks all matching routes.
+        full_scan = client.post(
+            "/api/routes/detect-anomalies",
+            json={"movement": "departure", "stand_ref": "009"},
+        )
+        assert full_scan.status_code == 200
+        assert full_scan.json()["checked_count"] == 3
+        assert full_scan.json()["anomalous_count"] == 1
+
         # Batch reject the detected anomaly
         rejected = client.post(
             "/api/routes/batch-review",

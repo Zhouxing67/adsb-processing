@@ -565,8 +565,28 @@ class FlightWorkbench:
     ) -> dict[str, Any]:
         return self.routes_service.batch_update_review(route_ids, status, note=note)
 
-    def detect_route_anomalies(self, route_ids: Sequence[str]) -> dict[str, Any]:
-        return self.routes_service.detect_anomalies(route_ids)
+    def detect_route_anomalies(
+        self,
+        route_ids: Sequence[str] | None = None,
+        *,
+        query: str = "",
+        movement: str | None = None,
+        stand_ref: str | None = None,
+        runway_ref: str | None = None,
+        runway_is_null: bool = False,
+        status: str | None = None,
+        all_graphs: bool = False,
+    ) -> dict[str, Any]:
+        return self.routes_service.detect_anomalies(
+            route_ids,
+            query=query,
+            movement=movement,
+            stand_ref=stand_ref,
+            runway_ref=runway_ref,
+            runway_is_null=runway_is_null,
+            status=status,
+            all_graphs=all_graphs,
+        )
 
     def import_matched_routes(
         self,

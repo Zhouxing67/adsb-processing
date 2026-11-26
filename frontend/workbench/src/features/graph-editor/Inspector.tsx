@@ -118,15 +118,6 @@ export function Inspector({ state, layers, onLayers, embedded = false }: Inspect
           </div>
         </section>
 
-        {(state.capabilities.can_edit_graph || (state.stand_clusters?.length ?? 0) > 0) && (
-          <StandClusterPanel
-            clusters={state.stand_clusters ?? []}
-            totalParkingEdges={parking}
-            clusteredParkingEdges={clusteredParking}
-            canEdit={state.capabilities.can_edit_graph}
-          />
-        )}
-
         <section className="space-y-3 border-b border-border pb-5">
           <h3 className="m-0 text-xs font-semibold text-foreground">地图图例</h3>
           <div className="grid gap-2 text-[11px] text-muted-foreground">
@@ -158,6 +149,15 @@ export function Inspector({ state, layers, onLayers, embedded = false }: Inspect
             </span>
           </div>
         </section>
+
+        {(state.capabilities.can_edit_graph || (state.stand_clusters?.length ?? 0) > 0) && (
+          <StandClusterPanel
+            clusters={state.stand_clusters ?? []}
+            totalParkingEdges={parking}
+            clusteredParkingEdges={clusteredParking}
+            canEdit={state.capabilities.can_edit_graph}
+          />
+        )}
 
         {!embedded && (
           <Empty className="gap-2 py-8">

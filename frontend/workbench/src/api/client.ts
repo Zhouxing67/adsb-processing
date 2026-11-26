@@ -1,4 +1,4 @@
-import type { BatchRouteReviewResponse, FlightCatalogue, FlightDetail, FlightGeometry, ImportRoutesRequest, ImportRoutesSummary, MatchIssueList, MatchIssueMutation, MatchStatus, RouteAnomalyResult, RouteCoverage, RouteGeometry, RouteItem, RouteList, RouteReviewUpdate, WorkbenchState } from './types';
+import type { BatchRouteReviewResponse, DetectRouteAnomaliesRequest, FlightCatalogue, FlightDetail, FlightGeometry, ImportRoutesRequest, ImportRoutesSummary, MatchIssueList, MatchIssueMutation, MatchStatus, RouteAnomalyResult, RouteCoverage, RouteGeometry, RouteItem, RouteList, RouteReviewUpdate, WorkbenchState } from './types';
 import type { components as GraphApi } from './generated/graph';
 import type { paths as GraphPaths } from './generated/graph';
 import type { components as FlightApi } from './generated/flight';
@@ -73,7 +73,8 @@ export const api = {
   routeCoverage: (signal?: AbortSignal) => request<RouteCoverage>('/api/routes/coverage', { signal }),
   routeGeometry: (routeId: string, signal?: AbortSignal) => request<RouteGeometry>(`/api/routes/${encodeURIComponent(routeId)}/geometry`, { signal }),
   updateRouteReview: (routeId: string, body: RouteReviewUpdate) => request<RouteItem>(`/api/routes/${encodeURIComponent(routeId)}`, json('PATCH', body)),
-  detectRouteAnomalies: (route_ids: string[]) => request<RouteAnomalyResult>('/api/routes/detect-anomalies', json('POST', { route_ids })),
+  detectRouteAnomalies: (body: DetectRouteAnomaliesRequest) =>
+    request<RouteAnomalyResult>('/api/routes/detect-anomalies', json('POST', body)),
   batchUpdateRouteReview: (route_ids: string[], status: string, note?: string | null) =>
     request<BatchRouteReviewResponse>('/api/routes/batch-review', json('POST', { route_ids, status, note: note ?? null })),
   importMatchedRoutes: (body: ImportRoutesRequest = { replace_candidates: false }, signal?: AbortSignal) =>

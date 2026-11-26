@@ -427,6 +427,12 @@ class MovementCoverageSummary(ApiModel):
     effective_od_rate: float
 
 
+class UncoveredClusterSummary(ApiModel):
+    c_id: int = Field(ge=1)
+    name: str | None = None
+    stand_refs: list[str]
+
+
 class RouteCoverageResponse(ApiModel):
     graph_id: str
     total_stands: int
@@ -442,6 +448,8 @@ class RouteCoverageResponse(ApiModel):
     fine_od_rate: float
     effective_od_rate: float
     by_movement: list[MovementCoverageSummary]
+    uncovered_clusters: list[UncoveredClusterSummary] = Field(default_factory=list)
+    uncovered_unclustered_stands: list[str] = Field(default_factory=list)
     uncovered_stands: list[str]
     unclustered_stands: list[str]
     uncovered_runways: list[str]
@@ -470,7 +478,14 @@ class BatchUpdateRouteReviewResponse(ApiModel):
 
 
 class DetectRouteAnomaliesRequest(ApiModel):
-    route_ids: list[str] = Field(min_length=1)
+    route_ids: list[str] | None = None
+    q: str = ""
+    movement: str | None = None
+    stand_ref: str | None = None
+    runway_ref: str | None = None
+    runway_is_null: bool = False
+    status: str | None = None
+    all_graphs: bool = False
 
 
 class RouteAnomalyReasonResponse(ApiModel):

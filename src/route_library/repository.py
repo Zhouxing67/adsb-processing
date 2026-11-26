@@ -290,8 +290,10 @@ class RouteLibraryRepository:
         stand_refs: Sequence[str] | None = None,
         runway_ref: str | None = None,
         runway_refs: Sequence[str] | None = None,
+        runway_is_null: bool = False,
         status: RouteStatus | str | None = None,
         exclude_rejected: bool = False,
+        query: str = "",
     ) -> list[RouteEntry]:
         """Query routes using the (graph_id, movement, stand_ref, runway_ref) index."""
         clauses: list[str] = []
@@ -311,7 +313,9 @@ class RouteLibraryRepository:
         elif stand_ref is not None:
             clauses.append("stand_ref = :stand_ref")
             params["stand_ref"] = normalize_stand_ref(stand_ref)
-        if runway_refs is not None:
+        if runway_is_null:
+            clauses.append("runway_ref IS NULL")
+        elif runway_refs is not None:
             normalized_runways = list(
                 dict.fromkeys(
                     normalize_runway_ref(raw) for raw in runway_refs if raw.strip()
@@ -330,6 +334,18 @@ class RouteLibraryRepository:
         elif exclude_rejected:
             clauses.append("status <> :rejected_status")
             params["rejected_status"] = RouteStatus.REJECTED.value
+        search = query.strip().casefold()
+        if search:
+            clauses.append(
+                "("
+                "strpos(lower(route_id), :search) > 0 "
+                "OR strpos(lower(stand_ref), :search) > 0 "
+                "OR strpos(lower(COALESCE(runway_ref, '')), :search) > 0 "
+                "OR strpos(lower(runway_interface_node), :search) > 0 "
+                "OR strpos(lower(COALESCE(note, '')), :search) > 0"
+                ")"
+            )
+            params["search"] = search
 
         columns = ", ".join(ROUTE_LIBRARY_COLUMNS)
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""

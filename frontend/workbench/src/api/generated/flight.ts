@@ -319,8 +319,31 @@ export interface components {
         };
         /** DetectRouteAnomaliesRequest */
         DetectRouteAnomaliesRequest: {
+            /**
+             * All Graphs
+             * @default false
+             */
+            all_graphs: boolean;
+            /** Movement */
+            movement?: string | null;
+            /**
+             * Q
+             * @default
+             */
+            q: string;
             /** Route Ids */
-            route_ids: string[];
+            route_ids?: string[] | null;
+            /**
+             * Runway Is Null
+             * @default false
+             */
+            runway_is_null: boolean;
+            /** Runway Ref */
+            runway_ref?: string | null;
+            /** Stand Ref */
+            stand_ref?: string | null;
+            /** Status */
+            status?: string | null;
         };
         /** DetectRouteAnomaliesResponse */
         DetectRouteAnomaliesResponse: {
@@ -938,10 +961,14 @@ export interface components {
             total_stands: number;
             /** Unclustered Stands */
             unclustered_stands: string[];
+            /** Uncovered Clusters */
+            uncovered_clusters?: components["schemas"]["UncoveredClusterSummary"][];
             /** Uncovered Runways */
             uncovered_runways: string[];
             /** Uncovered Stands */
             uncovered_stands: string[];
+            /** Uncovered Unclustered Stands */
+            uncovered_unclustered_stands?: string[];
         };
         /** RouteGeometryResponse */
         RouteGeometryResponse: {
@@ -1074,6 +1101,15 @@ export interface components {
             parallel_groups: components["schemas"]["ParallelEdgeGroup"][];
             /** Parallel Pair Count */
             parallel_pair_count: number;
+        };
+        /** UncoveredClusterSummary */
+        UncoveredClusterSummary: {
+            /** C Id */
+            c_id: number;
+            /** Name */
+            name?: string | null;
+            /** Stand Refs */
+            stand_refs: string[];
         };
         /** UpdateRouteReviewRequest */
         UpdateRouteReviewRequest: {

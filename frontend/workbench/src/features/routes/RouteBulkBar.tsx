@@ -8,6 +8,7 @@ interface RouteBulkBarProps {
   selectedCount: number;
   selectedOnMapCount: number;
   selectablePageCount: number;
+  totalFilteredCount: number;
   allPageSelected: boolean;
   addingProgress: { done: number; total: number } | null;
   detectingAnomalies?: boolean;
@@ -17,13 +18,15 @@ interface RouteBulkBarProps {
   onReplacePageToMap(): void;
   onRemoveSelectedFromMap(): void;
   onCancelAddToMap(): void;
-  onDetectAnomalies(): void;
+  onDetectSelectedAnomalies(): void;
+  onDetectAllAnomalies(): void;
 }
 
 export function RouteBulkBar({
   selectedCount,
   selectedOnMapCount,
   selectablePageCount,
+  totalFilteredCount,
   allPageSelected,
   addingProgress,
   detectingAnomalies = false,
@@ -33,7 +36,8 @@ export function RouteBulkBar({
   onReplacePageToMap,
   onRemoveSelectedFromMap,
   onCancelAddToMap,
-  onDetectAnomalies,
+  onDetectSelectedAnomalies,
+  onDetectAllAnomalies,
 }: RouteBulkBarProps) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-1.5">
@@ -96,10 +100,22 @@ export function RouteBulkBar({
           size="sm"
           disabled={!selectedCount || Boolean(addingProgress) || detectingAnomalies}
           title="对已选路径运行高精度异常检测（重复边、闭合环路、低频极端绕行）"
-          onClick={onDetectAnomalies}
+          onClick={onDetectSelectedAnomalies}
         >
           <ShieldAlert className="h-3.5 w-3.5" />
-          <span>{detectingAnomalies ? '检测中…' : '异常检测'}</span>
+          <span>{detectingAnomalies ? '检测中…' : '检测已选'}</span>
+        </Button>
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!totalFilteredCount || Boolean(addingProgress) || detectingAnomalies}
+          title="对当前筛选条件下的全部路径运行高精度异常检测"
+          onClick={onDetectAllAnomalies}
+        >
+          <ShieldAlert className="h-3.5 w-3.5" />
+          <span className="tabular-nums">
+            {detectingAnomalies ? '检测中…' : `检测全部（${totalFilteredCount}）`}
+          </span>
         </Button>
         <Button
           variant="outline"

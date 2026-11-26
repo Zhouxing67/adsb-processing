@@ -89,7 +89,16 @@ def build_route_library_router(flight_workbench: FlightWorkbench) -> APIRouter:
     ) -> DetectRouteAnomaliesResponse:
         try:
             return DetectRouteAnomaliesResponse.model_validate(
-                flight_workbench.detect_route_anomalies(item.route_ids)
+                flight_workbench.detect_route_anomalies(
+                    item.route_ids,
+                    query=item.q,
+                    movement=item.movement,
+                    stand_ref=item.stand_ref,
+                    runway_ref=item.runway_ref,
+                    runway_is_null=item.runway_is_null,
+                    status=item.status,
+                    all_graphs=item.all_graphs,
+                )
             )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error

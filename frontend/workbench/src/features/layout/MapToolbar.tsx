@@ -1,4 +1,4 @@
-import { GitFork, Network, Pencil, Plane, Route, Search } from 'lucide-react';
+import { GitFork, Lock, Network, Pencil, Plane, Route, Search, Unlock } from 'lucide-react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
@@ -8,6 +8,8 @@ import { IconActionButton } from '@/components/ui/workbench-shell';
 interface MapToolbarProps {
   editing: boolean;
   onEditing(): void;
+  zoomLocked?: boolean;
+  onToggleZoomLocked?(): void;
   dualMap?: boolean;
   mapKind?: 'flight' | 'route';
   overlayOther?: boolean;
@@ -19,6 +21,8 @@ interface MapToolbarProps {
 export function MapToolbar({
   editing,
   onEditing,
+  zoomLocked = false,
+  onToggleZoomLocked,
   dualMap = false,
   mapKind,
   overlayOther = false,
@@ -47,6 +51,19 @@ export function MapToolbar({
       >
         <Network className="h-4 w-4" />
       </IconActionButton>
+      {onToggleZoomLocked && (
+        <IconActionButton
+          variant={zoomLocked ? 'secondary' : 'ghost'}
+          size="icon"
+          className={zoomLocked ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}
+          aria-pressed={zoomLocked}
+          label={zoomLocked ? '解除缩放锁' : '锁定当前缩放'}
+          tooltip={zoomLocked ? '已锁定缩放（定位时仅平移，不改变缩放级别）' : '锁定缩放（定位时不自动放大地图）'}
+          onClick={onToggleZoomLocked}
+        >
+          {zoomLocked ? <Lock className="h-4 w-4" /> : <Unlock className="h-4 w-4" />}
+        </IconActionButton>
+      )}
       {wb.state?.flight_mode && (
         <>
           <Separator orientation="vertical" className="mx-0.5 h-5" />

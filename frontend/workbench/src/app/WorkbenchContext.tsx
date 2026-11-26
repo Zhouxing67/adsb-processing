@@ -38,7 +38,7 @@ interface UiState {
   flightCatalogueVersion: number;
   routeLibraryVersion: number;
   issueKeys: Set<string>;
-  topologyOpen: boolean; searchOpen: boolean; detailsOpen: boolean;
+  topologyOpen: boolean; searchOpen: boolean; detailsOpen: boolean; coverageOpen: boolean;
 }
 type Action =
   | { type: 'loaded'; value: WorkbenchState }
@@ -79,7 +79,7 @@ type Action =
   | { type: 'routes-updated' }
   | { type: 'set-issue-keys'; keys: string[] }
   | { type: 'observation-location'; value: [number, number] | null; preserveView?: boolean }
-  | { type: 'panel'; panel: 'topologyOpen' | 'searchOpen' | 'detailsOpen'; value: boolean };
+  | { type: 'panel'; panel: 'topologyOpen' | 'searchOpen' | 'detailsOpen' | 'coverageOpen'; value: boolean };
 
 const initial: UiState = {
   state: null, loading: true, busy: false, error: '', status: '正在载入工作台…', tool: 'inspect',
@@ -91,7 +91,7 @@ const initial: UiState = {
   flightCatalogueVersion: 0,
   routeLibraryVersion: 0,
   issueKeys: new Set(),
-  topologyOpen: false, searchOpen: false, detailsOpen: false,
+  topologyOpen: false, searchOpen: false, detailsOpen: false, coverageOpen: false,
 };
 function reducer(state: UiState, action: Action): UiState {
   switch (action.type) {

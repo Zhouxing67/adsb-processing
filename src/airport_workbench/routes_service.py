@@ -225,6 +225,29 @@ class RouteLibraryService:
                 }
             )
 
+        uncovered_clusters = []
+        for cluster in sorted(
+            self.airport_graph.stand_clusters.values(), key=lambda item: item.c_id
+        ):
+            refs = [
+                ref
+                for ref in self.airport_graph.stand_refs_in_cluster(cluster.c_id)
+                if ref in stand_set
+            ]
+            if not refs:
+                continue
+            if all(ref not in effective_stands for ref in refs):
+                uncovered_clusters.append(
+                    {
+                        "c_id": cluster.c_id,
+                        "name": cluster.name,
+                        "stand_refs": refs,
+                    }
+                )
+        uncovered_unclustered_stands = [
+            stand for stand in unclustered_stands if stand not in effective_stands
+        ]
+
         return {
             "graph_id": self.graph_id,
             "total_stands": len(all_stands),
@@ -240,6 +263,8 @@ class RouteLibraryService:
             "fine_od_rate": round(len(fine_ods) / total_ods, 4) if total_ods else 0.0,
             "effective_od_rate": round(len(effective_ods) / total_ods, 4) if total_ods else 0.0,
             "by_movement": by_movement,
+            "uncovered_clusters": uncovered_clusters,
+            "uncovered_unclustered_stands": uncovered_unclustered_stands,
             "uncovered_stands": [stand for stand in all_stands if stand not in effective_stands],
             "unclustered_stands": unclustered_stands,
             "uncovered_runways": [rwy for rwy in all_runways if rwy not in covered_runways],
@@ -305,8 +330,34 @@ class RouteLibraryService:
             "status": normalized_status,
         }
 
-    def detect_anomalies(self, route_ids: Sequence[str]) -> dict[str, Any]:
-        entries = self.repository.get_many(route_ids)
+    def detect_anomalies(
+        self,
+        route_ids: Sequence[str] | None = None,
+        *,
+        query: str = "",
+        movement: str | None = None,
+        stand_ref: str | None = None,
+        runway_ref: str | None = None,
+        runway_is_null: bool = False,
+        status: str | None = None,
+        all_graphs: bool = False,
+    ) -> dict[str, Any]:
+        if route_ids is not None:
+            entries = self.repository.get_many(route_ids)
+        else:
+            normalized_movement = normalize_movement(movement) if movement else None
+            normalized_stand = stand_ref.strip() if stand_ref and stand_ref.strip() else None
+            normalized_runway = normalize_runway_ref(runway_ref) if runway_ref else None
+            normalized_status = RouteStatus(status).value if status else None
+            entries = self.repository.find_by_od(
+                graph_id=None if all_graphs else self.graph_id,
+                movement=normalized_movement,
+                stand_ref=normalized_stand,
+                runway_ref=normalized_runway,
+                runway_is_null=runway_is_null,
+                status=normalized_status,
+                query=query,
+            )
         if not entries:
             return {"checked_count": 0, "anomalous_count": 0, "items": []}
         reference_entries = self.repository.find_by_od(

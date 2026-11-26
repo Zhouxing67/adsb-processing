@@ -65,18 +65,80 @@
       "DetectRouteAnomaliesRequest": {
         "additionalProperties": false,
         "properties": {
+          "all_graphs": {
+            "default": false,
+            "title": "All Graphs",
+            "type": "boolean"
+          },
+          "movement": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Movement"
+          },
+          "q": {
+            "default": "",
+            "title": "Q",
+            "type": "string"
+          },
           "route_ids": {
-            "items": {
-              "type": "string"
-            },
-            "minItems": 1,
-            "title": "Route Ids",
-            "type": "array"
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Route Ids"
+          },
+          "runway_is_null": {
+            "default": false,
+            "title": "Runway Is Null",
+            "type": "boolean"
+          },
+          "runway_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runway Ref"
+          },
+          "stand_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Stand Ref"
+          },
+          "status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Status"
           }
         },
-        "required": [
-          "route_ids"
-        ],
         "title": "DetectRouteAnomaliesRequest",
         "type": "object"
       },
@@ -1783,6 +1845,13 @@
             "title": "Unclustered Stands",
             "type": "array"
           },
+          "uncovered_clusters": {
+            "items": {
+              "$ref": "#/components/schemas/UncoveredClusterSummary"
+            },
+            "title": "Uncovered Clusters",
+            "type": "array"
+          },
           "uncovered_runways": {
             "items": {
               "type": "string"
@@ -1795,6 +1864,13 @@
               "type": "string"
             },
             "title": "Uncovered Stands",
+            "type": "array"
+          },
+          "uncovered_unclustered_stands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uncovered Unclustered Stands",
             "type": "array"
           }
         },
@@ -2219,6 +2295,40 @@
           "parallel_groups"
         ],
         "title": "TopologySummary",
+        "type": "object"
+      },
+      "UncoveredClusterSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "c_id": {
+            "minimum": 1.0,
+            "title": "C Id",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "stand_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stand Refs",
+            "type": "array"
+          }
+        },
+        "required": [
+          "c_id",
+          "stand_refs"
+        ],
+        "title": "UncoveredClusterSummary",
         "type": "object"
       },
       "UpdateRouteReviewRequest": {

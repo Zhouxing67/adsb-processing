@@ -56,6 +56,7 @@ interface Props {
   showNodes?: boolean;
   spreadRoutes?: boolean;
   colorByCluster?: boolean;
+  zoomLocked?: boolean;
   boxSelectEnabled?: boolean;
   boxSelectSticky?: boolean;
   mapId?: string;
@@ -109,7 +110,7 @@ function resolveEdgeWeight(
 const EMPTY_ROUTES: Map<string, MapRouteEntry> = new Map();
 const EMPTY_PREVIEWS: MapPreviewLine[] = [];
 
-export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, colorByCluster = false, boxSelectEnabled = false, boxSelectSticky = false, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onBoxSelect, onFlightClick, onRouteClick }: Props) {
+export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, colorByCluster = false, zoomLocked = false, boxSelectEnabled = false, boxSelectSticky = false, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onBoxSelect, onFlightClick, onRouteClick }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const nodesRendererRef = useRef<L.Renderer | null>(null);
@@ -131,6 +132,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   const routesRef = useRef(routes);
   const splitValidationRef = useRef(splitValidation);
   const colorByClusterRef = useRef(colorByCluster);
+  const zoomLockedRef = useRef(zoomLocked);
   const featureHandler = useRef(onFeature);
   const mapClickHandler = useRef(onMapClick);
   const boxSelectHandler = useRef(onBoxSelect);
@@ -140,6 +142,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   routesRef.current = routes;
   splitValidationRef.current = splitValidation;
   colorByClusterRef.current = colorByCluster;
+  zoomLockedRef.current = zoomLocked;
   featureHandler.current = onFeature;
   mapClickHandler.current = onMapClick;
   boxSelectHandler.current = onBoxSelect;
@@ -521,10 +524,20 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
     const { feature } = focusFeatureRequest;
     if (feature.geometry.type === 'Point') {
       const [lng, lat] = feature.geometry.coordinates;
-      map.setView([lat, lng], Math.max(map.getZoom(), 18), { animate: false });
+      if (zoomLockedRef.current) {
+        map.panTo([lat, lng], { animate: false });
+      } else {
+        map.setView([lat, lng], Math.max(map.getZoom(), 18), { animate: false });
+      }
     } else {
       const bounds = L.geoJSON(feature as never).getBounds();
-      if (bounds.isValid()) map.fitBounds(bounds, { padding: [80, 80], maxZoom: 20, animate: false });
+      if (bounds.isValid()) {
+        if (zoomLockedRef.current) {
+          map.panTo(bounds.getCenter(), { animate: false });
+        } else {
+          map.fitBounds(bounds, { padding: [80, 80], maxZoom: 18.5, animate: false });
+        }
+      }
     }
   }, [focusFeatureRequest]);
 
