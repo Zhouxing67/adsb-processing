@@ -10,7 +10,8 @@ from time import perf_counter
 from airport_surface import AirportGraph
 from flight import Flight
 
-from .matcher import MapMatchingError, Matcher
+from .matcher import Matcher
+from .models import MapMatchingError
 from .path import Path
 
 

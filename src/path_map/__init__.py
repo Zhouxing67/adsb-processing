@@ -1,13 +1,12 @@
 """HMM map matching for :class:`airport_surface.AirportGraph`."""
 
 from .batch import BatchStats, MatchOutcome, match_batch
-from .matcher import (
+from .matcher import Matcher, get_od
+from .models import (
     FlightOD,
     MapMatchingError,
     MapMatchingFailure,
     MatchConfig,
-    Matcher,
-    get_od,
 )
 from .path import DirectedEdge, Path, PathGraphMismatch, PathRecord
 

@@ -8,7 +8,7 @@ from airport_surface import load_graph
 from flight import Flight, MovementType
 from path_map import MatchConfig, Matcher
 from path_map.candidates import CandidateIndex
-from path_map.hmm import DirectedNetworkRouter
+from path_map.router import DirectedNetworkRouter
 from scripts.csv_flights import load_csv_flights
 
 ROOT = Path(__file__).resolve().parents[1]

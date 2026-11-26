@@ -7,13 +7,14 @@ from shapely.geometry import Point
 
 from path_map.candidates import CandidateIndex
 from path_map.hmm import (
-    DirectedNetworkRouter,
+    decode_route,
     observation_log_score,
     transition_log_score,
-    viterbi,
 )
-from path_map.matcher import _append_transition_edges
 from path_map.path import DirectedEdge
+from path_map.recovery import append_transition_edges
+from path_map.router import DirectedNetworkRouter
+from path_map.viterbi import viterbi
 from tests.test_path_map import straight_airport_graph
 
 
@@ -28,7 +29,7 @@ def test_viterbi_score_matches_exhaustive_candidate_sequence_search():
     ]
     sigma, beta = 2.0, 3.0
 
-    states, _ = viterbi(layers, observations, router, sigma, beta)
+    states, _ = decode_route(layers, observations, router, sigma, beta)
 
     def score(sequence):
         total = sum(observation_log_score(candidate.distance, sigma) for candidate in sequence)
@@ -53,6 +54,44 @@ def test_transition_boundary_merge_preserves_reversal_and_internal_repetition():
     ba = DirectedEdge("B", "A", 0)
     output = [ab]
 
-    _append_transition_edges(output, (ab, ba, ab, ab))
+    append_transition_edges(output, (ab, ba, ab, ab))
 
     assert output == [ab, ba, ab, ab]
+
+
+def test_generic_viterbi_decodes_arbitrary_state_sequence():
+    class TableScorer:
+        def __init__(self, weights: dict[tuple[str, str], float]) -> None:
+            self._weights = weights
+
+        def best_predecessors(
+            self,
+            previous_layer: tuple[str, ...],
+            previous_scores: list[float],
+            current_layer: tuple[str, ...],
+        ) -> tuple[list[float], list[int]]:
+            best_scores: list[float] = []
+            best_indices: list[int] = []
+            for target in current_layer:
+                best_score = float("-inf")
+                best_index = -1
+                for idx, (source, prev_score) in enumerate(zip(previous_layer, previous_scores)):
+                    weight = self._weights.get((source, target))
+                    if weight is None:
+                        continue
+                    candidate_score = prev_score + weight
+                    if candidate_score > best_score:
+                        best_score = candidate_score
+                        best_index = idx
+                best_scores.append(best_score)
+                best_indices.append(best_index)
+            return best_scores, best_indices
+
+    layers = [("A", "B"), ("C", "D"), ("E",)]
+    emissions = {"A": -1.0, "B": -0.5, "C": -0.2, "D": -2.0, "E": 0.0}
+    scorers = [
+        TableScorer({("A", "C"): -0.1, ("B", "C"): -3.0, ("B", "D"): -0.1}),
+        TableScorer({("C", "E"): -0.2, ("D", "E"): -0.1}),
+    ]
+
+    assert viterbi(layers, emissions.__getitem__, scorers) == ["A", "C", "E"]

@@ -3,11 +3,7 @@
 from __future__ import annotations
 
 import logging
-import math
-from dataclasses import dataclass
-from enum import StrEnum
 from functools import cached_property, lru_cache
-from typing import Any, Literal, Mapping
 
 import networkx as nx
 from shapely.geometry import Point
@@ -16,93 +12,13 @@ from airport_surface import AirportGraph
 from flight import Flight, MovementType
 
 from .candidates import Candidate, CandidateIndex
-from .hmm import (
-    DirectedNetworkRouter,
-    Transition,
-    viterbi,
-)
+from .hmm import decode_route
+from .models import FlightOD, MapMatchingError, MapMatchingFailure, MatchConfig
 from .path import DirectedEdge, EdgeId, Path
+from .recovery import project_observations, recover_edges, trim_runway_edges
+from .router import DirectedNetworkRouter
 
 logger = logging.getLogger(__name__)
-
-
-class MapMatchingFailure(StrEnum):
-    """Stable machine-readable reasons for expected matching failures."""
-
-    INVALID_OD = "invalid_od"
-    MISSING_OD = "missing_od"
-    UNKNOWN_OD = "unknown_od"
-    NO_CANDIDATES = "no_candidates"
-    NO_LEGAL_PATH = "no_legal_path"
-    NO_MOVEMENT = "no_movement"
-
-
-class MapMatchingError(ValueError):
-    """An expected matching failure with a stable code and diagnostic context."""
-
-    def __init__(
-        self,
-        code: MapMatchingFailure,
-        message: str,
-        *,
-        context: Mapping[str, Any] | None = None,
-    ) -> None:
-        super().__init__(message)
-        self.code = code
-        self.context = dict(context or {})
-
-
-@dataclass(frozen=True, slots=True)
-class MatchConfig:
-    candidate_radius: float = 120.0
-    max_candidates: int = 16
-    gps_sigma: float = 10.0
-    transition_beta: float = 20.0
-    max_transition_turn_angle_deg: float = 130.0
-    turn_tangent_sample_m: float = 2.0
-    same_edge_jitter_m: float = 5.0
-    max_transition_detour_m: float = 250.0
-
-    def __post_init__(self) -> None:
-        distances = (
-            self.candidate_radius,
-            self.gps_sigma,
-            self.transition_beta,
-            self.turn_tangent_sample_m,
-            self.max_transition_detour_m,
-        )
-        if any(not math.isfinite(value) or value <= 0 for value in distances):
-            raise ValueError("Distance parameters must be finite and positive")
-        if not math.isfinite(self.same_edge_jitter_m) or self.same_edge_jitter_m < 0:
-            raise ValueError("same_edge_jitter_m must be finite and non-negative")
-        if (
-            not math.isfinite(self.max_transition_turn_angle_deg)
-            or not 0 < self.max_transition_turn_angle_deg <= 180
-        ):
-            raise ValueError("max_transition_turn_angle_deg must be finite and in (0, 180]")
-        if isinstance(self.max_candidates, bool) or not isinstance(self.max_candidates, int):
-            raise ValueError("max_candidates must be a positive integer")
-        if self.max_candidates < 1:
-            raise ValueError("max_candidates must be a positive integer")
-
-
-@dataclass(frozen=True, slots=True)
-class FlightOD:
-    """Surface OD labels. An inferred runway label may identify both reciprocal ends."""
-
-    movement: MovementType
-    stand_ref: str
-    runway_ref: str | None
-    runway_source: Literal["reported", "inferred"]
-    runway_hit_edge: EdgeId | None = None
-
-    @property
-    def origin(self) -> str | None:
-        return self.stand_ref if self.movement == MovementType.DEPARTURE else self.runway_ref
-
-    @property
-    def destination(self) -> str | None:
-        return self.runway_ref if self.movement == MovementType.DEPARTURE else self.stand_ref
 
 
 class Matcher:
@@ -143,7 +59,7 @@ class Matcher:
         is_departure, _ = self._flight_stand_layer(flight)
         candidates = []
         if not flight.runway_ref:
-            observations = _observations(self.airport_graph, flight)
+            observations = project_observations(self.airport_graph, flight)
             indices = range(len(observations))
             if is_departure:
                 indices = indices[::-1]
@@ -161,7 +77,7 @@ class Matcher:
     def map_flight(self, flight: Flight) -> Path:
         """Match a flight: pure turn-constrained trajectory first, OD prior fallback second."""
         is_departure = self._validate_flight_direction(flight)
-        observations = _observations(self.airport_graph, flight)
+        observations = project_observations(self.airport_graph, flight)
         matched_observations: list[Point] = []
         layers: list[list[Candidate]] = []
 
@@ -212,14 +128,24 @@ class Matcher:
             *directed_observations,
             directed_observations[-1],
         ]
+        reversal_origin = (
+            Point(
+                sum(c.point.x for c in stand_layer) / len(stand_layer),
+                sum(c.point.y for c in stand_layer) / len(stand_layer),
+            )
+            if is_departure
+            else None
+        )
         try:
-            states, transitions = viterbi(
+            states, transitions = decode_route(
                 [start, *directed_layers, end],
                 boundary_observations,
                 self._directed_router,
                 self.config.gps_sigma,
                 self.config.transition_beta,
                 allow_single_reversal=is_departure,
+                max_pushback_radius_m=self.config.max_pushback_radius_m,
+                reversal_origin=reversal_origin,
                 max_transition_detour_m=self.config.max_transition_detour_m,
                 has_boundary_layers=True,
             )
@@ -228,8 +154,10 @@ class Matcher:
                 MapMatchingFailure.NO_LEGAL_PATH,
                 "No turn-constrained path matches the observations and flight OD",
             ) from exc
-        edges = _trim_runway_edges(
-            _recover(transitions, states[0]), runway_edges, is_departure=is_departure
+        edges = trim_runway_edges(
+            recover_edges([t.edges for t in transitions], states[0].edge_id),
+            runway_edges,
+            is_departure=is_departure,
         )
         if not edges:
             raise MapMatchingError(
@@ -263,21 +191,24 @@ class Matcher:
     ) -> Path | None:
         """Phase 1: Decode without virtual OD layers and accept complete, label-consistent paths."""
         try:
-            states, transitions = viterbi(
+            states, transitions = decode_route(
                 directed_layers,
                 directed_observations,
                 self._directed_router,
                 self.config.gps_sigma,
                 self.config.transition_beta,
                 allow_single_reversal=is_departure,
+                max_pushback_radius_m=self.config.max_pushback_radius_m,
                 max_transition_detour_m=self.config.max_transition_detour_m,
                 has_boundary_layers=False,
             )
         except nx.NetworkXNoPath:
             return None
         _, all_runway_edges = self._runway_layer(None, is_departure)
-        edges = _trim_runway_edges(
-            _recover(transitions, states[0]), all_runway_edges, is_departure=is_departure
+        edges = trim_runway_edges(
+            recover_edges([t.edges for t in transitions], states[0].edge_id),
+            all_runway_edges,
+            is_departure=is_departure,
         )
         if not edges:
             return None
@@ -431,42 +362,3 @@ def get_od(
 ) -> FlightOD:
     """Resolve a flight's surface OD. Reuse Matcher.get_od for many flights on one graph."""
     return Matcher(airport_graph, config).get_od(flight, movetype)
-
-
-def _observations(ag: AirportGraph, flight: Flight) -> list[Point]:
-    coordinates = [(point.longitude, point.latitude) for point in flight.observations]
-    longitude, latitude = zip(*coordinates)
-    x, y = ag.project.transform(longitude, latitude)
-    return [Point(float(px), float(py)) for px, py in zip(x, y)]
-
-
-def _recover(transitions: list[Transition], first: Candidate) -> list[DirectedEdge]:
-    if not transitions:
-        u, v, key = first.edge_id
-        return [DirectedEdge(u, v, key)]
-    output: list[DirectedEdge] = []
-    for transition in transitions:
-        _append_transition_edges(output, transition.edges)
-    return output
-
-
-def _append_transition_edges(output: list[DirectedEdge], edges: tuple[DirectedEdge, ...]) -> None:
-    """Join transitions, collapsing only continued travel on their shared boundary edge."""
-    start = 1 if output and edges and output[-1] == edges[0] else 0
-    output.extend(edges[start:])
-
-
-def _trim_runway_edges(
-    edges: list[DirectedEdge], runway_edges: frozenset[EdgeId], *, is_departure: bool
-) -> list[DirectedEdge]:
-    """Trim runway-roll edges on the runway side so the path ends at the interface taxiway."""
-    if is_departure:
-        trimmed = list(edges)
-        while trimmed and trimmed[-1].id in runway_edges:
-            trimmed.pop()
-        return trimmed
-    first_taxi = next(
-        (i for i, edge in enumerate(edges) if edge.id not in runway_edges),
-        len(edges),
-    )
-    return edges[first_taxi:]
