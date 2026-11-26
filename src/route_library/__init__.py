@@ -7,7 +7,12 @@ from .anomalies import (
     detect_route_anomalies,
 )
 from .importer import ImportSummary, import_batch_run
-from .lookup import HistoricalRouteLookup, find_historical_routes, get_his_path
+from .lookup import (
+    HistoricalRouteLookup,
+    HistoricalRouteQuery,
+    find_historical_routes,
+    get_his_path,
+)
 from .models import (
     RouteEntry,
     RouteFlightMatch,
@@ -26,6 +31,7 @@ from .repository import (
 __all__ = [
     "AnomalyCode",
     "HistoricalRouteLookup",
+    "HistoricalRouteQuery",
     "ImportSummary",
     "ROUTE_FLIGHT_MATCHES_TABLE",
     "ROUTE_LIBRARY_TABLE",

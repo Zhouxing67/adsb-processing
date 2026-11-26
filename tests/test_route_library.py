@@ -530,3 +530,14 @@ def test_flight_count_is_idempotent_and_historical_lookup_falls_back_to_cluster(
     paths = get_his_path(probe_flight, airport_graph, routes, graph_identity=expected_graph_id)
     assert len(paths) == 1
     assert paths[0].edge_ids == (("1", "2", 0), ("2", "3", 1))
+
+    # In-memory HistoricalRouteQuery supports both pure OD fields and Flight objects.
+    from route_library import HistoricalRouteQuery
+
+    query = HistoricalRouteQuery(airport_graph, routes, graph_identity=expected_graph_id)
+    od_paths = query.get_paths_by_od("departure", "010", "01/19")
+    assert len(od_paths) == 1
+    assert od_paths[0].edge_ids == (("1", "2", 0), ("2", "3", 1))
+    flight_paths = query.get_paths_for_flight(probe_flight)
+    assert [p.edge_ids for p in flight_paths] == [od_paths[0].edge_ids]
+    assert query.get_paths_by_od("arrival", "010", "01") == []

@@ -1,42 +1,65 @@
 # `route_library` 模块指南
 
-`route_library` 负责将批量匹配产出的机场地面滑行路径持久化到 DuckDB（与原始航班表同库，表名 `main.route_library`），并提供按 OD 分组键 `(graph_id, movement, stand_ref, runway_ref)` 索引的查询、幂等入库与人工审校状态管理。
+`route_library` 负责将批量匹配产出的机场地面滑行路径持久化到 PostgreSQL（与原始航班表同库，表名 `public.route_library`），并提供按 OD 分组键 `(graph_id, movement, stand_ref, runway_ref)` 索引的查询、幂等入库与人工审校状态管理。
 
-- 命令行运行步骤见 [快速上手与运行指南](../../docs/quickstart.md#43-路径库入库duckdb-持久化)
+- 命令行运行步骤见 [快速上手与运行指南](../../docs/quickstart.md#43-路径库入库postgresql-持久化)
 - 路径匹配算法与 `PathRecord` 说明见 [匹配算法](../../docs/path_map.md)
+
+## 下游最小对接示例（MVP）
+
+对于滑行时间预测等下游任务，推荐使用内存缓存查询器 `HistoricalRouteQuery`（初始化时一次性加载当前 `graph_id` 下所有非 `rejected` 路径；先查单机位精确路径，未命中自动回退到同 `StandCluster` 类别路径，结果按历史架次 `flight_count` 降序排列）：
+
+```python
+from airport_surface import load_graph
+from config import load_settings
+from db import PostgresConnection
+from route_library import HistoricalRouteQuery, RouteLibraryRepository
+
+settings = load_settings()
+airport_graph = load_graph(settings.graph_path)
+routes = RouteLibraryRepository(PostgresConnection(settings.database))
+query = HistoricalRouteQuery(airport_graph, routes)
+
+# 1. 按计划 OD 字段查询（起飞前/落地前无轨迹场景）
+paths = query.get_paths_by_od("departure", stand_ref="009", runway_ref="01")
+
+# 2. 直接传入 Flight 对象查询（内部自动调用 path_map.get_od）
+# paths = query.get_paths_for_flight(flight)
+```
 
 ## 命令行入口
 
-从仓库根目录运行独立入库命令，将一次 `BatchMatchingRunner` 产出目录（包含 `graph.json`、`paths.jsonl`、`matches.jsonl`）导入到 `config.local.toml` 指定的 DuckDB 数据库：
+从仓库根目录运行独立入库命令，将一次 `BatchMatchingRunner` 产出目录（包含 `graph.json`、`paths.jsonl`、`matches.jsonl`）导入到 `config.local.toml` 指定的 PostgreSQL 数据库：
 
 ```powershell
 # 默认模式：先清理当前 graph_id 下旧的 candidate 记录，再导入本批去重路径
 # （完整保留已人工审校的 verified / rejected / manual 记录及其他 graph_id 的数据）
-uv run --extra stand-editing python -m route_library import outputs/path_map/<run_id>
+uv run python -m route_library import outputs/path_map/<run_id>
 
 # 增量追加模式：保留已有 candidate，仅追加本次新出现的路径
-uv run --extra stand-editing python -m route_library import --append outputs/path_map/<run_id>
+uv run python -m route_library import --append outputs/path_map/<run_id>
 ```
 
 ## Python 常用入口
 
-`FlightDatabase` 已挂载 `database.routes`（`RouteLibraryRepository`），可直接按分组键查询、更新审校状态或还原为带几何的 `Path` 对象：
+通过 `PostgresConnection` 实例化 `RouteLibraryRepository`，即可按分组键查询、更新审校状态或还原为带几何的 `Path` 对象：
 
 ```python
 from airport_surface import graph_id, load_graph
 from config import load_settings
-from flight.flight_repository import open_flight_database
-from route_library import RouteStatus, import_batch_run
+from db import PostgresConnection
+from route_library import RouteLibraryRepository, RouteStatus, import_batch_run
 
 settings = load_settings()
-database = open_flight_database(settings.database, read_only=False)
+connection = PostgresConnection(settings.database.dsn, read_only=False)
+routes_repo = RouteLibraryRepository(connection)
 airport_graph = load_graph(settings.graph_path)
 
 # 1. 导入一批匹配结果
-summary = import_batch_run("outputs/path_map/<run_id>", database.routes)
+summary = import_batch_run("outputs/path_map/<run_id>", routes_repo)
 
 # 2. 按 OD 分组键索引查询
-routes = database.routes.find_by_od(
+routes = routes_repo.find_by_od(
     graph_id=graph_id(airport_graph),
     movement="departure",
     stand_ref="009",
@@ -47,11 +70,12 @@ routes = database.routes.find_by_od(
 path = routes[0].resolve(airport_graph)
 
 # 4. 更新人工审校状态
-database.routes.update_status(
+routes_repo.update_status(
     routes[0].route_id,
     RouteStatus.VERIFIED,
     note="标准滑行路径",
 )
+connection.close()
 ```
 
 ## 文件职责
@@ -59,28 +83,28 @@ database.routes.update_status(
 | 文件 | 职责 |
 |---|---|
 | `models.py` | 定义 `RouteEntry`、`RouteStatus`、`RouteSource`，提供字段规范化、边序列 JSON 编解码、`make_route_id` 确定性哈希及 `RouteEntry.from_path()` / `resolve()`。 |
-| `repository.py` | `RouteLibraryRepository`：维护 `main.route_library` 建表与 OD 复合索引，提供单事务 `replace_candidates()`、幂等 `upsert_routes()`、按分组键查询 `find_by_od()`、`get()`、`update_status()` 与 `delete()`；全程通过 `DuckDBConnection.bind()` 兼容直连与 Quack。 |
+| `repository.py` | `RouteLibraryRepository`：操作 `public.route_library`（DDL 由 `sql/schema/01_core_tables.sql` 统一维护），提供单事务 `replace_candidates()`、幂等 `upsert_routes()`、SQL 分页 `query_metadata_page()`、按分组键查询 `find_by_od()`、`get()`、`update_status()` 与 `delete()`。 |
 | `importer.py` | `import_batch_run()` 与 `ImportSummary`：读取 `graph.json`、`paths.jsonl`、`matches.jsonl`，校验 `graph_id` 与拓扑连续性，按 `route_id` 去重后落盘。 |
 | `cli.py` / `__main__.py` | `python -m route_library import [--append] <run_dir>` 命令行入口。 |
 
 ## 数据表与语义约定
 
-表名：`main.route_library`，复合索引：`idx_route_library_od (graph_id, movement, stand_ref, runway_ref)`。
+表名：`public.route_library`，复合索引：`idx_route_library_od (graph_id, movement, stand_ref, runway_ref)`。
 
 | 字段 | 类型 | 说明 |
 |---|---|---|
-| `route_id` | `VARCHAR` (PK) | `r-` + `sha256(graph_id, movement, stand_ref, runway_ref, edges_json)[:20]`，同图同 OD 下天然幂等。 |
-| `graph_id` | `VARCHAR` | 绑定的机场图内容标识（`airport_surface.graph_id`）。 |
-| `movement` | `VARCHAR` | `departure` 或 `arrival`。 |
-| `stand_ref` | `VARCHAR` | 机位编号（必填，非空）。 |
-| `runway_ref` | `VARCHAR` | 跑道号（大写规范化，原航班缺失跑道时为 `NULL`）。 |
-| `runway_interface_node` | `VARCHAR` | 路径靠跑道一端的接口节点 ID（离港取末边终点，进港取首边起点）。 |
-| `edges_json` | `VARCHAR` | 与 `PathRecord` 一致的紧凑 JSON 边序列 `[[u, v, key], ...]`。 |
+| `route_id` | `TEXT` (PK) | `r-` + `sha256(graph_id, movement, stand_ref, runway_ref, edges_json)[:20]`，同图同 OD 下天然幂等。 |
+| `graph_id` | `TEXT` | 绑定的机场图内容标识（`airport_surface.graph_id`）。 |
+| `movement` | `TEXT` | `departure` 或 `arrival`。 |
+| `stand_ref` | `TEXT` | 机位编号（必填，非空）。 |
+| `runway_ref` | `TEXT` | 跑道号（必填，非空、大写规范化；匹配阶段在原航班缺失时已从路径跑道接口自动反推，如 `01/19`）。 |
+| `runway_interface_node` | `TEXT` | 路径靠跑道一端的接口节点 ID（离港取末边终点，进港取首边起点）。 |
+| `edges_json` | `TEXT` | 与 `PathRecord` 一致的紧凑 JSON 边序列 `[[u, v, key], ...]`。 |
 | `edge_count` | `INTEGER` | 路径包含的有向边数量。 |
-| `total_length_m` | `DOUBLE` | 路径总长度（米）。 |
-| `status` | `VARCHAR` | `candidate`（默认）/ `verified` / `rejected` / `manual`。 |
-| `source` | `VARCHAR` | `matched`（算法导入）/ `manual`（人工录入）。 |
-| `note` | `VARCHAR` | 人工审校备注（可空）。 |
+| `total_length_m` | `DOUBLE PRECISION` | 路径总长度（米）。 |
+| `status` | `TEXT` | `candidate`（默认）/ `verified` / `rejected` / `manual`。 |
+| `source` | `TEXT` | `matched`（算法导入）/ `manual`（人工录入）。 |
+| `note` | `TEXT` | 人工审校备注（可空）。 |
 | `created_at` / `updated_at` | `TIMESTAMPTZ` | 创建与最近更新时间（UTC）。 |
 
 ### 导入覆盖与保护规则
