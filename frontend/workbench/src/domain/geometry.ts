@@ -135,3 +135,56 @@ export function computeConnectedEdgesAngles(
     }];
   });
 }
+
+export interface GeoBounds {
+  minLng: number;
+  maxLng: number;
+  minLat: number;
+  maxLat: number;
+}
+
+function segmentIntersectsBounds(a: LngLat, b: LngLat, bounds: GeoBounds): boolean {
+  let t0 = 0;
+  let t1 = 1;
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const checks: Array<[number, number]> = [
+    [-dx, a[0] - bounds.minLng],
+    [dx, bounds.maxLng - a[0]],
+    [-dy, a[1] - bounds.minLat],
+    [dy, bounds.maxLat - a[1]],
+  ];
+  for (const [p, q] of checks) {
+    if (p === 0) {
+      if (q < 0) return false;
+    } else {
+      const ratio = q / p;
+      if (p < 0) {
+        if (ratio > t1) return false;
+        if (ratio > t0) t0 = ratio;
+      } else {
+        if (ratio < t0) return false;
+        if (ratio < t1) t1 = ratio;
+      }
+    }
+  }
+  return t0 <= t1;
+}
+
+/** Return true if any vertex or segment of `coordinates` intersects `bounds`. */
+export function lineIntersectsBounds(
+  coordinates: ReadonlyArray<LngLat>,
+  bounds: GeoBounds,
+): boolean {
+  if (coordinates.length === 0) return false;
+  if (coordinates.length === 1) {
+    const [lng, lat] = coordinates[0];
+    return lng >= bounds.minLng && lng <= bounds.maxLng && lat >= bounds.minLat && lat <= bounds.maxLat;
+  }
+  for (let i = 0; i < coordinates.length - 1; i += 1) {
+    if (segmentIntersectsBounds(coordinates[i], coordinates[i + 1], bounds)) {
+      return true;
+    }
+  }
+  return false;
+}

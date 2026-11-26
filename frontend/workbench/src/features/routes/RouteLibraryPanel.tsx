@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Crosshair, Layers, MapPinOff, MapPinPlus } from 'lucide-react';
 import { ApiError, api } from '@/api/client';
 import type { RouteListQuery } from '@/api/client';
-import type { RouteItem, RouteList } from '@/api/types';
+import type { RouteAnomalyItem, RouteItem, RouteList } from '@/api/types';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { MapRouteInput } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
@@ -17,19 +17,18 @@ import {
   TablePagination,
   ViewHeader,
 } from '@/components/ui/workbench-shell';
+import { formatRouteOd } from '@/domain/features';
 import { ROUTE_STATUS_LABELS as statusLabels } from '@/domain/palette';
 import { MapBatchConfirmDialog } from '@/features/map/MapBatchConfirmDialog';
 import { cn } from '@/lib/utils';
+import { RouteAnomalyBar } from './RouteAnomalyBar';
 import { RouteBulkBar } from './RouteBulkBar';
+import { RouteCoverageBar } from './RouteCoverageBar';
 import { NULL_RUNWAY_VALUE, RouteFilterBar, defaultRouteFilters } from './RouteFilterBar';
 import type { RouteFilters } from './RouteFilterBar';
 import { RouteNoteCell, RouteStatusCell } from './RouteReviewCells';
 import { useRouteBatchSelection } from './useRouteBatchSelection';
-
-function routeOdLabel(item: RouteItem): string {
-  const rwy = item.runway_ref ?? '无跑道';
-  return item.movement === 'departure' ? `${item.stand_ref} → ${rwy}` : `${rwy} → ${item.stand_ref}`;
-}
+import { useRouteLibraryInsights } from './useRouteLibraryInsights';
 
 function paramsFor(filters: RouteFilters, page: number, pageSize: number): RouteListQuery {
   return {
@@ -68,7 +67,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
     page,
     totalPages: data?.total_pages ?? 0,
     splitView,
-    labelFor: routeOdLabel,
+    labelFor: formatRouteOd,
     fetchPage: async targetPage => {
       const nextData = await api.routes(paramsFor(filters, targetPage, pageSize));
       if (mountedRef.current) {
@@ -116,6 +115,12 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
     return () => controller.abort();
   }, [active, load, wb.routeLibraryVersion]);
 
+  const insights = useRouteLibraryInsights({
+    active,
+    mountedRef,
+    onReloadRoutes: () => load(),
+  });
+
   const toggleOnMap = async (item: RouteItem, focus = false) => {
     if (wb.mapRoutes.has(item.route_id)) {
       if (focus) {
@@ -135,7 +140,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
       if (!mountedRef.current) return;
       const entry: MapRouteInput = {
         geometry,
-        label: routeOdLabel(item),
+        label: formatRouteOd(item),
         visible: true,
       };
       wb.dispatch({ type: 'map-route', routeId: item.route_id, value: entry });
@@ -196,6 +201,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         });
       }
       wb.dispatch({ type: 'status', value: `已更新路径状态为「${statusLabels[updated.status] ?? updated.status}」` });
+      void insights.loadCoverage();
       return true;
     } catch (failure) {
       wb.dispatch({ type: 'error', value: failure instanceof Error ? failure.message : '路径审校更新失败' });
@@ -220,6 +226,15 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
     setDraft(defaultRouteFilters);
     setFilters(defaultRouteFilters);
     setPage(1);
+  };
+
+  const handleAddAnomaliesToMap = (items: RouteAnomalyItem[]) => {
+    const candidates = items
+      .map(item => batch.selectedRoutes.get(item.route_id) ?? data?.items.find(row => row.route_id === item.route_id))
+      .filter((item): item is RouteItem => Boolean(item && item.matches_current_graph));
+    if (candidates.length) {
+      batch.addRouteItemsToMap(candidates);
+    }
   };
 
   const odCounts = useMemo(() => {
@@ -258,8 +273,13 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
         onImmediatePatch={applyImmediatePatch}
         onApply={applyFilters}
         onReset={resetFilters}
-        onRefresh={() => void load()}
+        onRefresh={() => {
+          void load();
+          void insights.loadCoverage();
+        }}
       />
+
+      {data?.has_route_library && <RouteCoverageBar coverage={insights.coverage} loading={loading} />}
 
       {data?.has_route_library && (
         <RouteBulkBar
@@ -268,14 +288,25 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
           selectablePageCount={batch.selectablePageItems.length}
           allPageSelected={batch.allPageSelected}
           addingProgress={batch.addingProgress}
+          detectingAnomalies={insights.detectingAnomalies}
           onTogglePage={batch.toggleSelectPage}
           onClearSelection={batch.clearSelection}
           onAddSelectedToMap={() => void batch.addSelectedToMap()}
           onReplacePageToMap={() => void batch.replaceItemsOnMap(batch.selectablePageItems, data.page || page)}
           onRemoveSelectedFromMap={batch.removeSelectedFromMap}
           onCancelAddToMap={batch.cancelAddToMap}
+          onDetectAnomalies={() => void insights.detectAnomalies([...batch.selectedRoutes.keys()])}
         />
       )}
+
+      <RouteAnomalyBar
+        result={insights.anomalyResult}
+        canEdit={Boolean(data?.can_edit)}
+        rejecting={insights.rejectingAnomalies}
+        onAddAnomaliesToMap={handleAddAnomaliesToMap}
+        onRejectAnomalies={routeIds => void insights.rejectAnomalies(routeIds)}
+        onDismiss={insights.dismissAnomalies}
+      />
 
       <DataTableContainer loading={loading}>
         {!loading && data && !data.has_route_library ? (
@@ -326,7 +357,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
                   >
                     <TableCell>
                       <Checkbox
-                        aria-label={`选择路径 ${routeOdLabel(item)}`}
+                        aria-label={`选择路径 ${formatRouteOd(item)}`}
                         disabled={!item.matches_current_graph}
                         checked={checked}
                         onCheckedChange={next => batch.toggleSelectRoute(item, next === true)}
@@ -337,13 +368,18 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
                         <Tooltip>
                           <TooltipTrigger asChild>
                             <strong className="cursor-default font-medium text-foreground">
-                              {routeOdLabel(item)}
+                              {formatRouteOd(item)}
                             </strong>
                           </TooltipTrigger>
                           <TooltipContent side="right" className="font-mono text-[11px]">
                             {item.route_id}
                           </TooltipContent>
                         </Tooltip>
+                        {insights.anomalousIdSet.has(item.route_id) && (
+                          <Badge variant="warning" className="h-5 px-1.5 text-[11px]">
+                            异常
+                          </Badge>
+                        )}
                         {!item.matches_current_graph && (
                           <Badge variant="warning" className="h-5 px-1.5 text-[11px]">
                             旧图

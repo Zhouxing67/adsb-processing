@@ -1,4 +1,4 @@
-import { MapPinOff, MapPinPlus, RefreshCw, X } from 'lucide-react';
+import { MapPinOff, MapPinPlus, RefreshCw, ShieldAlert, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
@@ -10,12 +10,14 @@ interface RouteBulkBarProps {
   selectablePageCount: number;
   allPageSelected: boolean;
   addingProgress: { done: number; total: number } | null;
+  detectingAnomalies?: boolean;
   onTogglePage(): void;
   onClearSelection(): void;
   onAddSelectedToMap(): void;
   onReplacePageToMap(): void;
   onRemoveSelectedFromMap(): void;
   onCancelAddToMap(): void;
+  onDetectAnomalies(): void;
 }
 
 export function RouteBulkBar({
@@ -24,12 +26,14 @@ export function RouteBulkBar({
   selectablePageCount,
   allPageSelected,
   addingProgress,
+  detectingAnomalies = false,
   onTogglePage,
   onClearSelection,
   onAddSelectedToMap,
   onReplacePageToMap,
   onRemoveSelectedFromMap,
   onCancelAddToMap,
+  onDetectAnomalies,
 }: RouteBulkBarProps) {
   return (
     <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-1.5">
@@ -87,6 +91,16 @@ export function RouteBulkBar({
             取消
           </Button>
         )}
+        <Button
+          variant="outline"
+          size="sm"
+          disabled={!selectedCount || Boolean(addingProgress) || detectingAnomalies}
+          title="对已选路径运行高精度异常检测（重复边、闭合环路、低频极端绕行）"
+          onClick={onDetectAnomalies}
+        >
+          <ShieldAlert className="h-3.5 w-3.5" />
+          <span>{detectingAnomalies ? '检测中…' : '异常检测'}</span>
+        </Button>
         <Button
           variant="outline"
           size="sm"

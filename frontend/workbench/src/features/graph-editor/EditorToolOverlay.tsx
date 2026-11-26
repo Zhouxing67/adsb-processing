@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
+import { SquareDashedMousePointer } from 'lucide-react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Toggle } from '@/components/ui/toggle';
+import { formatClusterLabel } from '@/domain/features';
 import { aerowayTypes } from '@/domain/properties';
 import type { Aeroway } from '@/domain/properties';
 import type { EdgeIdentity, NodeId, StandCluster } from '@/api/types';
@@ -14,11 +17,13 @@ interface EditorToolOverlayProps {
   mergeNodeIds: NodeId[];
   clusterEdges: EdgeIdentity[];
   standClusters: StandCluster[];
+  clusterBoxSelect: boolean;
   selectionCount: number;
   drawAeroway: Aeroway;
   drawRef: string;
   onDrawAerowayChange(value: Aeroway): void;
   onDrawRefChange(value: string): void;
+  onClusterBoxSelectChange(value: boolean): void;
   onOpenMergeCandidates(): Promise<void>;
   onPreviewMerge(nodeIds: NodeId[], revision: number): Promise<void>;
   onCreateCluster(name: string): Promise<boolean>;
@@ -32,11 +37,13 @@ export function EditorToolOverlay({
   mergeNodeIds,
   clusterEdges,
   standClusters,
+  clusterBoxSelect,
   selectionCount,
   drawAeroway,
   drawRef,
   onDrawAerowayChange,
   onDrawRefChange,
+  onClusterBoxSelectChange,
   onOpenMergeCandidates,
   onPreviewMerge,
   onCreateCluster,
@@ -94,6 +101,18 @@ export function EditorToolOverlay({
       )}
       {wb.tool === 'cluster' && (
         <Card className="pointer-events-auto flex flex-wrap items-center gap-1.5 bg-background/95 p-1.5 shadow-sm">
+          <Toggle
+            variant="outline"
+            size="default"
+            pressed={clusterBoxSelect}
+            aria-pressed={clusterBoxSelect}
+            onClick={() => onClusterBoxSelectChange(!clusterBoxSelect)}
+            aria-label="框选区域"
+            title="开启后直接左键拖拽框选区域内机位；关闭时也可按住 Shift + 拖拽框选"
+          >
+            <SquareDashedMousePointer className="h-3.5 w-3.5" />
+            <span>框选区域</span>
+          </Toggle>
           <Badge variant="secondary" className="h-7 px-2 text-xs tabular-nums">
             已选 {clusterEdges.length} 条机位
           </Badge>
@@ -121,7 +140,7 @@ export function EditorToolOverlay({
                 <SelectContent>
                   {standClusters.map(cluster => (
                     <SelectItem key={cluster.c_id} value={String(cluster.c_id)}>
-                      #{cluster.c_id} {cluster.name ? `· ${cluster.name}` : ''}（{cluster.stands.length}）
+                      {formatClusterLabel(cluster)}（{cluster.stands.length}）
                     </SelectItem>
                   ))}
                 </SelectContent>

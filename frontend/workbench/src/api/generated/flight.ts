@@ -176,6 +176,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/routes/batch-review": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Batch Update Route Review */
+        post: operations["batch_update_route_review_api_routes_batch_review_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/routes/coverage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Route Coverage */
+        get: operations["route_coverage_api_routes_coverage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/routes/detect-anomalies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Detect Route Anomalies */
+        post: operations["detect_route_anomalies_api_routes_detect_anomalies_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/routes/import-matches": {
         parameters: {
             query?: never;
@@ -248,6 +299,38 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BatchUpdateRouteReviewRequest */
+        BatchUpdateRouteReviewRequest: {
+            /** Note */
+            note?: string | null;
+            /** Route Ids */
+            route_ids: string[];
+            /** Status */
+            status: string;
+        };
+        /** BatchUpdateRouteReviewResponse */
+        BatchUpdateRouteReviewResponse: {
+            /** Route Ids */
+            route_ids: string[];
+            /** Status */
+            status: string;
+            /** Updated Count */
+            updated_count: number;
+        };
+        /** DetectRouteAnomaliesRequest */
+        DetectRouteAnomaliesRequest: {
+            /** Route Ids */
+            route_ids: string[];
+        };
+        /** DetectRouteAnomaliesResponse */
+        DetectRouteAnomaliesResponse: {
+            /** Anomalous Count */
+            anomalous_count: number;
+            /** Checked Count */
+            checked_count: number;
+            /** Items */
+            items: components["schemas"]["RouteAnomalyItemResponse"][];
+        };
         /** EdgeFeature */
         EdgeFeature: {
             geometry: components["schemas"]["LineStringGeometry"];
@@ -707,6 +790,21 @@ export interface components {
             /** Waiting */
             waiting: number;
         };
+        /** MovementCoverageSummary */
+        MovementCoverageSummary: {
+            /** Effective Covered Ods */
+            effective_covered_ods: number;
+            /** Effective Od Rate */
+            effective_od_rate: number;
+            /** Fine Covered Ods */
+            fine_covered_ods: number;
+            /** Fine Od Rate */
+            fine_od_rate: number;
+            /** Movement */
+            movement: string;
+            /** Total Ods */
+            total_ods: number;
+        };
         /** NodeFeature */
         NodeFeature: {
             geometry: components["schemas"]["PointGeometry"];
@@ -781,6 +879,69 @@ export interface components {
              * @constant
              */
             type: "Point";
+        };
+        /** RouteAnomalyItemResponse */
+        RouteAnomalyItemResponse: {
+            /** Flight Count */
+            flight_count: number;
+            /** Movement */
+            movement: string;
+            /** Reasons */
+            reasons: components["schemas"]["RouteAnomalyReasonResponse"][];
+            /** Route Id */
+            route_id: string;
+            /** Runway Ref */
+            runway_ref: string | null;
+            /** Stand Ref */
+            stand_ref: string;
+            /** Status */
+            status: string;
+            /** Total Length M */
+            total_length_m: number;
+        };
+        /** RouteAnomalyReasonResponse */
+        RouteAnomalyReasonResponse: {
+            /** Code */
+            code: string;
+            /** Message */
+            message: string;
+        };
+        /** RouteCoverageResponse */
+        RouteCoverageResponse: {
+            /** By Movement */
+            by_movement: components["schemas"]["MovementCoverageSummary"][];
+            /** Cluster Count */
+            cluster_count: number;
+            /** Clustered Stands */
+            clustered_stands: number;
+            /** Covered Runways */
+            covered_runways: number;
+            /** Effective Covered Ods */
+            effective_covered_ods: number;
+            /** Effective Covered Stands */
+            effective_covered_stands: number;
+            /** Effective Od Rate */
+            effective_od_rate: number;
+            /** Fine Covered Ods */
+            fine_covered_ods: number;
+            /** Fine Covered Stands */
+            fine_covered_stands: number;
+            /** Fine Od Rate */
+            fine_od_rate: number;
+            /** Graph Id */
+            graph_id: string;
+            /** Total Ods */
+            total_ods: number;
+            /** Total Runways */
+            total_runways: number;
+            /** Total Stands */
+            total_stands: number;
+            /** Unclustered Stands */
+            unclustered_stands: string[];
+            /** Uncovered Runways */
+            uncovered_runways: string[];
+            /** Uncovered Stands */
+            uncovered_stands: string[];
         };
         /** RouteGeometryResponse */
         RouteGeometryResponse: {
@@ -1469,6 +1630,128 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["RouteListResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    batch_update_route_review_api_routes_batch_review_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchUpdateRouteReviewRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BatchUpdateRouteReviewResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    route_coverage_api_routes_coverage_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["RouteCoverageResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    detect_route_anomalies_api_routes_detect_anomalies_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DetectRouteAnomaliesRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DetectRouteAnomaliesResponse"];
                 };
             };
             /** @description Request validation error */

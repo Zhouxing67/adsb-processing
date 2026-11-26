@@ -4,7 +4,7 @@ import type { GraphPostInput, GraphPostPath } from '../../api/client';
 import type { EdgeIdentity, EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
-import { isNodeFeature as isNode, isSameEdge } from '../../domain/features';
+import { isNodeFeature as isNode, isParkingEdgeFeature, isSameEdge } from '../../domain/features';
 import type { Aeroway } from '../../domain/properties';
 import type { MapPreviewLine } from '../map/MapView';
 import type { GraphDialogState } from './types';
@@ -41,7 +41,11 @@ export function useGraphEditorMachine() {
   const [machine, send] = useReducer(graphEditorReducer, wb.tool, idle);
   const [drawAeroway, setDrawAeroway] = useState<Aeroway>('taxiway');
   const [drawRef, setDrawRef] = useState('');
-  useEffect(() => { send({ type: 'RESET', tool: wb.tool }); }, [wb.tool]);
+  const [clusterBoxSelect, setClusterBoxSelect] = useState(false);
+  useEffect(() => {
+    send({ type: 'RESET', tool: wb.tool });
+    if (wb.tool !== 'cluster') setClusterBoxSelect(false);
+  }, [wb.tool]);
 
   const reset = useCallback(() => {
     send({ type: 'RESET', tool: wb.tool });
@@ -126,7 +130,7 @@ export function useGraphEditorMachine() {
       return;
     }
     if (wb.tool === 'cluster') {
-      if (isNode(feature) || feature.properties.aeroway !== 'parking_position') {
+      if (!isParkingEdgeFeature(feature)) {
         wb.dispatch({ type: 'status', value: '机位聚类 · 请点击停机位边（parking_position）' });
         return;
       }
@@ -173,9 +177,34 @@ export function useGraphEditorMachine() {
 
   const mergeNodeIds = machine.selection.reduce<NodeId[]>((ids, item) => { if (isNode(item)) ids.push(item.properties.id); return ids; }, []);
   const clusterEdges = machine.selection.reduce<EdgeIdentity[]>((edges, item) => {
-    if (!isNode(item) && item.properties.aeroway === 'parking_position') edges.push(item.properties.id);
+    if (isParkingEdgeFeature(item)) edges.push(item.properties.id);
     return edges;
   }, []);
+  const addClusterFeatures = useCallback((incoming: SelectedFeature[]) => {
+    const parkingIncoming = incoming.filter(isParkingEdgeFeature);
+    if (!parkingIncoming.length) {
+      wb.dispatch({ type: 'status', value: '框选区域内未找到停机位边' });
+      return;
+    }
+    const next = [...machine.selection];
+    let added = 0;
+    for (const candidate of parkingIncoming) {
+      if (isNode(candidate)) continue;
+      const already = next.some(item => !isNode(item) && isSameEdge(item.properties, candidate.properties));
+      if (!already) {
+        next.push(candidate);
+        added += 1;
+      }
+    }
+    if (added > 0) send({ type: 'SELECT', selection: next });
+    wb.dispatch({
+      type: 'status',
+      value:
+        added > 0
+          ? `框选新增 ${added} 条，共已选 ${next.length} 条机位边`
+          : `框选区域内 ${parkingIncoming.length} 条机位边均已在选择中（共 ${next.length} 条）`,
+    });
+  }, [machine.selection, wb]);
   const createCluster = useCallback(async (name: string): Promise<boolean> => {
     if (!clusterEdges.length) return false;
     if (await wb.runGraphCommand('/api/stand-clusters/create', { edges: clusterEdges, name: name.trim() || null }) !== null) {
@@ -203,12 +232,15 @@ export function useGraphEditorMachine() {
     setDrawAeroway,
     drawRef,
     setDrawRef,
+    clusterBoxSelect,
+    setClusterBoxSelect,
     dialog: machine.dialog,
     previewOverlays: machine.previewOverlays,
     mergeNodeIds,
     clusterEdges,
     handleFeature,
     handleMapClick,
+    addClusterFeatures,
     reset,
     openMergeCandidates,
     previewMerge,

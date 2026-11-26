@@ -5,6 +5,7 @@ import { useWorkbench } from '@/app/WorkbenchContext';
 import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { IconActionButton } from '@/components/ui/workbench-shell';
+import { formatClusterLabel } from '@/domain/features';
 import { standClusterColor } from '@/domain/palette';
 
 interface StandClusterPanelProps {
@@ -91,8 +92,7 @@ export function StandClusterPanel({
                     />
                   ) : (
                     <span className="truncate text-foreground" title={cluster.stand_refs.join(', ')}>
-                      #{cluster.c_id}
-                      {cluster.name ? ` · ${cluster.name}` : ''}
+                      {formatClusterLabel(cluster)}
                     </span>
                   )}
                 </div>

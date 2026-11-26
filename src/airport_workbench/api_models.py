@@ -419,6 +419,35 @@ class RouteListResponse(ApiModel):
     page_size: int
 
 
+class MovementCoverageSummary(ApiModel):
+    movement: str
+    total_ods: int
+    fine_covered_ods: int
+    effective_covered_ods: int
+    fine_od_rate: float
+    effective_od_rate: float
+
+
+class RouteCoverageResponse(ApiModel):
+    graph_id: str
+    total_stands: int
+    clustered_stands: int
+    cluster_count: int
+    fine_covered_stands: int
+    effective_covered_stands: int
+    total_runways: int
+    covered_runways: int
+    total_ods: int
+    fine_covered_ods: int
+    effective_covered_ods: int
+    fine_od_rate: float
+    effective_od_rate: float
+    by_movement: list[MovementCoverageSummary]
+    uncovered_stands: list[str]
+    unclustered_stands: list[str]
+    uncovered_runways: list[str]
+
+
 class RouteGeometryResponse(ApiModel):
     route: RouteItemResponse
     path: GeoJsonFeatureCollection
@@ -427,6 +456,44 @@ class RouteGeometryResponse(ApiModel):
 class UpdateRouteReviewRequest(ApiModel):
     status: str
     note: str | None = None
+
+
+class BatchUpdateRouteReviewRequest(ApiModel):
+    route_ids: list[str] = Field(min_length=1)
+    status: str
+    note: str | None = None
+
+
+class BatchUpdateRouteReviewResponse(ApiModel):
+    updated_count: int
+    route_ids: list[str]
+    status: str
+
+
+class DetectRouteAnomaliesRequest(ApiModel):
+    route_ids: list[str] = Field(min_length=1)
+
+
+class RouteAnomalyReasonResponse(ApiModel):
+    code: str
+    message: str
+
+
+class RouteAnomalyItemResponse(ApiModel):
+    route_id: str
+    movement: str
+    stand_ref: str
+    runway_ref: str | None
+    total_length_m: float
+    flight_count: int
+    status: str
+    reasons: list[RouteAnomalyReasonResponse]
+
+
+class DetectRouteAnomaliesResponse(ApiModel):
+    checked_count: int
+    anomalous_count: int
+    items: list[RouteAnomalyItemResponse]
 
 
 class ImportMatchesToRouteLibraryRequest(ApiModel):

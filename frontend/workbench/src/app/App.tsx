@@ -7,6 +7,8 @@ import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/componen
 import { Spinner } from '@/components/ui/spinner';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { isNodeFeature } from '@/domain/features';
+import { lineIntersectsBounds } from '@/domain/geometry';
+import type { GeoBounds } from '@/domain/geometry';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
@@ -280,6 +282,15 @@ function Workspace() {
     void editor.handleFeature(feature, clickPoint);
   };
 
+  const handleBoxSelect = (bounds: GeoBounds) => {
+    const matched = state.edges.features.filter(
+      edge =>
+        edge.properties.aeroway === 'parking_position' &&
+        lineIntersectsBounds(edge.geometry.coordinates, bounds),
+    );
+    editor.addClusterFeatures(matched);
+  };
+
   const renderMapView = (kind: 'flight' | 'route', active: boolean) => {
     const isRouteMap = kind === 'route';
     const mapFlightsForKind = !dualMap
@@ -316,6 +327,8 @@ function Workspace() {
           showNodes={layers.nodes || wb.topologyOpen || graphEditing}
           spreadRoutes={layers.spreadRoutes}
           colorByCluster={layers.colorByCluster || wb.tool === 'cluster'}
+          boxSelectEnabled={wb.tool === 'cluster'}
+          boxSelectSticky={editor.clusterBoxSelect}
           selected={selectedFeatures}
           drawPoints={editor.drawPoints}
           previewOverlays={editor.previewOverlays}
@@ -327,6 +340,7 @@ function Workspace() {
           observationLocation={!isRouteMap ? wb.observationLocation : null}
           onFeature={handleMapFeature}
           onMapClick={editor.handleMapClick}
+          onBoxSelect={handleBoxSelect}
           onFlightClick={key => {
             setLeftOpen(true);
             wb.dispatch({ type: 'highlight-flight', key });
@@ -356,11 +370,13 @@ function Workspace() {
           mergeNodeIds={editor.mergeNodeIds}
           clusterEdges={editor.clusterEdges}
           standClusters={state.stand_clusters ?? []}
+          clusterBoxSelect={editor.clusterBoxSelect}
           selectionCount={editor.selection.length}
           drawAeroway={editor.drawAeroway}
           drawRef={editor.drawRef}
           onDrawAerowayChange={editor.setDrawAeroway}
           onDrawRefChange={editor.setDrawRef}
+          onClusterBoxSelectChange={editor.setClusterBoxSelect}
           onOpenMergeCandidates={editor.openMergeCandidates}
           onPreviewMerge={editor.previewMerge}
           onCreateCluster={editor.createCluster}

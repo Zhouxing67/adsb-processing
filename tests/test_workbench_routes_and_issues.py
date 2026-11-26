@@ -241,7 +241,14 @@ def test_route_anomaly_detection_flags_obvious_anomalies_without_false_positives
         airport_graph,
         Path(
             airport_graph,
-            [("1", "2", 0), ("2", "3", 0), ("3", "4", 0), ("4", "5", 0), ("5", "2", 0), ("2", "3", 0)],
+            [
+                ("1", "2", 0),
+                ("2", "3", 0),
+                ("3", "4", 0),
+                ("4", "5", 0),
+                ("5", "2", 0),
+                ("2", "3", 0),
+            ],
         ),
         movement="departure",
         stand_ref="009",
@@ -255,12 +262,16 @@ def test_route_anomaly_detection_flags_obvious_anomalies_without_false_positives
         res = client.post(
             "/api/routes/detect-anomalies",
             json={
-                "route_ids": [normal_clean.route_id, loop_anomaly.route_id],
+                "route_ids": [
+                    normal_clean.route_id,
+                    normal_pushback.route_id,
+                    loop_anomaly.route_id,
+                ],
             },
         )
         assert res.status_code == 200
         payload = res.json()
-        assert payload["checked_count"] == 2
+        assert payload["checked_count"] == 3
         assert payload["anomalous_count"] == 1
         assert payload["items"][0]["route_id"] == loop_anomaly.route_id
         codes = {reason["code"] for reason in payload["items"][0]["reasons"]}

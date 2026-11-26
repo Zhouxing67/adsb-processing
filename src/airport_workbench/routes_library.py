@@ -1,4 +1,4 @@
-"""HTTP routes for the DuckDB route library."""
+"""HTTP routes for the PostgreSQL route library."""
 
 from __future__ import annotations
 
@@ -7,8 +7,13 @@ from typing import Annotated
 from fastapi import APIRouter, HTTPException, Query
 
 from .api_models import (
+    BatchUpdateRouteReviewRequest,
+    BatchUpdateRouteReviewResponse,
+    DetectRouteAnomaliesRequest,
+    DetectRouteAnomaliesResponse,
     ImportMatchesToRouteLibraryRequest,
     ImportRoutesSummaryResponse,
+    RouteCoverageResponse,
     RouteGeometryResponse,
     RouteItemResponse,
     RouteListRequest,
@@ -50,6 +55,10 @@ def build_route_library_router(flight_workbench: FlightWorkbench) -> APIRouter:
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
 
+    @router.get("/api/routes/coverage")
+    def route_coverage() -> RouteCoverageResponse:
+        return RouteCoverageResponse.model_validate(flight_workbench.route_coverage())
+
     @router.get("/api/routes/{route_id}/geometry")
     def route_geometry(route_id: str) -> RouteGeometryResponse:
         try:
@@ -70,6 +79,34 @@ def build_route_library_router(flight_workbench: FlightWorkbench) -> APIRouter:
             )
         except KeyError as error:
             raise HTTPException(404, "未知 route_id") from error
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        except RuntimeError as error:
+            raise HTTPException(503, str(error)) from error
+
+    @router.post("/api/routes/detect-anomalies")
+    def detect_route_anomalies(
+        item: DetectRouteAnomaliesRequest,
+    ) -> DetectRouteAnomaliesResponse:
+        try:
+            return DetectRouteAnomaliesResponse.model_validate(
+                flight_workbench.detect_route_anomalies(item.route_ids)
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+
+    @router.post("/api/routes/batch-review")
+    def batch_update_route_review(
+        item: BatchUpdateRouteReviewRequest,
+    ) -> BatchUpdateRouteReviewResponse:
+        try:
+            return BatchUpdateRouteReviewResponse.model_validate(
+                flight_workbench.batch_update_route_review(
+                    item.route_ids,
+                    item.status,
+                    note=item.note,
+                )
+            )
         except ValueError as error:
             raise HTTPException(400, str(error)) from error
         except RuntimeError as error:

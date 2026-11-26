@@ -243,6 +243,21 @@ class RouteLibraryRepository:
             ).mappings().fetchone()
             return _row_to_entry(row) if row is not None else None
 
+    def get_many(self, route_ids: Sequence[str]) -> list[RouteEntry]:
+        """Fetch multiple RouteEntries preserving input order for found IDs."""
+        deduped = list(dict.fromkeys(route_ids))
+        if not deduped:
+            return []
+        columns = ", ".join(ROUTE_LIBRARY_COLUMNS)
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE} "
+                "WHERE route_id = ANY(CAST(:route_ids AS TEXT[]))",
+                {"route_ids": deduped},
+            ).mappings()
+            by_id = {str(row["route_id"]): _row_to_entry(row) for row in rows}
+            return [by_id[route_id] for route_id in deduped if route_id in by_id]
+
     def list_flight_ids(self, route_id: str) -> list[str]:
         """Return all deduplicated flight_ids recorded as matching ``route_id``."""
         with self._database.connection() as connection:
@@ -252,6 +267,22 @@ class RouteLibraryRepository:
                 {"route_id": route_id},
             ).fetchall()
             return [str(row[0]) for row in rows]
+
+    def list_active_od_keys(
+        self,
+        graph_id: str,
+    ) -> list[tuple[str, str, str | None]]:
+        """Return distinct (movement, stand_ref, runway_ref) for non-rejected routes."""
+        with self._database.connection() as connection:
+            rows = connection.execute(
+                f"SELECT DISTINCT movement, stand_ref, runway_ref FROM {ROUTE_LIBRARY_TABLE} "
+                "WHERE graph_id = :graph_id AND status <> :rejected_status",
+                {"graph_id": graph_id, "rejected_status": RouteStatus.REJECTED.value},
+            ).fetchall()
+            return [
+                (str(row[0]), str(row[1]), str(row[2]) if row[2] is not None else None)
+                for row in rows
+            ]
 
     def find_by_od(
         self,
@@ -480,6 +511,37 @@ class RouteLibraryRepository:
             if row is None:
                 raise KeyError(f"Unknown route_id: {route_id!r}")
             return _row_to_entry(row)
+
+    def batch_update_status(
+        self,
+        route_ids: Sequence[str],
+        status: RouteStatus | str,
+        *,
+        note: str | None = None,
+    ) -> list[str]:
+        """Update review status for multiple routes in one write transaction."""
+        deduped = list(dict.fromkeys(route_ids))
+        if not deduped:
+            return []
+        normalized_status = RouteStatus(status).value
+        now = datetime.now(timezone.utc)
+        with self._database.connection(write=True) as connection:
+            rows = connection.execute(
+                f"UPDATE {ROUTE_LIBRARY_TABLE} "
+                "SET status = :status, "
+                "note = COALESCE(:note, note), "
+                "updated_at = :updated_at "
+                "WHERE route_id = ANY(CAST(:route_ids AS TEXT[])) "
+                "RETURNING route_id",
+                {
+                    "status": normalized_status,
+                    "note": note,
+                    "updated_at": now,
+                    "route_ids": deduped,
+                },
+            ).fetchall()
+            updated_set = {str(row[0]) for row in rows}
+            return [route_id for route_id in deduped if route_id in updated_set]
 
     def delete(self, route_id: str) -> bool:
         with self._database.connection(write=True) as connection:

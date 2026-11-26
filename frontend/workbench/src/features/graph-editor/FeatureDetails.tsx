@@ -8,7 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { formatEdgeId, isNodeFeature } from '@/domain/features';
+import { formatClusterLabel, formatEdgeId, isNodeFeature, isParkingEdgeFeature } from '@/domain/features';
 import { aerowayTypes, propertyPatch } from '@/domain/properties';
 import type { Aeroway } from '@/domain/properties';
 
@@ -76,7 +76,7 @@ export function FeatureDetails() {
     if (key === 'cluster_id') {
       if (typeof value !== 'number') return '未分类';
       const found = standClusters.find(cluster => cluster.c_id === value);
-      return found?.name ? `#${value} · ${found.name}` : `#${value}`;
+      return found ? formatClusterLabel(found) : `#${value}`;
     }
     return String(value ?? '—');
   };
@@ -120,7 +120,7 @@ export function FeatureDetails() {
     if (result !== null) wb.dispatch({ type: 'selected', value: null });
   };
 
-  const isParkingEdge = !node && feature.properties.aeroway === 'parking_position';
+  const isParkingEdge = isParkingEdgeFeature(feature);
   const nextClusterId = effectiveClusterValue === '__none__' ? null : Number(effectiveClusterValue);
   const clusterUnchanged = nextClusterId === currentClusterId;
   const saveCluster = async () => {
@@ -176,8 +176,7 @@ export function FeatureDetails() {
                   <SelectItem value="__none__">（未分类）</SelectItem>
                   {standClusters.map(cluster => (
                     <SelectItem key={cluster.c_id} value={String(cluster.c_id)}>
-                      #{cluster.c_id}
-                      {cluster.name ? ` · ${cluster.name}` : ''}
+                      {formatClusterLabel(cluster)}
                     </SelectItem>
                   ))}
                 </SelectContent>

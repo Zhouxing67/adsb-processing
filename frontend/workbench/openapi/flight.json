@@ -1,6 +1,112 @@
 {
   "components": {
     "schemas": {
+      "BatchUpdateRouteReviewRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
+          },
+          "route_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Route Ids",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "route_ids",
+          "status"
+        ],
+        "title": "BatchUpdateRouteReviewRequest",
+        "type": "object"
+      },
+      "BatchUpdateRouteReviewResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "route_ids": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Route Ids",
+            "type": "array"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "updated_count": {
+            "title": "Updated Count",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "updated_count",
+          "route_ids",
+          "status"
+        ],
+        "title": "BatchUpdateRouteReviewResponse",
+        "type": "object"
+      },
+      "DetectRouteAnomaliesRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "route_ids": {
+            "items": {
+              "type": "string"
+            },
+            "minItems": 1,
+            "title": "Route Ids",
+            "type": "array"
+          }
+        },
+        "required": [
+          "route_ids"
+        ],
+        "title": "DetectRouteAnomaliesRequest",
+        "type": "object"
+      },
+      "DetectRouteAnomaliesResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "anomalous_count": {
+            "title": "Anomalous Count",
+            "type": "integer"
+          },
+          "checked_count": {
+            "title": "Checked Count",
+            "type": "integer"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/RouteAnomalyItemResponse"
+            },
+            "title": "Items",
+            "type": "array"
+          }
+        },
+        "required": [
+          "checked_count",
+          "anomalous_count",
+          "items"
+        ],
+        "title": "DetectRouteAnomaliesResponse",
+        "type": "object"
+      },
       "EdgeFeature": {
         "additionalProperties": false,
         "properties": {
@@ -1317,6 +1423,45 @@
         "title": "MatchTaskResponse",
         "type": "object"
       },
+      "MovementCoverageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_covered_ods": {
+            "title": "Effective Covered Ods",
+            "type": "integer"
+          },
+          "effective_od_rate": {
+            "title": "Effective Od Rate",
+            "type": "number"
+          },
+          "fine_covered_ods": {
+            "title": "Fine Covered Ods",
+            "type": "integer"
+          },
+          "fine_od_rate": {
+            "title": "Fine Od Rate",
+            "type": "number"
+          },
+          "movement": {
+            "title": "Movement",
+            "type": "string"
+          },
+          "total_ods": {
+            "title": "Total Ods",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "movement",
+          "total_ods",
+          "fine_covered_ods",
+          "effective_covered_ods",
+          "fine_od_rate",
+          "effective_od_rate"
+        ],
+        "title": "MovementCoverageSummary",
+        "type": "object"
+      },
       "NodeFeature": {
         "additionalProperties": false,
         "properties": {
@@ -1496,6 +1641,190 @@
           "coordinates"
         ],
         "title": "PointGeometry",
+        "type": "object"
+      },
+      "RouteAnomalyItemResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "flight_count": {
+            "title": "Flight Count",
+            "type": "integer"
+          },
+          "movement": {
+            "title": "Movement",
+            "type": "string"
+          },
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/RouteAnomalyReasonResponse"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "route_id": {
+            "title": "Route Id",
+            "type": "string"
+          },
+          "runway_ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Runway Ref"
+          },
+          "stand_ref": {
+            "title": "Stand Ref",
+            "type": "string"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "total_length_m": {
+            "title": "Total Length M",
+            "type": "number"
+          }
+        },
+        "required": [
+          "route_id",
+          "movement",
+          "stand_ref",
+          "runway_ref",
+          "total_length_m",
+          "flight_count",
+          "status",
+          "reasons"
+        ],
+        "title": "RouteAnomalyItemResponse",
+        "type": "object"
+      },
+      "RouteAnomalyReasonResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "message": {
+            "title": "Message",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message"
+        ],
+        "title": "RouteAnomalyReasonResponse",
+        "type": "object"
+      },
+      "RouteCoverageResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "by_movement": {
+            "items": {
+              "$ref": "#/components/schemas/MovementCoverageSummary"
+            },
+            "title": "By Movement",
+            "type": "array"
+          },
+          "cluster_count": {
+            "title": "Cluster Count",
+            "type": "integer"
+          },
+          "clustered_stands": {
+            "title": "Clustered Stands",
+            "type": "integer"
+          },
+          "covered_runways": {
+            "title": "Covered Runways",
+            "type": "integer"
+          },
+          "effective_covered_ods": {
+            "title": "Effective Covered Ods",
+            "type": "integer"
+          },
+          "effective_covered_stands": {
+            "title": "Effective Covered Stands",
+            "type": "integer"
+          },
+          "effective_od_rate": {
+            "title": "Effective Od Rate",
+            "type": "number"
+          },
+          "fine_covered_ods": {
+            "title": "Fine Covered Ods",
+            "type": "integer"
+          },
+          "fine_covered_stands": {
+            "title": "Fine Covered Stands",
+            "type": "integer"
+          },
+          "fine_od_rate": {
+            "title": "Fine Od Rate",
+            "type": "number"
+          },
+          "graph_id": {
+            "title": "Graph Id",
+            "type": "string"
+          },
+          "total_ods": {
+            "title": "Total Ods",
+            "type": "integer"
+          },
+          "total_runways": {
+            "title": "Total Runways",
+            "type": "integer"
+          },
+          "total_stands": {
+            "title": "Total Stands",
+            "type": "integer"
+          },
+          "unclustered_stands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Unclustered Stands",
+            "type": "array"
+          },
+          "uncovered_runways": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uncovered Runways",
+            "type": "array"
+          },
+          "uncovered_stands": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Uncovered Stands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "graph_id",
+          "total_stands",
+          "clustered_stands",
+          "cluster_count",
+          "fine_covered_stands",
+          "effective_covered_stands",
+          "total_runways",
+          "covered_runways",
+          "total_ods",
+          "fine_covered_ods",
+          "effective_covered_ods",
+          "fine_od_rate",
+          "effective_od_rate",
+          "by_movement",
+          "uncovered_stands",
+          "unclustered_stands",
+          "uncovered_runways"
+        ],
+        "title": "RouteCoverageResponse",
         "type": "object"
       },
       "RouteGeometryResponse": {
@@ -3084,6 +3413,140 @@
           }
         },
         "summary": "Routes List"
+      }
+    },
+    "/api/routes/batch-review": {
+      "post": {
+        "operationId": "batch_update_route_review_api_routes_batch_review_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchUpdateRouteReviewRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BatchUpdateRouteReviewResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Batch Update Route Review"
+      }
+    },
+    "/api/routes/coverage": {
+      "get": {
+        "operationId": "route_coverage_api_routes_coverage_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/RouteCoverageResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Route Coverage"
+      }
+    },
+    "/api/routes/detect-anomalies": {
+      "post": {
+        "operationId": "detect_route_anomalies_api_routes_detect_anomalies_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DetectRouteAnomaliesRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DetectRouteAnomaliesResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Detect Route Anomalies"
       }
     },
     "/api/routes/import-matches": {

@@ -4,14 +4,17 @@ import type { LeafletMouseEvent, Map as LeafletMap } from 'leaflet';
 import type { LineGeometry, MapFlightEntry, MapRouteEntry, SelectedFeature, WorkbenchState } from '../../api/types';
 import type { FocusFeatureRequest, FocusFlightRequest } from '../../app/WorkbenchContext';
 import { formatEdgeId } from '../../domain/features';
+import type { GeoBounds } from '../../domain/geometry';
 import {
   AEROWAY_EDGE_COLORS,
   FLIGHT_COLORS as colors,
+  MAP_SELECTION_COLOR,
   ROUTE_COLORS as routeColors,
   ROUTE_STATUS_LABELS as routeStatusLabels,
   UNCLUSTERED_STAND_COLOR,
   standClusterColor,
 } from '../../domain/palette';
+import { useMapBoxSelect } from './useMapBoxSelect';
 import {
   addStyledPathOverlay,
   applySpreadOffset,
@@ -53,6 +56,8 @@ interface Props {
   showNodes?: boolean;
   spreadRoutes?: boolean;
   colorByCluster?: boolean;
+  boxSelectEnabled?: boolean;
+  boxSelectSticky?: boolean;
   mapId?: string;
   selected?: SelectedFeature[];
   drawPoints?: Array<[number, number]>;
@@ -65,6 +70,7 @@ interface Props {
   observationLocation?: [number, number] | null;
   onFeature(feature: SelectedFeature, clickPoint?: [number, number]): void;
   onMapClick(longitude: number, latitude: number): void;
+  onBoxSelect?(bounds: GeoBounds): void;
   onFlightClick?(flightKey: string): void;
   onRouteClick?(routeId: string): void;
 }
@@ -103,7 +109,7 @@ function resolveEdgeWeight(
 const EMPTY_ROUTES: Map<string, MapRouteEntry> = new Map();
 const EMPTY_PREVIEWS: MapPreviewLine[] = [];
 
-export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, colorByCluster = false, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick, onRouteClick }: Props) {
+export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, colorByCluster = false, boxSelectEnabled = false, boxSelectSticky = false, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onBoxSelect, onFlightClick, onRouteClick }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const nodesRendererRef = useRef<L.Renderer | null>(null);
@@ -127,6 +133,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   const colorByClusterRef = useRef(colorByCluster);
   const featureHandler = useRef(onFeature);
   const mapClickHandler = useRef(onMapClick);
+  const boxSelectHandler = useRef(onBoxSelect);
   const flightClickHandler = useRef(onFlightClick);
   const routeClickHandler = useRef(onRouteClick);
   flightsRef.current = flights;
@@ -135,6 +142,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   colorByClusterRef.current = colorByCluster;
   featureHandler.current = onFeature;
   mapClickHandler.current = onMapClick;
+  boxSelectHandler.current = onBoxSelect;
   flightClickHandler.current = onFlightClick;
   routeClickHandler.current = onRouteClick;
 
@@ -560,9 +568,9 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
         }).addTo(group);
       }
       L.geoJSON(feature as never, {
-        style: { color: '#1d5fa7', weight: 6, opacity: 1, pane, renderer },
+        style: { color: MAP_SELECTION_COLOR, weight: 6, opacity: 1, pane, renderer },
         interactive: false,
-        pointToLayer: (_feature, latlng) => L.circleMarker(latlng, { pane, renderer, interactive: false, radius: 8, color: '#1d5fa7', weight: 3, fillColor: '#fff', fillOpacity: 1 }),
+        pointToLayer: (_feature, latlng) => L.circleMarker(latlng, { pane, renderer, interactive: false, radius: 8, color: MAP_SELECTION_COLOR, weight: 3, fillColor: '#fff', fillOpacity: 1 }),
       }).addTo(group);
     });
     const orderedPreviews = [...previewOverlays].sort(
@@ -587,10 +595,18 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
         interactive: false,
       }).addTo(group);
     });
-    if (drawPoints.length > 1) L.polyline(drawPoints.map(([longitude, latitude]) => [latitude, longitude]), { color: '#1d5fa7', weight: 4, dashArray: '6 4', pane, renderer, interactive: false }).addTo(group);
-    drawPoints.forEach(([longitude, latitude]) => L.circleMarker([latitude, longitude], { pane, renderer, interactive: false, radius: 5, color: '#1d5fa7', fillOpacity: 1 }).addTo(group));
+    if (drawPoints.length > 1) L.polyline(drawPoints.map(([longitude, latitude]) => [latitude, longitude]), { color: MAP_SELECTION_COLOR, weight: 4, dashArray: '6 4', pane, renderer, interactive: false }).addTo(group);
+    drawPoints.forEach(([longitude, latitude]) => L.circleMarker([latitude, longitude], { pane, renderer, interactive: false, radius: 5, color: MAP_SELECTION_COLOR, fillOpacity: 1 }).addTo(group));
     if (observationLocation) L.circleMarker(observationLocation, { pane, renderer, interactive: false, radius: 9, color: '#111827', weight: 3, fillColor: '#facc15', fillOpacity: 1 }).addTo(group);
   }, [selected, drawPoints, previewOverlays, observationLocation, state]);
+
+  useMapBoxSelect({
+    mapRef,
+    previewRendererRef,
+    boxSelectHandler,
+    enabled: boxSelectEnabled,
+    sticky: boxSelectSticky,
+  });
 
   return <div ref={element} id={mapId} className="h-full w-full" aria-label="机场工作台地图" />;
 }

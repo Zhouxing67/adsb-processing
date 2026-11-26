@@ -66,6 +66,12 @@ export const ROUTE_SOURCE_LABELS: Record<string, string> = {
   manual: '人工录入',
 };
 
+export const ROUTE_ANOMALY_LABELS: Record<string, string> = {
+  repeated_edge: '重复边',
+  closed_loop: '闭合环路',
+  extreme_detour: '极端绕行',
+};
+
 export const STAND_CLUSTER_COLORS = [
   '#147a6e',
   '#c86428',
@@ -82,6 +88,7 @@ export const STAND_CLUSTER_COLORS = [
 ] as const;
 
 export const UNCLUSTERED_STAND_COLOR = '#94a3b8';
+export const MAP_SELECTION_COLOR = '#1d5fa7';
 
 export function standClusterColor(cId: number): string {
   const index = Math.abs(cId - 1) % STAND_CLUSTER_COLORS.length;

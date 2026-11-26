@@ -24,7 +24,7 @@ const toolMessages: Record<EditorTool, string> = {
   restore: '恢复来源连接 · 依次选择两个节点',
   merge: '合并节点 · 依次选择两个节点',
   snap: '人工吸附 · 先选择节点，再选择目标边',
-  cluster: '机位聚类 · 点击多条机位边加入新类别或已有类别',
+  cluster: '机位聚类 · 点击多选机位边，或按住 Shift + 拖拽（/开启框选）批量选择',
   delete: '删除 / 简化 · 点击节点或边',
 };
 

@@ -78,6 +78,9 @@ def test_flight_endpoints_have_named_response_contracts() -> None:
         ("/api/flights/{flight_key}/geometry", "get"): "FlightGeometryResponse",
         ("/api/matches", "post"): "MatchSubmissionResponse",
         ("/api/matches", "get"): "MatchStatusResponse",
+        ("/api/routes/coverage", "get"): "RouteCoverageResponse",
+        ("/api/routes/detect-anomalies", "post"): "DetectRouteAnomaliesResponse",
+        ("/api/routes/batch-review", "post"): "BatchUpdateRouteReviewResponse",
     }
     for (path, method), model in endpoints.items():
         response = document["paths"][path][method]["responses"]["200"]
