@@ -3,7 +3,7 @@
 from pathlib import Path
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, FilePath, NonNegativeInt, field_validator
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeInt, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict, TomlConfigSettingsSource
 
 from airport_surface import DEFAULT_GRAPH_PATH
@@ -15,8 +15,15 @@ CONFIG_FILE = Path("config.local.toml")
 class DatabaseSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    path: FilePath
-    quack_uri: str | None = None
+    dsn: str
+
+    @field_validator("dsn")
+    @classmethod
+    def validate_dsn(cls, value: str) -> str:
+        cleaned = value.strip()
+        if not cleaned:
+            raise ValueError("database.dsn must be a non-empty PostgreSQL connection string")
+        return cleaned
 
 
 class BatchSettings(BaseModel):

@@ -1,146 +1,218 @@
-"""Composed flight persistence repositories."""
+"""Composed flight persistence repositories (PostgreSQL)."""
 
 from __future__ import annotations
 
 import hashlib
-from datetime import datetime
-from pathlib import Path
+from datetime import datetime, timezone
 from typing import Protocol
 
-from db import DuckDBConnection
+from db import PostgresConnection
 
-from .flight_catalogue_repository import STAND_COLUMNS, FlightCatalogueRepository
+from .flight_catalogue_repository import FlightCatalogueRepository
 from .flight_observation_repository import FlightObservationRepository
 from .match_issue_repository import MatchIssueRepository
 
+TURNAROUND_WINDOW_DAYS = 7
+
 
 class DatabaseConfig(Protocol):
-    path: Path
-    quack_uri: str | None
+    dsn: str
 
 
 def database_flight_key(movement: str, flight_id: str) -> str:
+    # Retain historical 'duckdb' seed prefix to preserve deterministic flight_key stability.
     seed = f"duckdb\0{movement}\0{flight_id}".encode()
     return f"f-{hashlib.sha256(seed).hexdigest()[:16]}"
 
 
 def flight_source_name(movement: str) -> str:
-    return f"main.{STAND_COLUMNS[movement][0]}"
+    return f"public.flights:{movement}"
 
 
 class StandRepository:
-    def __init__(self, database: DuckDBConnection) -> None:
+    def __init__(self, database: PostgresConnection) -> None:
         self._database = database
 
     def historical_candidates(
         self, movement: str, flight_id: str, number: str, event: datetime, aircraft: str | None
     ) -> list[tuple[str, int, int]]:
         """Count prior flights and exclude stands with a known overlapping turnaround."""
+        event_utc = (
+            event.astimezone(timezone.utc)
+            if event.tzinfo
+            else event.replace(tzinfo=timezone.utc)
+        )
+        time_col = "actual_dep" if movement == "departure" else "actual_arr"
         with self._database.connection() as connection:
-            # Quack supports one remote streaming scan per statement. Reduce each
-            # movement table separately, then join the two small per-aircraft results.
-            sources = {}
-            for direction, (table, stand) in STAND_COLUMNS.items():
-                time = "actual_dep" if direction == "departure" else "actual_arr"
-                columns = {
-                    row[0].lower(): row[1]
-                    for row in connection.execute(f"DESCRIBE main.{table}").fetchall()
-                }
-                if time not in columns:
-                    continue
-                instant = time if "WITH TIME ZONE" in columns[time] else (
-                    f"timezone('Asia/Shanghai', {time}::TIMESTAMP)"
-                )
-                reg = "nullif(upper(trim(a_num)), '')" if "a_num" in columns else "NULL::VARCHAR"
-                sources[direction] = f"""
-                    SELECT flight_id, min({instant}) AS instant,
-                        CASE WHEN count(DISTINCT nullif(trim(number), '')) = 1
-                             THEN min(nullif(trim(number), '')) END AS number,
-                        CASE WHEN count(DISTINCT nullif(trim({stand}), '')) = 1
-                             THEN min(nullif(trim({stand}), '')) END AS stand,
-                        CASE WHEN count(DISTINCT {reg}) = 1 THEN min({reg}) END AS aircraft
-                    FROM main.{table} WHERE flight_id IS NOT NULL
-                    GROUP BY flight_id HAVING count(DISTINCT {time}) = 1
-                """
-            if movement not in sources:
-                return []
-            (moment, key, num), params = self._database.bind(connection, event, flight_id, number)
-            history = connection.execute(f"""
-                WITH events AS ({sources[movement]}), target AS (SELECT {moment}::TIMESTAMPTZ AS t)
-                SELECT stand, count(*) AS uses, max(instant) AS latest
-                FROM events, target
-                WHERE flight_id <> {key} AND number = {num} AND stand IS NOT NULL
-                  AND instant >= t - INTERVAL '90 days' AND instant < t
-                GROUP BY stand ORDER BY uses DESC, latest DESC, stand
-            """, params).fetchall()
+            history = connection.execute(
+                f"""
+                SELECT stand, COUNT(*) AS uses, MAX(instant) AS latest
+                FROM (
+                    SELECT
+                        CASE WHEN stand_is_overridden
+                             THEN stand_override
+                             ELSE raw_stand_position
+                        END AS stand,
+                        {time_col} AS instant
+                    FROM public.flights
+                    WHERE movement = :movement
+                      AND number = :number
+                      AND flight_id <> :flight_id
+                      AND {time_col} >= :event - INTERVAL '90 days'
+                      AND {time_col} < :event
+                ) events
+                WHERE stand IS NOT NULL
+                GROUP BY stand
+                ORDER BY uses DESC, latest DESC, stand
+                """,
+                {
+                    "movement": movement,
+                    "flight_id": flight_id,
+                    "number": number,
+                    "event": event_utc,
+                },
+            ).fetchall()
             if not history:
                 return []
 
-            before = {}
-            after = {}
-            (moment,), params = self._database.bind(connection, event)
-            for direction, source in sources.items():
-                rows = connection.execute(f"""
-                    WITH events AS ({source}), target AS (SELECT {moment}::TIMESTAMPTZ AS t)
-                    SELECT aircraft,
-                        arg_max(struct_pack(ts := instant, stand := stand), instant)
-                            FILTER (WHERE instant <= t),
-                        arg_min(struct_pack(ts := instant, stand := stand), instant)
-                            FILTER (WHERE instant > t)
-                    FROM events, target WHERE aircraft IS NOT NULL GROUP BY aircraft
-                """, params)
-                for tail, previous, following in rows:
-                    if aircraft and tail == aircraft.upper():
-                        continue
-                    if previous and (tail not in before or previous["ts"] > before[tail][0]):
-                        before[tail] = (previous["ts"], direction, previous["stand"])
-                    if following and (tail not in after or following["ts"] < after[tail][0]):
-                        after[tail] = (following["ts"], direction, following["stand"])
+            # Restrict turnaround occupancy scan to +-TURNAROUND_WINDOW_DAYS using
+            # actual_dep / actual_arr indexes rather than full-table scanning public.flights.
+            before_rows = connection.execute(
+                f"""
+                WITH windowed AS (
+                    SELECT
+                        upper(trim(a_num)) AS aircraft,
+                        'departure' AS movement,
+                        CASE WHEN stand_is_overridden
+                             THEN stand_override
+                             ELSE raw_stand_position
+                        END AS stand,
+                        actual_dep AS instant
+                    FROM public.flights
+                    WHERE movement = 'departure'
+                      AND a_num IS NOT NULL AND trim(a_num) <> ''
+                      AND actual_dep >= :event - INTERVAL '{TURNAROUND_WINDOW_DAYS} days'
+                      AND actual_dep <= :event
+                    UNION ALL
+                    SELECT
+                        upper(trim(a_num)) AS aircraft,
+                        'arrival' AS movement,
+                        CASE WHEN stand_is_overridden
+                             THEN stand_override
+                             ELSE raw_stand_position
+                        END AS stand,
+                        actual_arr AS instant
+                    FROM public.flights
+                    WHERE movement = 'arrival'
+                      AND a_num IS NOT NULL AND trim(a_num) <> ''
+                      AND actual_arr >= :event - INTERVAL '{TURNAROUND_WINDOW_DAYS} days'
+                      AND actual_arr <= :event
+                )
+                SELECT DISTINCT ON (aircraft) aircraft, movement, stand
+                FROM windowed
+                ORDER BY aircraft, instant DESC
+                """,
+                {"event": event_utc},
+            ).fetchall()
+
+            after_rows = connection.execute(
+                f"""
+                WITH windowed AS (
+                    SELECT
+                        upper(trim(a_num)) AS aircraft,
+                        'departure' AS movement,
+                        CASE WHEN stand_is_overridden
+                             THEN stand_override
+                             ELSE raw_stand_position
+                        END AS stand,
+                        actual_dep AS instant
+                    FROM public.flights
+                    WHERE movement = 'departure'
+                      AND a_num IS NOT NULL AND trim(a_num) <> ''
+                      AND actual_dep > :event
+                      AND actual_dep <= :event + INTERVAL '{TURNAROUND_WINDOW_DAYS} days'
+                    UNION ALL
+                    SELECT
+                        upper(trim(a_num)) AS aircraft,
+                        'arrival' AS movement,
+                        CASE WHEN stand_is_overridden
+                             THEN stand_override
+                             ELSE raw_stand_position
+                        END AS stand,
+                        actual_arr AS instant
+                    FROM public.flights
+                    WHERE movement = 'arrival'
+                      AND a_num IS NOT NULL AND trim(a_num) <> ''
+                      AND actual_arr > :event
+                      AND actual_arr <= :event + INTERVAL '{TURNAROUND_WINDOW_DAYS} days'
+                )
+                SELECT DISTINCT ON (aircraft) aircraft, movement, stand
+                FROM windowed
+                ORDER BY aircraft, instant ASC
+                """,
+                {"event": event_utc},
+            ).fetchall()
+
+            target_aircraft = aircraft.upper() if aircraft else None
+            before = {
+                tail: (direction, stand)
+                for tail, direction, stand in before_rows
+                if not target_aircraft or tail != target_aircraft
+            }
+            after = {
+                tail: (direction, stand)
+                for tail, direction, stand in after_rows
+                if not target_aircraft or tail != target_aircraft
+            }
 
             occupied = {
-                stand for tail, (_, direction, stand) in before.items()
-                if direction == "arrival" and tail in after
-                and after[tail][1:] == ("departure", stand)
+                stand
+                for tail, (direction, stand) in before.items()
+                if direction == "arrival"
+                and stand is not None
+                and tail in after
+                and after[tail] == ("departure", stand)
             }
-            total = sum(uses for _, uses, _ in history)
-            return [(stand, uses, total) for stand, uses, _ in history if stand not in occupied]
+            total = sum(int(uses) for _, uses, _ in history)
+            return [
+                (str(stand), int(uses), total)
+                for stand, uses, _ in history
+                if stand not in occupied
+            ]
 
     def update(self, movement: str, flight_id: str, stand: str | None) -> None:
-        table, column = STAND_COLUMNS[movement]
         try:
             with self._database.connection(write=True) as connection:
-                (stand_value, identifier), parameters = self._database.bind(
-                    connection, stand, flight_id
-                )
-                count = connection.execute(
-                    f"UPDATE main.{table} SET {column} = {stand_value} "
-                    f"WHERE flight_id = {identifier}",
-                    parameters,
+                row = connection.execute(
+                    """
+                    UPDATE public.flights
+                    SET stand_override = :stand,
+                        stand_is_overridden = TRUE,
+                        stand_updated_at = now(),
+                        updated_at = now()
+                    WHERE movement = :movement AND flight_id = :flight_id
+                    RETURNING flight_pk
+                    """,
+                    {"stand": stand, "movement": movement, "flight_id": flight_id},
                 ).fetchone()
-                if not count or not count[0]:
+                if row is None:
                     raise ValueError("数据库中没有该航班的观测记录")
         except self._database.database_error as error:
             raise RuntimeError("机位更新事务失败") from error
 
 
 class FlightDatabase:
-    """Own one DuckDB connection factory and its focused repositories."""
+    """Own one PostgreSQL connection pool and its focused repositories."""
 
-    def __init__(
-        self,
-        database: str | Path,
-        *,
-        read_only: bool = False,
-        quack_uri: str | None = None,
-    ) -> None:
-        self._database = DuckDBConnection(database, read_only=read_only, quack_uri=quack_uri)
+    def __init__(self, dsn: str, *, read_only: bool = False) -> None:
+        self._database = PostgresConnection(dsn, read_only=read_only)
         self.catalogue = FlightCatalogueRepository(self._database)
         self.observations = FlightObservationRepository(self._database)
         self.stands = StandRepository(self._database)
         self.issues = MatchIssueRepository(self._database)
 
     @property
-    def duckdb(self) -> DuckDBConnection:
+    def postgres(self) -> PostgresConnection:
         return self._database
 
     def connection(self, *, write: bool = False):
@@ -159,4 +231,4 @@ class FlightDatabase:
 
 
 def open_flight_database(settings: DatabaseConfig, *, read_only: bool = False) -> FlightDatabase:
-    return FlightDatabase(settings.path, read_only=read_only, quack_uri=settings.quack_uri)
+    return FlightDatabase(settings.dsn, read_only=read_only)

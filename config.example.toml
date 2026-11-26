@@ -1,10 +1,9 @@
-# Copy this file to config.local.toml and set the database path.
+# Copy this file to config.local.toml and set the PostgreSQL DSN.
 # Relative paths are resolved from the repository root.
 # graph_path = 'data/graphs/zbaa_final.json'
 
 [database]
-path = 'data/flights.duckdb'
-# quack_uri = 'quack:127.0.0.1:9494'
+dsn = 'postgresql+psycopg://postgres:YOUR_PASSWORD@127.0.0.1:5432/adsb'
 
 [batch]
 # output_dir = 'outputs/path_map'

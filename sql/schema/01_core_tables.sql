@@ -58,6 +58,31 @@ CREATE INDEX IF NOT EXISTS idx_flights_actual_arr
 ON public.flights (actual_arr)
 WHERE actual_arr IS NOT NULL;
 
+CREATE OR REPLACE FUNCTION public.flight_key_for(movement TEXT, flight_id TEXT)
+RETURNS TEXT
+LANGUAGE sql
+IMMUTABLE
+STRICT
+AS $$
+    SELECT 'f-' || substr(
+        encode(
+            sha256(
+                convert_to('duckdb', 'UTF8')
+                || decode('00', 'hex')
+                || convert_to(movement, 'UTF8')
+                || decode('00', 'hex')
+                || convert_to(flight_id, 'UTF8')
+            ),
+            'hex'
+        ),
+        1,
+        16
+    )
+$$;
+
+CREATE INDEX IF NOT EXISTS idx_flights_flight_key
+ON public.flights (public.flight_key_for(movement, flight_id));
+
 CREATE TABLE IF NOT EXISTS public.adsb_observations (
     flight_pk     BIGINT NOT NULL,
     ts            TIMESTAMPTZ NOT NULL,

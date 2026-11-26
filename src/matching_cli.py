@@ -58,8 +58,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         database = open_flight_database(settings.database, read_only=not args.workbench)
         run = run_workbench if args.workbench else run_batch
         try:
-            run(settings, database)
-        except database.database_error as error:
-            parser.error(f"DuckDB: {error}")
+            try:
+                run(settings, database)
+            except database.database_error as error:
+                parser.error(f"PostgreSQL: {error}")
+        finally:
+            database.close()
     except (OSError, TypeError, ValueError) as error:
         parser.error(str(error))

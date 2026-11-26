@@ -18,13 +18,14 @@ dependencies = [
     "uvicorn>=0.53.0",
     "ipyleaflet>=0.20.0",
     "pydantic-settings>=2.16.3",
+    "psycopg[binary]>=3.2",
+    "sqlalchemy>=2.0,<3",
 ]
 
 [project.optional-dependencies]
 stand-editing = [
     "duckdb>=2.0.0",
     "duckdb-engine>=0.17",
-    "sqlalchemy>=2.0,<3",
 ]
 
 [dependency-groups]

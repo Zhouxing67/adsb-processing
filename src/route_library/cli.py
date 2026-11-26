@@ -1,4 +1,4 @@
-"""CLI entry point for importing and inspecting the DuckDB route library."""
+"""CLI entry point for importing and inspecting the PostgreSQL route library."""
 
 from __future__ import annotations
 
@@ -7,14 +7,14 @@ from pathlib import Path
 from typing import Sequence
 
 from config import load_settings
-from db import DuckDBConnection
+from db import PostgresConnection
 
 from .importer import import_batch_run
 from .repository import RouteLibraryRepository
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Manage the DuckDB airport route library")
+    parser = argparse.ArgumentParser(description="Manage the PostgreSQL airport route library")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     import_parser = subparsers.add_parser(
@@ -42,27 +42,27 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     try:
         settings = load_settings()
-        connection = DuckDBConnection(
-            settings.database.path,
-            read_only=False,
-            quack_uri=settings.database.quack_uri,
-        )
-        repository = RouteLibraryRepository(connection)
-        if args.command == "import":
-            try:
-                summary = import_batch_run(
-                    args.run_dir,
-                    repository,
-                    replace_candidates=not args.append,
+        connection = PostgresConnection(settings.database.dsn, read_only=False)
+        try:
+            repository = RouteLibraryRepository(connection)
+            if args.command == "import":
+                try:
+                    summary = import_batch_run(
+                        args.run_dir,
+                        repository,
+                        replace_candidates=not args.append,
+                    )
+                except connection.database_error as error:
+                    parser.error(f"PostgreSQL: {error}")
+                print(
+                    f"Imported route library for graph {summary.graph_id}: "
+                    f"rows={summary.total_match_rows} matched={summary.matched_rows} "
+                    f"skipped_missing_od={summary.skipped_missing_od} "
+                    f"unique={summary.unique_routes} "
+                    f"deleted_candidates={summary.deleted_candidates} "
+                    f"inserted={summary.inserted_routes} existing={summary.existing_routes}"
                 )
-            except connection.database_error as error:
-                parser.error(f"DuckDB: {error}")
-            print(
-                f"Imported route library for graph {summary.graph_id}: "
-                f"rows={summary.total_match_rows} matched={summary.matched_rows} "
-                f"skipped_missing_od={summary.skipped_missing_od} "
-                f"unique={summary.unique_routes} deleted_candidates={summary.deleted_candidates} "
-                f"inserted={summary.inserted_routes} existing={summary.existing_routes}"
-            )
+        finally:
+            connection.close()
     except (OSError, TypeError, ValueError) as error:
         parser.error(str(error))

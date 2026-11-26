@@ -1,4 +1,4 @@
-"""DuckDB persistence for archived matching issues (main.match_issues)."""
+"""PostgreSQL persistence for archived matching issues (public.match_issues)."""
 
 from __future__ import annotations
 
@@ -7,9 +7,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
-from db import DuckDBConnection, sql_value
+from db import PostgresConnection
 
-MATCH_ISSUES_TABLE = "main.match_issues"
+MATCH_ISSUES_TABLE = "public.match_issues"
 BATCH_MUTATION_SIZE = 200
 
 
@@ -29,9 +29,9 @@ class MatchIssueEntry:
 
 
 class MatchIssueRepository:
-    """Manage archived problematic flights in main.match_issues."""
+    """Manage archived problematic flights in public.match_issues."""
 
-    def __init__(self, database: DuckDBConnection) -> None:
+    def __init__(self, database: PostgresConnection) -> None:
         self._database = database
 
     def list_all(self) -> list[MatchIssueEntry]:
@@ -75,28 +75,33 @@ class MatchIssueRepository:
         with self._database.connection(write=True) as connection:
             for offset in range(0, len(deduped), BATCH_MUTATION_SIZE):
                 chunk = deduped[offset : offset + BATCH_MUTATION_SIZE]
-                values_sql = ", ".join(
-                    "("
-                    + ", ".join(
-                        sql_value(value)
-                        for value in (
-                            make_issue_id(movement, flight_id),
-                            movement,
-                            flight_id,
-                            (reason.strip() or None) if reason is not None else None,
-                            graph_id,
-                            now,
-                        )
-                    )
-                    + ")"
-                    for movement, flight_id, reason, graph_id in chunk
-                )
                 rows = connection.execute(
-                    f"INSERT INTO {MATCH_ISSUES_TABLE} "
-                    "(issue_id, movement, flight_id, reason, graph_id, created_at) "
-                    f"VALUES {values_sql} "
-                    "ON CONFLICT (movement, flight_id) DO NOTHING "
-                    "RETURNING issue_id"
+                    f"""
+                    INSERT INTO {MATCH_ISSUES_TABLE} (
+                        issue_id, movement, flight_id, reason, graph_id, created_at
+                    )
+                    SELECT * FROM UNNEST(
+                        CAST(:issue_ids AS TEXT[]),
+                        CAST(:movements AS TEXT[]),
+                        CAST(:flight_ids AS TEXT[]),
+                        CAST(:reasons AS TEXT[]),
+                        CAST(:graph_ids AS TEXT[]),
+                        CAST(:created_ats AS TIMESTAMPTZ[])
+                    )
+                    ON CONFLICT (movement, flight_id) DO NOTHING
+                    RETURNING issue_id
+                    """,
+                    {
+                        "issue_ids": [make_issue_id(m, fid) for m, fid, _, _ in chunk],
+                        "movements": [m for m, _, _, _ in chunk],
+                        "flight_ids": [fid for _, fid, _, _ in chunk],
+                        "reasons": [
+                            (reason.strip() or None) if reason is not None else None
+                            for _, _, reason, _ in chunk
+                        ],
+                        "graph_ids": [gid for _, _, _, gid in chunk],
+                        "created_ats": [now for _ in chunk],
+                    },
                 ).fetchall()
                 chunk_inserted = len(rows)
                 inserted += chunk_inserted
@@ -112,14 +117,21 @@ class MatchIssueRepository:
         with self._database.connection(write=True) as connection:
             for offset in range(0, len(deduped), BATCH_MUTATION_SIZE):
                 chunk = deduped[offset : offset + BATCH_MUTATION_SIZE]
-                tuples_sql = ", ".join(
-                    f"({sql_value(movement)}, {sql_value(flight_id)})"
-                    for movement, flight_id in chunk
-                )
                 rows = connection.execute(
-                    f"DELETE FROM {MATCH_ISSUES_TABLE} "
-                    f"WHERE (movement, flight_id) IN ({tuples_sql}) "
-                    "RETURNING issue_id"
+                    f"""
+                    DELETE FROM {MATCH_ISSUES_TABLE} AS target
+                    USING UNNEST(
+                        CAST(:movements AS TEXT[]),
+                        CAST(:flight_ids AS TEXT[])
+                    ) AS keys(movement, flight_id)
+                    WHERE target.movement = keys.movement
+                      AND target.flight_id = keys.flight_id
+                    RETURNING target.issue_id
+                    """,
+                    {
+                        "movements": [m for m, _ in chunk],
+                        "flight_ids": [fid for _, fid in chunk],
+                    },
                 ).fetchall()
                 deleted += len(rows)
         return deleted
