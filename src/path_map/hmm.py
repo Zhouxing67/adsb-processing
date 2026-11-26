@@ -7,7 +7,6 @@ from collections.abc import Callable, Iterable, Sequence
 from dataclasses import dataclass, replace
 from functools import lru_cache
 from math import acos, degrees, hypot, inf, log, pi
-from typing import Protocol
 
 import networkx as nx
 from shapely.geometry import LineString, Point
@@ -48,16 +47,10 @@ class Transition:
     edges: tuple[DirectedEdge, ...]
 
 
-class CandidateRouter(Protocol):
-    def transition(self, source: Candidate, target: Candidate) -> Transition | None: ...
-    def reversed_transition(self, source: Candidate, target: Candidate) -> Transition | None: ...
-
-
 class DirectedNetworkRouter:
     """生产级有向对偶线图路由：封装全部有向状态展开、局部转角过滤与最短路计算。
 
     将无向多重图转换为以有向边为顶点的有向图，并在构图时按局部切线转角过滤非法连接
-    （默认 >150°），杜绝掉头走法。所有与边方向相关的细节均收敛在本类内部。
     """
 
     def __init__(
@@ -289,7 +282,7 @@ def _best_distance_predecessor(
     target_offset: float,
     target_adj: float,
     observed_distance: float,
-    inv_beta: float,
+    beta: float,
     source_phase: int,
     is_reversed: bool,
     same_edge_jitter_m: float,
@@ -314,7 +307,7 @@ def _best_distance_predecessor(
             distance = remaining + raw - target_adj
         if max_detour_m is not None and distance - observed_distance > max_detour_m:
             continue
-        value = score - abs(distance - observed_distance) * inv_beta + penalty
+        value = score + transition_log_score(distance, observed_distance, beta) + penalty
         if value > best_score:
             best_score = value
             best_index = index
@@ -352,7 +345,7 @@ def _prepare_active_sources(
 def viterbi(
     layers: Sequence[Sequence[Candidate]],
     observations: Sequence[Point],
-    router: CandidateRouter,
+    router: DirectedNetworkRouter,
     sigma: float,
     beta: float,
     *,
@@ -365,30 +358,15 @@ def viterbi(
     When ``allow_single_reversal`` is enabled (departure pushback), the decoder tracks two
     phases: phase 0 (no reversal used yet) and phase 1 (one in-place reversal already used).
     """
-    if not isinstance(router, DirectedNetworkRouter):
-        return _viterbi_generic(
-            layers,
-            observations,
-            router,
-            sigma,
-            beta,
-            allow_single_reversal=allow_single_reversal,
-            max_transition_detour_m=max_transition_detour_m,
-            has_boundary_layers=has_boundary_layers,
-        )
-
-    inv_beta = 1.0 / beta
-    inv_two_sigma_sq = 1.0 / (2.0 * sigma * sigma)
-    log_norm = log(sigma * (2 * pi) ** 0.5)
-    reversal_penalty = -REVERSAL_PENALTY_M * inv_beta
-    lengths = router.lengths
-    distances_from = router.distances_from
-    jitter_m = router.same_edge_jitter_m
-    stand_edges = router._stand_edges
-    last_step = len(layers) - 1
+    reversal_penalty = -REVERSAL_PENALTY_M / beta  # 离港推出折返一次时加到累计得分上的负值
+    lengths = router.lengths  # 各有向边的长度，用于计算候选位置间的沿网距离
+    distances_from = router.distances_from  # 按起始有向边查询带缓存的最短路距离
+    jitter_m = router.same_edge_jitter_m  # 同一有向边上允许的定位回退距离（米）
+    stand_edges = router._stand_edges  # 机位边集合，这些边豁免上述回退距离限制
+    last_step = len(layers) - 1  # 最后一个候选层的索引，用于识别终点边界转移
 
     scores: list[list[float]] = [
-        [-(c.distance * c.distance) * inv_two_sigma_sq - log_norm for c in layers[0]]
+        [observation_log_score(candidate.distance, sigma) for candidate in layers[0]]
     ]
     if allow_single_reversal:
         scores.append([-inf] * len(layers[0]))
@@ -416,7 +394,7 @@ def viterbi(
         step_refs: list[list[Backref | None]] = [[] for _ in scores]
 
         for target in layers[step]:
-            emission = -(target.distance * target.distance) * inv_two_sigma_sq - log_norm
+            emission = observation_log_score(target.distance, sigma)
             target_edge = target.edge_id
             target_offset = target.offset
             target_adj = lengths[target_edge] - target_offset
@@ -427,7 +405,7 @@ def viterbi(
                 target_offset,
                 target_adj,
                 observed_distance,
-                inv_beta,
+                beta,
                 0,
                 False,
                 jitter_m,
@@ -448,7 +426,7 @@ def viterbi(
                     target_offset,
                     target_adj,
                     observed_distance,
-                    inv_beta,
+                    beta,
                     1,
                     False,
                     jitter_m,
@@ -461,7 +439,7 @@ def viterbi(
                     target_offset,
                     target_adj,
                     observed_distance,
-                    inv_beta,
+                    beta,
                     0,
                     True,
                     jitter_m,
@@ -515,139 +493,4 @@ def viterbi(
         assert transition is not None
         transitions.append(transition)
         states.append(prev_state)
-    return list(reversed(states)), list(reversed(transitions))
-
-
-type GenericBackref = tuple[int, int, Transition]
-
-
-def _best_predecessor(
-    previous_layer: Sequence[Candidate],
-    previous_scores: Sequence[float],
-    target: Candidate,
-    observed_distance: float,
-    beta: float,
-    transition_fn: Callable[[Candidate, Candidate], Transition | None],
-    source_phase: int,
-    penalty: float = 0.0,
-    max_detour_m: float | None = None,
-) -> tuple[float, GenericBackref] | None:
-    best: tuple[float, GenericBackref] | None = None
-    for index, (source, score) in enumerate(zip(previous_layer, previous_scores)):
-        if score == -inf:
-            continue
-        transition = transition_fn(source, target)
-        if transition is None:
-            continue
-        if max_detour_m is not None and transition.distance - observed_distance > max_detour_m:
-            continue
-        value = score + transition_log_score(transition.distance, observed_distance, beta) + penalty
-        if best is None or value > best[0]:
-            best = value, (source_phase, index, transition)
-    return best
-
-
-def _viterbi_generic(
-    layers: Sequence[Sequence[Candidate]],
-    observations: Sequence[Point],
-    router: CandidateRouter,
-    sigma: float,
-    beta: float,
-    *,
-    allow_single_reversal: bool = False,
-    max_transition_detour_m: float | None = None,
-    has_boundary_layers: bool = False,
-) -> tuple[list[Candidate], list[Transition]]:
-    reversal_penalty = -REVERSAL_PENALTY_M / beta
-    last_step = len(layers) - 1
-    scores: list[list[float]] = [
-        [observation_log_score(candidate.distance, sigma) for candidate in layers[0]]
-    ]
-    if allow_single_reversal:
-        scores.append([-inf] * len(layers[0]))
-    backrefs: list[list[list[GenericBackref | None]]] = []
-
-    for step in range(1, len(layers)):
-        observed_distance = observations[step - 1].distance(observations[step])
-        step_detour = (
-            None
-            if has_boundary_layers and (step == 1 or step == last_step)
-            else max_transition_detour_m
-        )
-        previous_layer = layers[step - 1]
-        next_scores: list[list[float]] = [[] for _ in scores]
-        step_refs: list[list[GenericBackref | None]] = [[] for _ in scores]
-
-        for target in layers[step]:
-            emission = observation_log_score(target.distance, sigma)
-            choices: list[tuple[float, GenericBackref] | None] = [
-                _best_predecessor(
-                    previous_layer,
-                    scores[0],
-                    target,
-                    observed_distance,
-                    beta,
-                    router.transition,
-                    0,
-                    max_detour_m=step_detour,
-                )
-            ]
-            if allow_single_reversal:
-                stay = _best_predecessor(
-                    previous_layer,
-                    scores[1],
-                    target,
-                    observed_distance,
-                    beta,
-                    router.transition,
-                    1,
-                    max_detour_m=step_detour,
-                )
-                reverse_now = _best_predecessor(
-                    previous_layer,
-                    scores[0],
-                    target,
-                    observed_distance,
-                    beta,
-                    router.reversed_transition,
-                    0,
-                    reversal_penalty,
-                    max_detour_m=step_detour,
-                )
-                if stay is None:
-                    choices.append(reverse_now)
-                elif reverse_now is None or stay[0] >= reverse_now[0]:
-                    choices.append(stay)
-                else:
-                    choices.append(reverse_now)
-
-            for phase, best in enumerate(choices):
-                if best is None:
-                    next_scores[phase].append(-inf)
-                    step_refs[phase].append(None)
-                else:
-                    next_scores[phase].append(best[0] + emission)
-                    step_refs[phase].append(best[1])
-        scores = next_scores
-        backrefs.append(step_refs)
-
-    max_score = -inf
-    phase = 0
-    current = -1
-    for phase_index, phase_scores in enumerate(scores):
-        for index, score in enumerate(phase_scores):
-            if score > max_score:
-                max_score = score
-                phase = phase_index
-                current = index
-    if max_score == -inf:
-        raise nx.NetworkXNoPath("No reachable candidate sequence")
-    states = [layers[-1][current]]
-    transitions: list[Transition] = []
-    for step_refs, previous_layer in zip(reversed(backrefs), reversed(layers[:-1])):
-        ref = step_refs[phase][current]
-        assert ref is not None
-        phase, current, transition = ref
-        transitions.append(transition)
-        states.append(previous_layer[current])
     return list(reversed(states)), list(reversed(transitions))
