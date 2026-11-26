@@ -156,4 +156,4 @@ flowchart TD
 
 - **稳定标识与前后端契约**：Workbench API 直接传输 Schema v2 的规范标识（`NodeId` 保持字符串以避免 JavaScript `Number` 精度问题，边使用 `{u, v, key}`）。请求/响应模型由 FastAPI Pydantic 定义并生成前端 TypeScript 类型。
 - **并发与版本控制**：`EditorSession` 在可重入锁内维护会话 `revision`。所有编辑、预览、撤销、保存与完成请求均携带 `expected_revision`，版本冲突返回 HTTP 409（`revision_conflict`），防止并发覆盖。
-- **人工补线与航班模式边界**：工作台「直接绘制连接」会创建一条 `source_type="manual"` 的新来源及对应派生边，撤销时一并移除；航班匹配工作台则始终以只读方式加载已确认的机场图，航班机位归属保存在 DuckDB 观测记录中。
+- **人工补线与航班模式边界**：工作台「直接绘制连接」会创建一条 `source_type="manual"` 的新来源及对应派生边，撤销时一并移除；航班匹配工作台则始终以只读方式加载已确认的机场图，航班机位归属保存在 PostgreSQL `public.flights` 表中。

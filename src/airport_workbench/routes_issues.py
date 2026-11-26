@@ -1,4 +1,4 @@
-"""HTTP routes for archived matching issues (main.match_issues)."""
+"""HTTP routes for archived matching issues (public.match_issues)."""
 
 from __future__ import annotations
 

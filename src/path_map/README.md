@@ -22,7 +22,7 @@ from path_map import BatchStats, Matcher, match_batch
 settings = load_settings()
 database = open_flight_database(settings.database, read_only=True)
 matcher = Matcher(load_graph(settings.graph_path), settings.matching)
-inputs = ((flight.flight_id, flight) for flight in database.iterate("arrival", limit=10))
+inputs = ((flight.flight_id, flight) for flight in database.observations.iterate("arrival", limit=10))
 
 stats = BatchStats()
 for outcome in match_batch(matcher, inputs):
@@ -67,10 +67,10 @@ unlabelled runway edge. A reported runway uses the supplied designator.
 | `hmm.py` | Directed dual-graph routing, local turn filtering, directed state expansion, and Viterbi decoding. |
 | `path.py` | Directed traversal, geometry, and graph-versioned `PathRecord` serialization. |
 
-DuckDB queries and connection lifecycle are in
-[`flight/database.py`](../flight/database.py). The batch runner owns files and
-console reports. The workbench owns task queues and HTTP responses. Both use the
-same configuration model and summary fields.
+PostgreSQL connection pooling is in [`db/connection.py`](../db/connection.py), and
+flight queries live in [`flight/flight_repository.py`](../flight/flight_repository.py).
+The batch runner owns files and console reports. The workbench owns task queues and HTTP
+responses. Both use the same configuration model and summary fields.
 
 Workbench routes are registered in [`airport_workbench/app.py`](../airport_workbench/app.py).
 Add SQL-backed query methods to `FlightDatabase`; keep HTTP parameter handling

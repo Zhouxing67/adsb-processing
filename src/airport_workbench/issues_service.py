@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 
 class MatchIssueService:
-    """Archive, list, and remove flights in main.match_issues."""
+    """Archive, list, and remove flights in public.match_issues."""
 
     def __init__(
         self,

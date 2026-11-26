@@ -20,7 +20,7 @@ All changes must preserve the 4-layer unidirectional architecture (enforced by `
 
 - **L0 Infrastructure (`db`, `config`, `utils`)**: Generic connection/config/utility helpers only; no business domain or web framework imports.
 - **L1 Core Domain (`airport_surface`, `flight`, `path_map`, `route_library`)**:
-  - `airport_surface` and `path_map` are pure domain/algorithm packages and must never import `fastapi`, `duckdb`, or `airport_workbench`.
+  - `airport_surface` and `path_map` are pure domain/algorithm packages and must never import `fastapi`, `psycopg`, `duckdb`, or `airport_workbench`.
   - `flight` and `route_library` depend on `db` only (never import each other).
 - **L2 Application / Workbench (`airport_workbench`)**:
   - Organize by flat domain modules (`routes_*.py` + focused service modules); keep `app.py` as thin wiring only.
@@ -35,7 +35,7 @@ All changes must preserve the 4-layer unidirectional architecture (enforced by `
     - Use `InlineEditTrigger` for inline-editable table cells and `IconActionButton` for icon-only actions (enforcing `aria-label` + shadcn `Tooltip`).
   - Keep individual `.tsx` feature components focused (target ≤ 500 lines; split filter bars, popovers, editors, and tables into dedicated subcomponents).
 - **Database DDL Single Source of Truth**:
-  - All DuckDB `CREATE TABLE` / `CREATE INDEX` / schema migrations live exclusively in `sql/schema/` and `sql/migrations/`.
+  - All PostgreSQL `CREATE TABLE` / `CREATE INDEX` / schema DDL lives exclusively in `sql/schema/`.
   - Python repositories and scripts perform CRUD/DML only (fail fast if a table is missing; tests apply `sql/schema/01_core_tables.sql` via `db.apply_core_schema()`).
   - Never access private `._database` attributes from outside repository classes.
 

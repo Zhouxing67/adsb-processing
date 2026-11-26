@@ -14,7 +14,7 @@
 
 ```mermaid
 flowchart TD
-    Input["输入数据\nFlight (DuckDB / 工作台) + AirportGraph (路网 / 投影 / 索引)"]
+    Input["输入数据\nFlight (PostgreSQL / 工作台) + AirportGraph (路网 / 投影 / 索引)"]
     Batch["batch.py (match_batch / BatchStats)\n离线批处理与工作台共用的流式执行与统计"]
     Matcher["matcher.py (Matcher)\n高层编排：OD 边界、投影、候选召回、解码调度、跑道截断"]
     Cand["candidates.py (CandidateIndex)\n无向 STRtree 空间索引，按半径召回 Top-K 投影候选"]
