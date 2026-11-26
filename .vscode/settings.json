@@ -1,0 +1,24 @@
+{
+  // 使用当前项目 uv 管理的虚拟环境
+  "python.defaultInterpreterPath": "${workspaceFolder}/.venv/Scripts/python.exe",
+
+  // 关闭 Pylance，由 astral-sh.ty 接管 Python LSP 与类型检查
+  "python.languageServer": "None",
+  "ty.diagnosticMode": "workspace",
+  "ty.inlayHints.variableTypes": true,
+  "ty.inlayHints.callArgumentNames": true,
+
+  // 测试面板使用 pytest（与 pyproject.toml 配置一致）
+  "python.testing.pytestEnabled": true,
+  "python.testing.unittestEnabled": false,
+
+  // 保存时由 Ruff 自动格式化、修复并整理 import（读取 pyproject.toml 中的 [tool.ruff]）
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.formatOnSave": true,
+    "editor.codeActionsOnSave": {
+      "source.fixAll.ruff": "explicit",
+      "source.organizeImports.ruff": "explicit"
+    }
+  }
+}

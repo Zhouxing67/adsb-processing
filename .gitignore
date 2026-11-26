@@ -14,7 +14,6 @@ dist/
 build/
 
 # Local editor and scratch files
-.vscode/
 .cache/
 Untitled*.ipynb
 
