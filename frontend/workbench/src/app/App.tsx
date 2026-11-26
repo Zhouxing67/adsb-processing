@@ -64,6 +64,7 @@ function Workspace() {
     parking: true,
     nodes: false,
     spreadRoutes: true,
+    colorByCluster: false,
   });
   const [flightMapOverlayRoutes, setFlightMapOverlayRoutes] = useState(false);
   const [routeMapOverlayFlights, setRouteMapOverlayFlights] = useState(false);
@@ -311,9 +312,10 @@ function Workspace() {
           splitValidation={splitValidation}
           baseLayer={layers.base}
           showEdges={layers.edges}
-          showParking={layers.parking}
+          showParking={layers.parking || wb.tool === 'cluster'}
           showNodes={layers.nodes || wb.topologyOpen || graphEditing}
           spreadRoutes={layers.spreadRoutes}
+          colorByCluster={layers.colorByCluster || wb.tool === 'cluster'}
           selected={selectedFeatures}
           drawPoints={editor.drawPoints}
           previewOverlays={editor.previewOverlays}
@@ -352,6 +354,8 @@ function Workspace() {
         <EditorToolOverlay
           revision={state.revision}
           mergeNodeIds={editor.mergeNodeIds}
+          clusterEdges={editor.clusterEdges}
+          standClusters={state.stand_clusters ?? []}
           selectionCount={editor.selection.length}
           drawAeroway={editor.drawAeroway}
           drawRef={editor.drawRef}
@@ -359,6 +363,8 @@ function Workspace() {
           onDrawRefChange={editor.setDrawRef}
           onOpenMergeCandidates={editor.openMergeCandidates}
           onPreviewMerge={editor.previewMerge}
+          onCreateCluster={editor.createCluster}
+          onAssignCluster={editor.assignCluster}
           onUndoDrawPoint={editor.undoDrawPoint}
           onReset={editor.reset}
         />

@@ -65,3 +65,25 @@ export const ROUTE_SOURCE_LABELS: Record<string, string> = {
   matched: '匹配导入',
   manual: '人工录入',
 };
+
+export const STAND_CLUSTER_COLORS = [
+  '#147a6e',
+  '#c86428',
+  '#be185d',
+  '#4d7c0f',
+  '#b45309',
+  '#0e7490',
+  '#9f1239',
+  '#a16207',
+  '#0f766e',
+  '#c2410c',
+  '#047857',
+  '#b91c1c',
+] as const;
+
+export const UNCLUSTERED_STAND_COLOR = '#94a3b8';
+
+export function standClusterColor(cId: number): string {
+  const index = Math.abs(cId - 1) % STAND_CLUSTER_COLORS.length;
+  return STAND_CLUSTER_COLORS[index];
+}

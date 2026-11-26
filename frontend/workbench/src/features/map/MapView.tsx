@@ -9,6 +9,8 @@ import {
   FLIGHT_COLORS as colors,
   ROUTE_COLORS as routeColors,
   ROUTE_STATUS_LABELS as routeStatusLabels,
+  UNCLUSTERED_STAND_COLOR,
+  standClusterColor,
 } from '../../domain/palette';
 import {
   addStyledPathOverlay,
@@ -29,7 +31,12 @@ function featureTooltip(feature: GeoJSON.Feature) {
   const properties = feature.properties ?? {};
   const node = feature.geometry.type === 'Point';
   const identity = node ? properties.id : formatEdgeId(properties.id);
-  const details = [properties.aeroway, properties.ref, properties.name].filter(
+  const details = [
+    properties.aeroway,
+    properties.ref,
+    properties.name,
+    properties.cluster_id != null ? `类别 #${properties.cluster_id}` : null,
+  ].filter(
     value => value !== null && value !== undefined && value !== '',
   );
   const suffix = details.length ? ` · ${details.map(escapeHtml).join(' / ')}` : '';
@@ -45,6 +52,7 @@ interface Props {
   showParking?: boolean;
   showNodes?: boolean;
   spreadRoutes?: boolean;
+  colorByCluster?: boolean;
   mapId?: string;
   selected?: SelectedFeature[];
   drawPoints?: Array<[number, number]>;
@@ -61,10 +69,41 @@ interface Props {
   onRouteClick?(routeId: string): void;
 }
 
+function resolveEdgeColor(
+  aeroway: unknown,
+  clusterId: number | null,
+  validationColor: unknown,
+  validate: boolean,
+  clusterMode: boolean,
+): string {
+  if (validate) return String(validationColor);
+  if (aeroway === 'parking_position') {
+    if (!clusterMode) return AEROWAY_EDGE_COLORS.parking_position;
+    return clusterId !== null ? standClusterColor(clusterId) : UNCLUSTERED_STAND_COLOR;
+  }
+  if (aeroway === 'runway') return AEROWAY_EDGE_COLORS.runway;
+  if (aeroway === 'taxiway') return AEROWAY_EDGE_COLORS.taxiway;
+  return AEROWAY_EDGE_COLORS.other;
+}
+
+function resolveEdgeWeight(
+  aeroway: unknown,
+  clusterId: number | null,
+  validate: boolean,
+  dimmed: boolean,
+  clusterMode: boolean,
+): number {
+  if (validate) return 3.4;
+  if (dimmed) return aeroway === 'parking_position' ? 2.2 : 1.9;
+  if (aeroway === 'runway') return 4.2;
+  if (aeroway === 'parking_position') return clusterMode && clusterId !== null ? 3.8 : 3.2;
+  return 2.8;
+}
+
 const EMPTY_ROUTES: Map<string, MapRouteEntry> = new Map();
 const EMPTY_PREVIEWS: MapPreviewLine[] = [];
 
-export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick, onRouteClick }: Props) {
+export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation, baseLayer = 'none', showEdges = true, showParking = true, showNodes = true, spreadRoutes = true, colorByCluster = false, mapId = 'map', selected = [], drawPoints = [], previewOverlays = EMPTY_PREVIEWS, focusFlightRequest, focusRouteRequest, focusFeatureRequest, fitMapVersion = 0, fitRoutesVersion = 0, observationLocation, onFeature, onMapClick, onFlightClick, onRouteClick }: Props) {
   const element = useRef<HTMLDivElement>(null);
   const mapRef = useRef<LeafletMap | null>(null);
   const nodesRendererRef = useRef<L.Renderer | null>(null);
@@ -85,6 +124,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   const flightsRef = useRef(flights);
   const routesRef = useRef(routes);
   const splitValidationRef = useRef(splitValidation);
+  const colorByClusterRef = useRef(colorByCluster);
   const featureHandler = useRef(onFeature);
   const mapClickHandler = useRef(onMapClick);
   const flightClickHandler = useRef(onFlightClick);
@@ -92,6 +132,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   flightsRef.current = flights;
   routesRef.current = routes;
   splitValidationRef.current = splitValidation;
+  colorByClusterRef.current = colorByCluster;
   featureHandler.current = onFeature;
   mapClickHandler.current = onMapClick;
   flightClickHandler.current = onFlightClick;
@@ -104,21 +145,14 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   const edgeStyle = (feature?: GeoJSON.Feature) => {
     const properties = feature?.properties as Record<string, unknown> | undefined;
     const aeroway = properties?.aeroway;
-    const parking = aeroway === 'parking_position';
-    const runway = aeroway === 'runway';
-    const taxiway = aeroway === 'taxiway';
     const validate = splitValidationRef.current;
+    const clusterMode = colorByClusterRef.current;
     const dimmed = !validate && hasOverlayRef.current;
-    const baseColor = parking
-      ? AEROWAY_EDGE_COLORS.parking_position
-      : runway
-        ? AEROWAY_EDGE_COLORS.runway
-        : taxiway
-          ? AEROWAY_EDGE_COLORS.taxiway
-          : AEROWAY_EDGE_COLORS.other;
+    const rawClusterId = properties?.cluster_id;
+    const clusterId = typeof rawClusterId === 'number' ? rawClusterId : null;
     return {
-      color: validate ? String(properties?.validation_color) : baseColor,
-      weight: validate ? 3.4 : dimmed ? (parking ? 2.2 : 1.9) : runway ? 4.2 : parking ? 3.2 : 2.8,
+      color: resolveEdgeColor(aeroway, clusterId, properties?.validation_color, validate, clusterMode),
+      weight: resolveEdgeWeight(aeroway, clusterId, validate, dimmed, clusterMode),
       opacity: dimmed ? 0.34 : 0.82,
     };
   };
@@ -294,7 +328,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
   useEffect(() => {
     edgesLayerRef.current?.setStyle(edgeStyle);
     parkingLayerRef.current?.setStyle(edgeStyle);
-  }, [splitValidation, hasOverlay]);
+  }, [splitValidation, hasOverlay, colorByCluster]);
 
   useEffect(() => {
     const group = flightGroup.current;
@@ -431,7 +465,7 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
           interactiveLayers.forEach(layer => layer.bringToFront());
           routeClickHandler.current?.(routeId);
         };
-        const tooltip = `<strong>${escapeHtml(entry.label)}</strong> · ${Math.round(route.total_length_m)} m · ${route.edge_count} 边 · ${escapeHtml(routeStatusLabels[route.status] ?? route.status)}`;
+        const tooltip = `<strong>${escapeHtml(entry.label)}</strong> · ${Math.round(route.total_length_m)} m · ${route.edge_count} 边 · ${route.flight_count ?? 0} 架次 · ${escapeHtml(routeStatusLabels[route.status] ?? route.status)}`;
         interactiveLayers.push(
           ...addStyledPathOverlay(
             displayPath,
@@ -518,11 +552,19 @@ export function MapView({ state, flights, routes = EMPTY_ROUTES, splitValidation
       }
     }
 
-    selected.forEach(feature => L.geoJSON(feature as never, {
-      style: { color: '#1d5fa7', weight: 6, opacity: 1, pane, renderer },
-      interactive: false,
-      pointToLayer: (_feature, latlng) => L.circleMarker(latlng, { pane, renderer, interactive: false, radius: 8, color: '#1d5fa7', weight: 3, fillColor: '#fff', fillOpacity: 1 }),
-    }).addTo(group));
+    selected.forEach(feature => {
+      if (feature.geometry.type !== 'Point') {
+        L.geoJSON(feature as never, {
+          style: { color: '#fff', weight: 9.5, opacity: 0.92, pane, renderer },
+          interactive: false,
+        }).addTo(group);
+      }
+      L.geoJSON(feature as never, {
+        style: { color: '#1d5fa7', weight: 6, opacity: 1, pane, renderer },
+        interactive: false,
+        pointToLayer: (_feature, latlng) => L.circleMarker(latlng, { pane, renderer, interactive: false, radius: 8, color: '#1d5fa7', weight: 3, fillColor: '#fff', fillOpacity: 1 }),
+      }).addTo(group);
+    });
     const orderedPreviews = [...previewOverlays].sort(
       (left, right) => Number(Boolean(left.emphasis)) - Number(Boolean(right.emphasis)),
     );

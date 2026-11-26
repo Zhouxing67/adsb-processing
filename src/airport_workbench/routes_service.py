@@ -10,7 +10,13 @@ from typing import Any
 from airport_surface import AirportGraph
 from flight.flight_repository import FlightDatabase
 from path_map import PathGraphMismatch
-from route_library.models import RouteEntry, RouteStatus, normalize_movement, normalize_runway_ref
+from route_library.models import (
+    RouteEntry,
+    RouteFlightMatch,
+    RouteStatus,
+    normalize_movement,
+    normalize_runway_ref,
+)
 from route_library.repository import RouteLibraryRepository
 
 from .serializers import path_geojson
@@ -43,7 +49,7 @@ class RouteLibraryService:
     ) -> None:
         self.airport_graph = airport_graph
         self.flight_database = flight_database
-        self.repository = RouteLibraryRepository(flight_database.duckdb)
+        self.repository = RouteLibraryRepository(flight_database.postgres)
         self.graph_id = graph_id
         self.lock = lock
         self.items = items
@@ -61,6 +67,7 @@ class RouteLibraryService:
             "runway_interface_node": entry.runway_interface_node,
             "edge_count": entry.edge_count,
             "total_length_m": entry.total_length_m,
+            "flight_count": entry.flight_count,
             "status": entry.status.value,
             "source": entry.source.value,
             "note": entry.note,
@@ -81,6 +88,7 @@ class RouteLibraryService:
             "runway_interface_node": entry["runway_interface_node"],
             "edge_count": entry["edge_count"],
             "total_length_m": entry["total_length_m"],
+            "flight_count": entry["flight_count"],
             "status": entry["status"],
             "source": entry["source"],
             "note": entry["note"],
@@ -107,64 +115,34 @@ class RouteLibraryService:
         normalized_stand = stand_ref.strip() if stand_ref and stand_ref.strip() else None
         normalized_runway = normalize_runway_ref(runway_ref) if runway_ref else None
         normalized_status = RouteStatus(status).value if status else None
-        search = query.strip().casefold()
+        start = (page - 1) * page_size
 
-        scoped = self.repository.list_metadata(
+        result = self.repository.query_metadata_page(
             graph_id=None if all_graphs else self.graph_id,
+            movement=normalized_movement,
+            stand_ref=normalized_stand,
+            runway_ref=normalized_runway,
+            runway_is_null=runway_is_null,
+            status=normalized_status,
+            query=query,
+            offset=start,
+            limit=page_size,
         )
-        stand_options = sorted({entry["stand_ref"] for entry in scoped})
-        runway_options = sorted({entry["runway_ref"] for entry in scoped if entry["runway_ref"]})
-        status_counts = {member.value: 0 for member in RouteStatus}
-        for entry in scoped:
-            status_counts[entry["status"]] = status_counts.get(entry["status"], 0) + 1
-
-        filtered = []
-        for entry in scoped:
-            if normalized_movement and entry["movement"] != normalized_movement:
-                continue
-            if normalized_stand and entry["stand_ref"] != normalized_stand:
-                continue
-            if runway_is_null:
-                if entry["runway_ref"] is not None:
-                    continue
-            elif normalized_runway and entry["runway_ref"] != normalized_runway:
-                continue
-            if normalized_status and entry["status"] != normalized_status:
-                continue
-            if search:
-                haystack = " ".join(
-                    part
-                    for part in (
-                        entry["route_id"],
-                        entry["stand_ref"],
-                        entry["runway_ref"] or "",
-                        entry["runway_interface_node"],
-                        entry["note"] or "",
-                    )
-                    if part
-                ).casefold()
-                if search not in haystack:
-                    continue
-            filtered.append(entry)
-
-        total = len(filtered)
+        total = result["total"]
         total_pages = ceil(total / page_size) if total else 0
         if total_pages and page > total_pages:
             raise self._page_out_of_range(page, total_pages)
         if not total_pages and page != 1:
             raise self._page_out_of_range(page, 0)
-        start = (page - 1) * page_size
-        page_items = [
-            self._serialize_metadata(entry) for entry in filtered[start : start + page_size]
-        ]
+        page_items = [self._serialize_metadata(entry) for entry in result["items"]]
         return {
             "items": page_items,
             "has_route_library": True,
             "current_graph_id": self.graph_id,
             "can_edit": not self.flight_database.read_only,
-            "stand_options": stand_options,
-            "runway_options": runway_options,
-            "status_counts": status_counts,
+            "stand_options": result["stand_options"],
+            "runway_options": result["runway_options"],
+            "status_counts": result["status_counts"],
             "total": total,
             "total_pages": total_pages,
             "page": page if total_pages else 0,
@@ -234,13 +212,14 @@ class RouteLibraryService:
                 item = self.items[key]
                 stand_ref = result.stand_ref or item.stand_position
                 matched_records.append(
-                    (item.movement_type, stand_ref, result.runway_ref, result.path)
+                    (item.flight_id, item.movement_type, stand_ref, result.runway_ref, result.path)
                 )
 
         unique_entries: dict[str, RouteEntry] = {}
+        flight_matches: list[RouteFlightMatch] = []
         skipped_missing_stand = 0
         skipped_invalid_path = 0
-        for movement, stand_ref, runway_ref, path in matched_records:
+        for flight_id, movement, stand_ref, runway_ref, path in matched_records:
             if not stand_ref or not stand_ref.strip():
                 skipped_missing_stand += 1
                 continue
@@ -257,16 +236,26 @@ class RouteLibraryService:
                 skipped_invalid_path += 1
                 continue
             unique_entries.setdefault(entry.route_id, entry)
+            if flight_id and str(flight_id).strip():
+                flight_matches.append(
+                    RouteFlightMatch(
+                        route_id=entry.route_id,
+                        movement=movement,
+                        flight_id=str(flight_id),
+                    )
+                )
 
         entries = list(unique_entries.values())
         try:
             if replace_candidates:
                 deleted, inserted, existing = self.repository.replace_candidates(
-                    self.graph_id, entries
+                    self.graph_id, entries, flight_matches=flight_matches
                 )
             else:
                 deleted = 0
-                inserted, existing = self.repository.upsert_routes(entries)
+                inserted, existing = self.repository.upsert_routes(
+                    entries, flight_matches=flight_matches
+                )
         except self.flight_database.database_error as error:
             logger.exception("Failed to write %d routes to route_library", len(entries))
             raise RuntimeError(f"路径库写入失败：{error}") from error

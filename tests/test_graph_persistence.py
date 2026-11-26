@@ -155,3 +155,127 @@ def test_node_attribute_edit_is_undoable_and_read_only_is_protected(
             },
         )
     assert response.status_code == 405
+
+
+def test_stand_clusters_persist_without_changing_graph_id(tmp_path):
+    from airport_surface import StandCluster
+
+    graph = nx.MultiGraph()
+    graph.add_node("1", pos=(0.0, 0.0))
+    graph.add_node("2", pos=(0.001, 0.0))
+    graph.add_node("3", pos=(0.002, 0.0))
+    graph.add_edge(
+        "1",
+        "2",
+        key=0,
+        geometry=LineString([(0.0, 0.0), (0.001, 0.0)]),
+        aeroway="parking_position",
+        ref="201",
+    )
+    graph.add_edge(
+        "2",
+        "3",
+        key=0,
+        geometry=LineString([(0.001, 0.0), (0.002, 0.0)]),
+        aeroway="parking_position",
+        ref="202",
+    )
+    base_graph = AirportGraph(graph, Proj("EPSG:3857"))
+    base_id = graph_id(base_graph)
+
+    clustered_graph = AirportGraph(
+        graph.copy(),
+        Proj("EPSG:3857"),
+        stand_clusters=[StandCluster(c_id=1, stands=(("1", "2", 0), ("2", "3", 0)), name="T3西侧")],
+    )
+    assert graph_id(clustered_graph) == base_id
+
+    path = save_graph(clustered_graph, tmp_path / "clustered.json")
+    loaded = load_graph(path)
+    assert graph_id(loaded) == base_id
+    assert loaded.cluster_for_edge(("2", "1", 0)) == StandCluster(
+        c_id=1, stands=(("1", "2", 0), ("2", "3", 0)), name="T3西侧"
+    )
+    assert loaded.cluster_for_stand("201") is not None
+    assert loaded.cluster_for_stand("201").c_id == 1
+    assert loaded.stand_refs_in_cluster(1) == ("201", "202")
+    assert loaded.next_cluster_id() == 2
+
+
+def test_workbench_stand_cluster_endpoints_and_undo():
+    from fastapi.testclient import TestClient
+
+    from airport_workbench.app import create_app
+
+    graph = nx.MultiGraph()
+    graph.add_node("1", pos=(0.0, 0.0))
+    graph.add_node("2", pos=(0.001, 0.0))
+    graph.add_node("3", pos=(0.002, 0.0))
+    graph.add_node("4", pos=(0.003, 0.0))
+    graph.add_edge(
+        "1", "2", key=0, geometry=LineString([(0.0, 0.0), (0.001, 0.0)]),
+        aeroway="parking_position", ref="201",
+    )
+    graph.add_edge(
+        "2", "3", key=0, geometry=LineString([(0.001, 0.0), (0.002, 0.0)]),
+        aeroway="parking_position", ref="202",
+    )
+    graph.add_edge(
+        "3", "4", key=0, geometry=LineString([(0.002, 0.0), (0.003, 0.0)]),
+        aeroway="taxiway",
+    )
+    session = EditorSession(AirportGraph(graph, Proj("EPSG:3857")))
+    with TestClient(create_app(session)) as client:
+        # Non-parking edge must be rejected
+        bad = client.post(
+            "/api/stand-clusters/create",
+            json={"edges": [{"u": "3", "v": "4", "key": 0}], "expected_revision": 0},
+        )
+        assert bad.status_code == 400
+
+        # Create cluster #1 with edge 201
+        created = client.post(
+            "/api/stand-clusters/create",
+            json={
+                "edges": [{"u": "1", "v": "2", "key": 0}],
+                "name": "北区",
+                "expected_revision": 0,
+            },
+        )
+        assert created.status_code == 200
+        assert created.json()["revision"] == 1
+
+        # Assign edge 202 to cluster #1
+        assigned = client.post(
+            "/api/stand-clusters/assign",
+            json={
+                "edges": [{"u": "2", "v": "3", "key": 0}],
+                "c_id": 1,
+                "expected_revision": 1,
+            },
+        )
+        assert assigned.status_code == 200
+
+        # Rename cluster #1
+        renamed = client.post(
+            "/api/stand-clusters/rename",
+            json={"c_id": 1, "name": "北指廊", "expected_revision": 2},
+        )
+        assert renamed.status_code == 200
+
+        state = client.get("/api/state").json()
+        assert len(state["stand_clusters"]) == 1
+        assert state["stand_clusters"][0]["name"] == "北指廊"
+        assert state["stand_clusters"][0]["stand_refs"] == ["201", "202"]
+
+        # Delete cluster #1 and undo
+        deleted = client.post(
+            "/api/stand-clusters/delete",
+            json={"c_id": 1, "expected_revision": 3},
+        )
+        assert deleted.status_code == 200
+        assert client.get("/api/state").json()["stand_clusters"] == []
+
+        undone = client.post("/api/undo", json={"expected_revision": 4})
+        assert undone.status_code == 200
+        assert len(client.get("/api/state").json()["stand_clusters"]) == 1

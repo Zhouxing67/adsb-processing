@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping, Self, overload
+from typing import Any, Self, overload
 
 import networkx as nx
 from pyproj import Proj, Transformer
@@ -135,6 +136,43 @@ class GraphMetadata:
         return cls(airport="UNKNOWN")
 
 
+def canonical_edge_id(edge: EdgeId) -> EdgeId:
+    """Return an orientation-independent canonical EdgeId for undirected lookups."""
+    u, v, key = edge
+    node_u = validate_node_id(u)
+    node_v = validate_node_id(v)
+    edge_key = validate_edge_key(key)
+    return (node_u, node_v, edge_key) if node_u <= node_v else (node_v, node_u, edge_key)
+
+
+@dataclass(frozen=True, slots=True)
+class StandCluster:
+    """One manually grouped cluster of parking_position edges."""
+
+    c_id: int
+    stands: tuple[EdgeId, ...] = ()
+    name: str | None = None
+
+    def __post_init__(self) -> None:
+        cluster_id = int(self.c_id)
+        if cluster_id < 1:
+            raise ValueError(f"StandCluster c_id must be >= 1, got {self.c_id!r}")
+        object.__setattr__(self, "c_id", cluster_id)
+        deduped: list[EdgeId] = []
+        seen: set[EdgeId] = set()
+        for raw_edge in self.stands:
+            u, v, key = raw_edge
+            edge: EdgeId = (validate_node_id(u), validate_node_id(v), validate_edge_key(key))
+            canon = canonical_edge_id(edge)
+            if canon in seen:
+                continue
+            seen.add(canon)
+            deduped.append(edge)
+        object.__setattr__(self, "stands", tuple(deduped))
+        cleaned_name = str(self.name).strip() if self.name is not None else None
+        object.__setattr__(self, "name", cleaned_name or None)
+
+
 class AirportGraph:
     """Airport topology, projection helpers, and authoritative source registries."""
 
@@ -149,6 +187,7 @@ class AirportGraph:
         source_edges: Mapping[str, SourceEdge] | None = None,
         node_aliases: Mapping[NodeId, NodeId] | None = None,
         metadata: GraphMetadata | None = None,
+        stand_clusters: Sequence[StandCluster] | Mapping[int, StandCluster] | None = None,
     ) -> None:
         self.graph = graph
         for node in self.graph:
@@ -162,11 +201,18 @@ class AirportGraph:
         self.source_edges = dict(source_edges or {})
         self.node_aliases = dict(node_aliases or {})
         self.metadata = GraphMetadata.unknown_airport() if metadata is None else metadata
+        if stand_clusters is None:
+            self.stand_clusters: dict[int, StandCluster] = {}
+        elif isinstance(stand_clusters, Mapping):
+            self.stand_clusters = {int(c_id): cluster for c_id, cluster in stand_clusters.items()}
+        else:
+            self.stand_clusters = {cluster.c_id: cluster for cluster in stand_clusters}
         for _, _, data in self.graph.edges(data=True):
             segments = edge_source_segments(data)
             if segments:
                 data["source_segments"] = segments
         self.rebuild_stand_index()
+        self.rebuild_cluster_index()
         self.rebuild_runway_interfaces()
 
     def rebuild_runway_interfaces(self) -> None:
@@ -249,6 +295,47 @@ class AirportGraph:
         self.stand_to_edges = {stand_id: tuple(edges) for stand_id, edges in forward.items()}
         self.edge_to_stand = reverse
 
+    def rebuild_cluster_index(self) -> None:
+        """Build O(1) lookup indices from stand edges and stand refs to StandCluster."""
+        edge_to_cluster: dict[EdgeId, int] = {}
+        stand_ref_to_cluster: dict[str, int] = {}
+        cluster_to_refs: dict[int, list[str]] = {}
+        for c_id, cluster in sorted(self.stand_clusters.items()):
+            refs: list[str] = []
+            seen_refs: set[str] = set()
+            for edge in cluster.stands:
+                canon = canonical_edge_id(edge)
+                edge_to_cluster[canon] = c_id
+                stand_ref = self.stand_for_edge(edge)
+                if stand_ref is not None and stand_ref not in seen_refs:
+                    seen_refs.add(stand_ref)
+                    refs.append(stand_ref)
+                    stand_ref_to_cluster[stand_ref] = c_id
+            cluster_to_refs[c_id] = refs
+        self.edge_to_cluster: dict[EdgeId, int] = edge_to_cluster
+        self.stand_ref_to_cluster: dict[str, int] = stand_ref_to_cluster
+        self.cluster_to_stand_refs: dict[int, tuple[str, ...]] = {
+            c_id: tuple(refs) for c_id, refs in cluster_to_refs.items()
+        }
+
+    def cluster_for_edge(self, edge: EdgeId) -> StandCluster | None:
+        """Return the StandCluster containing ``edge``, regardless of orientation."""
+        c_id = self.edge_to_cluster.get(canonical_edge_id(edge))
+        return self.stand_clusters.get(c_id) if c_id is not None else None
+
+    def cluster_for_stand(self, stand_ref: str) -> StandCluster | None:
+        """Return the StandCluster containing ``stand_ref``, if assigned."""
+        c_id = self.stand_ref_to_cluster.get(stand_ref.strip())
+        return self.stand_clusters.get(c_id) if c_id is not None else None
+
+    def stand_refs_in_cluster(self, c_id: int) -> tuple[str, ...]:
+        """Return all stand refs belonging to cluster ``c_id``."""
+        return self.cluster_to_stand_refs.get(c_id, ())
+
+    def next_cluster_id(self) -> int:
+        """Return the next unused positive integer cluster id."""
+        return max(self.stand_clusters, default=0) + 1
+
     @property
     def components(self) -> list[int]:
         return [len(component) for component in nx.connected_components(self.graph)]
@@ -319,4 +406,5 @@ class AirportGraph:
             source_edges=self.source_edges,
             node_aliases=self.node_aliases,
             metadata=self.metadata,
+            stand_clusters=dict(self.stand_clusters),
         )

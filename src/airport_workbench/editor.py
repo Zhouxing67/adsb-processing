@@ -16,9 +16,12 @@ from shapely.geometry import LineString, Point, mapping
 
 from airport_surface import (
     AirportGraph,
+    EdgeId,
     SourceEdge,
     SourceNode,
     SourceSegment,
+    StandCluster,
+    canonical_edge_id,
     cumulative_distances,
     edge_source_segments,
     geometry_from_source_segments,
@@ -92,6 +95,18 @@ class EditorSession:
 
     def _refresh(self) -> None:
         current = self.airport_graph
+        cleaned_clusters: dict[int, StandCluster] = {}
+        for c_id, cluster in current.stand_clusters.items():
+            alive_stands = tuple(
+                edge
+                for edge in cluster.stands
+                if self.graph.has_edge(*edge) or self.graph.has_edge(edge[1], edge[0], edge[2])
+            )
+            cleaned_clusters[c_id] = StandCluster(
+                c_id=cluster.c_id,
+                stands=alive_stands,
+                name=cluster.name,
+            )
         self.airport_graph = AirportGraph(
             self.graph,
             current.projection,
@@ -99,7 +114,113 @@ class EditorSession:
             source_edges=current.source_edges,
             node_aliases=current.node_aliases,
             metadata=current.metadata,
+            stand_clusters=cleaned_clusters,
         )
+
+    def _resolve_stand_cluster_edges(self, edges: Sequence[EdgeId]) -> list[EdgeId]:
+        """Validate parking_position edges and expand sibling segments sharing a stand_ref."""
+        if not edges:
+            raise ValueError("请至少选择一条机位边")
+        resolved: list[EdgeId] = []
+        seen: set[EdgeId] = set()
+        for u, v, key in edges:
+            edge = self.require_edge(u, v, key)
+            data = self.graph.edges[edge]
+            if data.get("aeroway") != "parking_position":
+                raise ValueError(f"只能对机位边（parking_position）进行聚类：{edge!r}")
+            stand_ref = self.airport_graph.stand_for_edge(edge)
+            related = (
+                self.airport_graph.stand_to_edges.get(stand_ref, (edge,))
+                if stand_ref is not None
+                else (edge,)
+            )
+            for candidate in related:
+                canon = canonical_edge_id(candidate)
+                if canon not in seen:
+                    seen.add(canon)
+                    resolved.append(candidate)
+        return resolved
+
+    def _remove_edges_from_clusters(self, target_canon_ids: set[EdgeId]) -> None:
+        updated: dict[int, StandCluster] = {}
+        for c_id, cluster in self.airport_graph.stand_clusters.items():
+            remaining = tuple(
+                edge for edge in cluster.stands if canonical_edge_id(edge) not in target_canon_ids
+            )
+            updated[c_id] = StandCluster(c_id=cluster.c_id, stands=remaining, name=cluster.name)
+        self.airport_graph.stand_clusters = updated
+
+    def create_stand_cluster(
+        self,
+        edges: Sequence[EdgeId],
+        *,
+        name: str | None = None,
+        expected_revision: int,
+    ) -> CommandResult[StandCluster]:
+        with self._checked(expected_revision):
+            resolved = self._resolve_stand_cluster_edges(edges)
+            target_canon = {canonical_edge_id(edge) for edge in resolved}
+            with self._edit(topology_change=False):
+                self._remove_edges_from_clusters(target_canon)
+                c_id = self.airport_graph.next_cluster_id()
+                created = StandCluster(c_id=c_id, stands=tuple(resolved), name=name)
+                self.airport_graph.stand_clusters[c_id] = created
+            return CommandResult(self.airport_graph.stand_clusters[c_id], self.revision)
+
+    def assign_stands_to_cluster(
+        self,
+        edges: Sequence[EdgeId],
+        c_id: int | None,
+        *,
+        expected_revision: int,
+    ) -> CommandResult[int | None]:
+        with self._checked(expected_revision):
+            resolved = self._resolve_stand_cluster_edges(edges)
+            if c_id is not None and c_id not in self.airport_graph.stand_clusters:
+                raise GraphObjectNotFound(f"机位类别不存在: {c_id!r}")
+            target_canon = {canonical_edge_id(edge) for edge in resolved}
+            with self._edit(topology_change=False):
+                self._remove_edges_from_clusters(target_canon)
+                if c_id is not None:
+                    existing = self.airport_graph.stand_clusters[c_id]
+                    self.airport_graph.stand_clusters[c_id] = StandCluster(
+                        c_id=existing.c_id,
+                        stands=(*existing.stands, *resolved),
+                        name=existing.name,
+                    )
+            return CommandResult(c_id, self.revision)
+
+    def rename_stand_cluster(
+        self,
+        c_id: int,
+        name: str | None,
+        *,
+        expected_revision: int,
+    ) -> CommandResult[StandCluster]:
+        with self._checked(expected_revision):
+            if c_id not in self.airport_graph.stand_clusters:
+                raise GraphObjectNotFound(f"机位类别不存在: {c_id!r}")
+            with self._edit(topology_change=False):
+                existing = self.airport_graph.stand_clusters[c_id]
+                self.airport_graph.stand_clusters[c_id] = StandCluster(
+                    c_id=existing.c_id,
+                    stands=existing.stands,
+                    name=name,
+                )
+            return CommandResult(self.airport_graph.stand_clusters[c_id], self.revision)
+
+    def delete_stand_cluster(
+        self,
+        c_id: int,
+        *,
+        expected_revision: int,
+    ) -> CommandResult[None]:
+        with self._checked(expected_revision):
+            if c_id not in self.airport_graph.stand_clusters:
+                raise GraphObjectNotFound(f"机位类别不存在: {c_id!r}")
+            with self._edit(topology_change=False):
+                del self.airport_graph.stand_clusters[c_id]
+            return CommandResult(None, self.revision)
 
     @property
     def can_undo(self) -> bool:

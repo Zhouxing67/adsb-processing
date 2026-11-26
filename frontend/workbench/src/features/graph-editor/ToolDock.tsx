@@ -1,4 +1,4 @@
-import { Crosshair, GitMerge, Magnet, PenLine, Route, Scissors, Trash2 } from 'lucide-react';
+import { Crosshair, GitMerge, Layers, Magnet, PenLine, Route, Scissors, Trash2 } from 'lucide-react';
 import type { ComponentType } from 'react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import type { EditorTool } from '@/app/WorkbenchContext';
@@ -13,6 +13,7 @@ const tools: Array<{ key: EditorTool; label: string; icon: ComponentType<{ class
   { key: 'restore', label: '恢复来源连接', icon: Route },
   { key: 'merge', label: '合并重合节点', icon: GitMerge },
   { key: 'snap', label: '人工吸附到边', icon: Magnet },
+  { key: 'cluster', label: '机位聚类', icon: Layers },
   { key: 'delete', label: '删除 / 简化', icon: Trash2 },
 ];
 
@@ -23,6 +24,7 @@ const toolMessages: Record<EditorTool, string> = {
   restore: '恢复来源连接 · 依次选择两个节点',
   merge: '合并节点 · 依次选择两个节点',
   snap: '人工吸附 · 先选择节点，再选择目标边',
+  cluster: '机位聚类 · 点击多条机位边加入新类别或已有类别',
   delete: '删除 / 简化 · 点击节点或边',
 };
 

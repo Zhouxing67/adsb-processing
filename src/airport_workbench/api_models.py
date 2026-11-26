@@ -51,6 +51,7 @@ class EdgeProperties(ApiModel):
     aeroway: str | None = None
     name: str | None = None
     ref: str | None = None
+    cluster_id: int | None = None
     editable_attributes: dict[str, JsonValue]
 
 
@@ -111,6 +112,13 @@ class TopologySummary(ApiModel):
     parallel_groups: list[ParallelEdgeGroup]
 
 
+class StandClusterResponse(ApiModel):
+    c_id: int = Field(ge=1)
+    name: str | None = None
+    stands: list[EdgeIdentity]
+    stand_refs: list[str]
+
+
 class WorkbenchCapabilities(ApiModel):
     can_edit_graph: bool
     has_flights: bool
@@ -120,6 +128,7 @@ class WorkbenchCapabilities(ApiModel):
 class WorkbenchStateResponse(ApiModel):
     nodes: NodeFeatureCollection
     edges: EdgeFeatureCollection
+    stand_clusters: list[StandClusterResponse] = Field(default_factory=list)
     node_count: int
     edge_count: int
     flight_count: int
@@ -278,7 +287,6 @@ class FlightFilterRequest(ApiModel):
     start_date: date | None = None
     end_date: date | None = None
     validation_only: bool = False
-    whitelist_only: bool = False
     issues_only: bool = False
 
 
@@ -330,7 +338,6 @@ class FlightCatalogueResponse(ApiModel):
     items: list[FlightCatalogueItemResponse]
     stand_options: list[str]
     supports_validation_filter: bool
-    supports_whitelist_filter: bool
     issue_count: int = 0
     can_edit_issues: bool = True
     total: int
@@ -390,6 +397,7 @@ class RouteItemResponse(ApiModel):
     runway_interface_node: str
     edge_count: int
     total_length_m: float
+    flight_count: int = 0
     status: str
     source: str
     note: str | None

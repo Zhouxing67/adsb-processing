@@ -305,6 +305,7 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
                 <TableHead>OD</TableHead>
                 <TableHead>长度</TableHead>
                 <TableHead>边数</TableHead>
+                <TableHead>架次</TableHead>
                 <TableHead>状态</TableHead>
                 <TableHead>备注</TableHead>
                 <TableHead>操作</TableHead>
@@ -356,6 +357,8 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
                     </TableCell>
 
                     <TableCell className="tabular-nums text-muted-foreground">{item.edge_count}</TableCell>
+
+                    <TableCell className="tabular-nums text-foreground">{item.flight_count ?? 0}</TableCell>
 
                     <TableCell>
                       <RouteStatusCell

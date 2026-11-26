@@ -132,7 +132,6 @@ def test_batch_matching_persists_od_and_imports_into_route_library(tmp_path):
         ),
     ]
     database = create_flight_database(
-        tmp_path / "adsb.duckdb",
         flights,
         movement_types=("departure", "departure", "departure", "arrival"),
     )
@@ -162,7 +161,7 @@ def test_batch_matching_persists_od_and_imports_into_route_library(tmp_path):
     assert by_id["ARR1"]["runway_ref"] == "01"
 
     # First import: 4 matched rows collapse to 3 unique OD routes (DEP1 & DEP2 share one).
-    routes = RouteLibraryRepository(database.duckdb)
+    routes = RouteLibraryRepository(database.postgres)
     summary = import_batch_run(run_dir, routes)
     assert summary.graph_id == expected_graph_id
     assert summary.total_match_rows == 4
@@ -251,7 +250,6 @@ def test_import_skips_legacy_match_rows_without_stand_ref(tmp_path):
         ),
     ]
     database = create_flight_database(
-        tmp_path / "adsb.duckdb",
         flights,
         movement_types=("departure",),
     )
@@ -273,7 +271,7 @@ def test_import_skips_legacy_match_rows_without_stand_ref(tmp_path):
         legacy_rows.append(json.dumps(row))
     matches_file.write_text("\n".join(legacy_rows) + "\n", encoding="utf-8")
 
-    routes = RouteLibraryRepository(database.duckdb)
+    routes = RouteLibraryRepository(database.postgres)
     summary = import_batch_run(run_dir, routes)
     assert summary.matched_rows == 1
     assert summary.skipped_missing_od == 1
@@ -294,7 +292,6 @@ def test_replace_candidates_only_clears_same_graph_candidates(tmp_path):
         ),
     ]
     database = create_flight_database(
-        tmp_path / "adsb.duckdb",
         flights,
         movement_types=("departure",),
     )
@@ -307,7 +304,7 @@ def test_replace_candidates_only_clears_same_graph_candidates(tmp_path):
     run_dir = next(path for path in output_dir.iterdir() if path.is_dir())
 
     # Seed stale candidate (same graph), manual route (same graph), and other-graph candidate.
-    routes = RouteLibraryRepository(database.duckdb)
+    routes = RouteLibraryRepository(database.postgres)
     first_summary = import_batch_run(run_dir, routes)
     assert first_summary.inserted_routes == 1
     base_entry = routes.find_by_od(graph_id=expected_graph_id)[0]
@@ -344,7 +341,7 @@ def test_replace_candidates_only_clears_same_graph_candidates(tmp_path):
     )
     routes.upsert_routes([stale_candidate, manual_entry, other_graph_candidate])
 
-    routes = RouteLibraryRepository(database.duckdb)
+    routes = RouteLibraryRepository(database.postgres)
     summary = import_batch_run(run_dir, routes)
     # Both same-graph candidates (base_entry + stale_candidate) were deleted; only base_entry
     # is re-inserted from run_dir.
@@ -380,3 +377,110 @@ def test_route_entry_resolve_accepts_precomputed_graph_id_without_rehashing(
 
     with pytest.raises(PathGraphMismatch):
         entry.resolve(airport_graph, actual_graph_id="sha256:different")
+
+
+def test_flight_count_is_idempotent_and_historical_lookup_falls_back_to_cluster(tmp_path):
+    from airport_surface import StandCluster
+    from route_library import find_historical_routes, get_his_path
+
+    airport_graph, to_wgs84 = _persisted_od_graph()
+    # Add a second stand "010" grouped in the same cluster as "009"
+    pos_4 = to_wgs84.transform(450_000.0, 4_428_010.0)
+    airport_graph.graph.add_node("4", pos=pos_4)
+    airport_graph.source_nodes["4"] = SourceNode("4", pos_4, ("4",))
+    stand_010_line = LineString([pos_4, airport_graph.graph.nodes["2"]["pos"]])
+    airport_graph.source_edges["src_stand_010"] = SourceEdge(
+        source_id="src_stand_010",
+        geometry=stand_010_line,
+        source_type="manual",
+        osm_node_ids=("4", "2"),
+        attributes={"aeroway": "parking_position", "ref": "010"},
+    )
+    airport_graph.graph.add_edge(
+        "4",
+        "2",
+        key=0,
+        first="4",
+        last="2",
+        geometry=stand_010_line,
+        source_segments=(SourceSegment("src_stand_010", 0.0, 10.0),),
+        aeroway="parking_position",
+        ref="010",
+    )
+    airport_graph.stand_clusters = {
+        1: StandCluster(c_id=1, stands=(("1", "2", 0), ("4", "2", 0)), name="Gate A")
+    }
+    airport_graph.rebuild_stand_index()
+    airport_graph.rebuild_cluster_index()
+
+    graph_path = tmp_path / "graph.json"
+    save_graph(airport_graph, graph_path)
+    expected_graph_id = graph_id(airport_graph)
+
+    flights = [
+        _make_flight(
+            "DEP1",
+            "departure",
+            (450_001.0, 450_009.0, 450_019.0),
+            to_wgs84,
+            stand_ref="009",
+            runway_ref="01",
+        ),
+        _make_flight(
+            "DEP2",
+            "departure",
+            (450_002.0, 450_011.0, 450_018.0),
+            to_wgs84,
+            stand_ref="009",
+            runway_ref="01",
+        ),
+    ]
+    database = create_flight_database(flights, movement_types=("departure", "departure"))
+    output_dir = tmp_path / "outputs"
+    BatchMatchingRunner(
+        graph_path,
+        (DatabaseDataset("departure", MovementType.DEPARTURE, database),),
+        output_dir,
+    ).run()
+    run_dir = next(path for path in output_dir.iterdir() if path.is_dir())
+
+    routes = RouteLibraryRepository(database.postgres)
+    import_batch_run(run_dir, routes)
+    # Re-importing with append must keep flight_count strictly idempotent at 2.
+    import_batch_run(run_dir, routes, replace_candidates=False)
+
+    fine = find_historical_routes(
+        routes,
+        airport_graph,
+        movement="departure",
+        stand_ref="009",
+        runway_ref="01",
+        graph_identity=expected_graph_id,
+    )
+    assert fine.granularity == "stand"
+    assert fine.cluster_id == 1
+    assert len(fine.entries) == 1
+    assert fine.entries[0].flight_count == 2
+    assert routes.list_flight_ids(fine.entries[0].route_id) == ["DEP1", "DEP2"]
+
+    # Stand "010" has no historical routes of its own -> falls back to cluster 1 ("009").
+    coarse = find_historical_routes(
+        routes,
+        airport_graph,
+        movement="departure",
+        stand_ref="010",
+        runway_ref="01/19",
+        graph_identity=expected_graph_id,
+    )
+    assert coarse.granularity == "cluster"
+    assert coarse.cluster_id == 1
+    assert len(coarse.entries) == 1
+    assert coarse.entries[0].stand_ref == "009"
+
+    # get_his_path works directly from a Flight object.
+    probe_flight = _make_flight(
+        "DEP_PROBE", "departure", (450_000.0, 450_010.0), to_wgs84, stand_ref="010", runway_ref="01"
+    )
+    paths = get_his_path(probe_flight, airport_graph, routes, graph_identity=expected_graph_id)
+    assert len(paths) == 1
+    assert paths[0].edge_ids == (("1", "2", 0), ("2", "3", 1))

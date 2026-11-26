@@ -6,6 +6,7 @@ import { Label } from '@/components/ui/label';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import { Separator } from '@/components/ui/separator';
+import { StandClusterPanel } from './StandClusterPanel';
 
 export interface LayerSettings {
   base: 'none' | 'osm' | 'satellite';
@@ -13,6 +14,7 @@ export interface LayerSettings {
   parking: boolean;
   nodes: boolean;
   spreadRoutes: boolean;
+  colorByCluster: boolean;
 }
 
 interface InspectorProps {
@@ -23,7 +25,9 @@ interface InspectorProps {
 }
 
 export function Inspector({ state, layers, onLayers, embedded = false }: InspectorProps) {
-  const parking = state.edges.features.filter(item => item.properties.aeroway === 'parking_position').length;
+  const parkingEdges = state.edges.features.filter(item => item.properties.aeroway === 'parking_position');
+  const parking = parkingEdges.length;
+  const clusteredParking = parkingEdges.filter(item => item.properties.cluster_id != null).length;
   const derived = state.edges.features.length - parking;
 
   return (
@@ -88,6 +92,13 @@ export function Inspector({ state, layers, onLayers, embedded = false }: Inspect
               />
               <span>停机位（{parking}）</span>
             </Label>
+            <Label className="flex cursor-pointer items-center gap-2 font-normal text-foreground">
+              <Checkbox
+                checked={layers.colorByCluster}
+                onCheckedChange={checked => onLayers({ ...layers, colorByCluster: checked === true })}
+              />
+              <span>按机位类别着色</span>
+            </Label>
             <Label className="flex cursor-pointer items-center gap-2 font-normal text-foreground tabular-nums">
               <Checkbox
                 checked={layers.nodes}
@@ -106,6 +117,15 @@ export function Inspector({ state, layers, onLayers, embedded = false }: Inspect
             )}
           </div>
         </section>
+
+        {(state.capabilities.can_edit_graph || (state.stand_clusters?.length ?? 0) > 0) && (
+          <StandClusterPanel
+            clusters={state.stand_clusters ?? []}
+            totalParkingEdges={parking}
+            clusteredParkingEdges={clusteredParking}
+            canEdit={state.capabilities.can_edit_graph}
+          />
+        )}
 
         <section className="space-y-3 border-b border-border pb-5">
           <h3 className="m-0 text-xs font-semibold text-foreground">地图图例</h3>

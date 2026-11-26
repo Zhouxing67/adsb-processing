@@ -16,6 +16,7 @@ const fieldLabels: Record<string, string> = {
   aeroway: '类型',
   name: '名称',
   ref: '编号',
+  cluster_id: '机位类别',
   source_type: '来源',
   u: '起点',
   v: '终点',
@@ -27,7 +28,7 @@ const fieldLabels: Record<string, string> = {
   latitude: '纬度',
 };
 
-const basicKeys = new Set(['aeroway', 'name', 'ref', 'source_type']);
+const basicKeys = new Set(['aeroway', 'name', 'ref', 'cluster_id', 'source_type']);
 const topologyKeys = new Set(['u', 'v', 'key', 'geometry_length_m', 'degree', 'longitude', 'latitude']);
 
 export function FeatureDetails() {
@@ -37,12 +38,18 @@ export function FeatureDetails() {
   const [aeroway, setAeroway] = useState('');
   const [name, setName] = useState('');
   const [ref, setRef] = useState('');
+  const [clusterIdValue, setClusterIdValue] = useState('__none__');
   const [validationError, setValidationError] = useState('');
 
   useEffect(() => {
     setAeroway(String(attributes.aeroway ?? ''));
     setName(String(attributes.name ?? ''));
     setRef(String(attributes.ref ?? ''));
+    const currentCluster =
+      feature && !isNodeFeature(feature) && feature.properties.cluster_id != null
+        ? String(feature.properties.cluster_id)
+        : '__none__';
+    setClusterIdValue(currentCluster);
     setValidationError('');
   }, [feature, attributes.aeroway, attributes.name, attributes.ref]);
 
@@ -57,12 +64,22 @@ export function FeatureDetails() {
     ([key]) => !basicKeys.has(key) && !topologyKeys.has(key) && !key.startsWith('validation'),
   );
 
-  const formatValue = (key: string, value: unknown) =>
-    key === 'geometry_length_m' && value != null
-      ? `${value} m`
-      : key === 'source_type' && typeof value === 'string'
-        ? value.toUpperCase()
-        : String(value ?? '—');
+  const standClusters = wb.state?.stand_clusters ?? [];
+  const currentClusterId = !node ? (feature.properties.cluster_id ?? null) : null;
+  const clusterValueExists =
+    clusterIdValue === '__none__' || standClusters.some(cluster => String(cluster.c_id) === clusterIdValue);
+  const effectiveClusterValue = clusterValueExists ? clusterIdValue : '__none__';
+
+  const formatValue = (key: string, value: unknown) => {
+    if (key === 'geometry_length_m' && value != null) return `${value} m`;
+    if (key === 'source_type' && typeof value === 'string') return value.toUpperCase();
+    if (key === 'cluster_id') {
+      if (typeof value !== 'number') return '未分类';
+      const found = standClusters.find(cluster => cluster.c_id === value);
+      return found?.name ? `#${value} · ${found.name}` : `#${value}`;
+    }
+    return String(value ?? '—');
+  };
 
   const renderFields = (title: string, fields: Array<[string, unknown]>) =>
     fields.length ? (
@@ -103,6 +120,18 @@ export function FeatureDetails() {
     if (result !== null) wb.dispatch({ type: 'selected', value: null });
   };
 
+  const isParkingEdge = !node && feature.properties.aeroway === 'parking_position';
+  const nextClusterId = effectiveClusterValue === '__none__' ? null : Number(effectiveClusterValue);
+  const clusterUnchanged = nextClusterId === currentClusterId;
+  const saveCluster = async () => {
+    if (node || clusterUnchanged) return;
+    const result = await wb.runGraphCommand('/api/stand-clusters/assign', {
+      edges: [feature.properties.id],
+      c_id: nextClusterId,
+    });
+    if (result !== null) wb.dispatch({ type: 'selected', value: null });
+  };
+
   const customAeroway = aeroway && !aerowayTypes.includes(aeroway as Aeroway);
 
   return (
@@ -131,6 +160,34 @@ export function FeatureDetails() {
         {renderFields('拓扑信息', topologyEntries)}
         {renderFields('检查状态', inspectionEntries)}
         {renderFields('其他属性', otherEntries)}
+
+        {wb.state?.capabilities.can_edit_graph && isParkingEdge && (
+          <section className="grid gap-3 border-t border-border py-4">
+            <h3 className="m-0 text-xs font-semibold text-foreground">机位类别</h3>
+            <div className="grid gap-1 text-xs text-muted-foreground">
+              <span className="flex items-baseline gap-1">
+                所属类别 <small className="text-[11px] text-muted-foreground/75">cluster_id</small>
+              </span>
+              <Select value={effectiveClusterValue} onValueChange={setClusterIdValue}>
+                <SelectTrigger aria-label="所属类别" className="w-full">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">（未分类）</SelectItem>
+                  {standClusters.map(cluster => (
+                    <SelectItem key={cluster.c_id} value={String(cluster.c_id)}>
+                      #{cluster.c_id}
+                      {cluster.name ? ` · ${cluster.name}` : ''}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <Button variant="outline" disabled={wb.busy || clusterUnchanged} onClick={() => void saveCluster()}>
+              更新类别
+            </Button>
+          </section>
+        )}
 
         {wb.state?.capabilities.can_edit_graph && (
           <section className="property-form grid gap-3 border-t border-border py-4">

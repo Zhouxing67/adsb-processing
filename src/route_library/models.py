@@ -82,6 +82,22 @@ def make_route_id(
 
 
 @dataclass(frozen=True, slots=True)
+class RouteFlightMatch:
+    """One deduplicated (route_id, movement, flight_id) historical match."""
+
+    route_id: str
+    movement: str
+    flight_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "movement", normalize_movement(self.movement))
+        cleaned_flight = str(self.flight_id).strip()
+        if not cleaned_flight:
+            raise ValueError("flight_id must be a non-empty string")
+        object.__setattr__(self, "flight_id", cleaned_flight)
+
+
+@dataclass(frozen=True, slots=True)
 class RouteEntry:
     """One deduplicated taxi route template stored in DuckDB."""
 
@@ -94,6 +110,7 @@ class RouteEntry:
     edges: tuple[DirectedEdge, ...]
     edge_count: int
     total_length_m: float
+    flight_count: int = 0
     status: RouteStatus = RouteStatus.CANDIDATE
     source: RouteSource = RouteSource.MATCHED
     note: str | None = None
@@ -124,6 +141,7 @@ class RouteEntry:
         stand_ref: str,
         runway_ref: str | None = None,
         graph_identity: str | None = None,
+        flight_count: int = 0,
         status: RouteStatus = RouteStatus.CANDIDATE,
         source: RouteSource = RouteSource.MATCHED,
         note: str | None = None,
@@ -156,6 +174,7 @@ class RouteEntry:
             edges=path.edges,
             edge_count=len(path.edges),
             total_length_m=float(path.total_length),
+            flight_count=max(0, int(flight_count)),
             status=status,
             source=source,
             note=note,

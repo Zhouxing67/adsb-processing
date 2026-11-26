@@ -276,6 +276,74 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/stand-clusters/assign": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Assign Stand Cluster */
+        post: operations["assign_stand_cluster_api_stand_clusters_assign_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stand-clusters/create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create Stand Cluster */
+        post: operations["create_stand_cluster_api_stand_clusters_create_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stand-clusters/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Delete Stand Cluster */
+        post: operations["delete_stand_cluster_api_stand_clusters_delete_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stand-clusters/rename": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rename Stand Cluster */
+        post: operations["rename_stand_cluster_api_stand_clusters_rename_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/state": {
         parameters: {
             query?: never;
@@ -348,6 +416,24 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** AssignStandClusterRequest */
+        AssignStandClusterRequest: {
+            /** C Id */
+            c_id?: number | null;
+            /** Edges */
+            edges: components["schemas"]["EdgeIdentity"][];
+            /** Expected Revision */
+            expected_revision: number;
+        };
+        /** CreateStandClusterRequest */
+        CreateStandClusterRequest: {
+            /** Edges */
+            edges: components["schemas"]["EdgeIdentity"][];
+            /** Expected Revision */
+            expected_revision: number;
+            /** Name */
+            name?: string | null;
+        };
         /** DeleteEdgePreviewResponse */
         DeleteEdgePreviewResponse: {
             /** Edge */
@@ -374,6 +460,13 @@ export interface components {
             recommended_unpaired: string[];
             /** Revision */
             revision: number;
+        };
+        /** DeleteStandClusterRequest */
+        DeleteStandClusterRequest: {
+            /** C Id */
+            c_id: number;
+            /** Expected Revision */
+            expected_revision: number;
         };
         /** DrawConnectionRequest */
         DrawConnectionRequest: {
@@ -430,6 +523,8 @@ export interface components {
         EdgeProperties: {
             /** Aeroway */
             aeroway?: string | null;
+            /** Cluster Id */
+            cluster_id?: number | null;
             /** Editable Attributes */
             editable_attributes: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -712,6 +807,15 @@ export interface components {
              */
             type: "Point";
         };
+        /** RenameStandClusterRequest */
+        RenameStandClusterRequest: {
+            /** C Id */
+            c_id: number;
+            /** Expected Revision */
+            expected_revision: number;
+            /** Name */
+            name?: string | null;
+        };
         /** RestoreCandidateResponse */
         RestoreCandidateResponse: {
             /** Candidate Id */
@@ -809,6 +913,17 @@ export interface components {
             /** Source Reversed */
             source_reversed: boolean;
         };
+        /** StandClusterResponse */
+        StandClusterResponse: {
+            /** C Id */
+            c_id: number;
+            /** Name */
+            name?: string | null;
+            /** Stand Refs */
+            stand_refs: string[];
+            /** Stands */
+            stands: components["schemas"]["EdgeIdentity"][];
+        };
         /** TopologyComponent */
         TopologyComponent: {
             /** Index */
@@ -894,6 +1009,8 @@ export interface components {
             revision: number;
             /** Save Path */
             save_path: string;
+            /** Stand Clusters */
+            stand_clusters?: components["schemas"]["StandClusterResponse"][];
             topology: components["schemas"]["TopologySummary"];
             /** Topology Revision */
             topology_revision: number;
@@ -1553,6 +1670,174 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SplitSourcePreviewResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    assign_stand_cluster_api_stand_clusters_assign_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AssignStandClusterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCommandResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    create_stand_cluster_api_stand_clusters_create_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CreateStandClusterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCommandResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    delete_stand_cluster_api_stand_clusters_delete_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeleteStandClusterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCommandResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    rename_stand_cluster_api_stand_clusters_rename_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["RenameStandClusterRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GraphCommandResponse"];
                 };
             };
             /** @description Request validation error */

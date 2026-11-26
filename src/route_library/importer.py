@@ -10,7 +10,7 @@ from airport_surface import graph_id, load_graph
 from path_map import Path as MatchedPath
 from path_map import PathRecord
 
-from .models import RouteEntry, normalize_movement, normalize_runway_ref
+from .models import RouteEntry, RouteFlightMatch, normalize_movement, normalize_runway_ref
 from .repository import RouteLibraryRepository
 
 
@@ -70,6 +70,7 @@ def import_batch_run(
     matched_rows = 0
     skipped_missing_od = 0
     unique_entries: dict[str, RouteEntry] = {}
+    flight_matches: list[RouteFlightMatch] = []
 
     with matches_file.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -102,13 +103,24 @@ def import_batch_run(
                 graph_identity=graph_identity,
             )
             unique_entries.setdefault(entry.route_id, entry)
+            raw_flight_id = item.get("flight_id")
+            if raw_flight_id is not None and str(raw_flight_id).strip():
+                flight_matches.append(
+                    RouteFlightMatch(
+                        route_id=entry.route_id,
+                        movement=movement,
+                        flight_id=str(raw_flight_id),
+                    )
+                )
 
     entries = list(unique_entries.values())
     if replace_candidates:
-        deleted, inserted, existing = repository.replace_candidates(graph_identity, entries)
+        deleted, inserted, existing = repository.replace_candidates(
+            graph_identity, entries, flight_matches=flight_matches
+        )
     else:
         deleted = 0
-        inserted, existing = repository.upsert_routes(entries)
+        inserted, existing = repository.upsert_routes(entries, flight_matches=flight_matches)
     return ImportSummary(
         run_dir=directory,
         graph_id=graph_identity,

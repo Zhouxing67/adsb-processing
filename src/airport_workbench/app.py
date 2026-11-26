@@ -129,6 +129,25 @@ class ManualSnapRequest(VersionedRequest):
     edge: EdgeIdentity
 
 
+class CreateStandClusterRequest(VersionedRequest):
+    edges: list[EdgeIdentity] = Field(min_length=1)
+    name: str | None = None
+
+
+class AssignStandClusterRequest(VersionedRequest):
+    edges: list[EdgeIdentity] = Field(min_length=1)
+    c_id: StrictInt | None = None
+
+
+class RenameStandClusterRequest(VersionedRequest):
+    c_id: StrictInt
+    name: str | None = None
+
+
+class DeleteStandClusterRequest(VersionedRequest):
+    c_id: StrictInt
+
+
 class BrowserState:
     def __init__(self, session: EditorSession) -> None:
         self.session = session
@@ -205,6 +224,7 @@ class BrowserState:
             geometry = data.get("geometry") or LineString(
                 [graph.nodes[u]["pos"][:2], graph.nodes[v]["pos"][:2]]
             )
+            cluster = self.session.airport_graph.cluster_for_edge((u, v, key))
             edge_features.append(
                 {
                     "type": "Feature",
@@ -220,6 +240,7 @@ class BrowserState:
                         "aeroway": data.get("aeroway"),
                         "name": data.get("name"),
                         "ref": data.get("ref"),
+                        "cluster_id": cluster.c_id if cluster is not None else None,
                         "editable_attributes": to_json_value(
                             {
                                 name: value
@@ -230,9 +251,25 @@ class BrowserState:
                     },
                 }
             )
+        stand_clusters = [
+            {
+                "c_id": cluster.c_id,
+                "name": cluster.name,
+                "stands": [
+                    {"u": u, "v": v, "key": edge_key}
+                    for u, v, edge_key in cluster.stands
+                ],
+                "stand_refs": list(self.session.airport_graph.stand_refs_in_cluster(cluster.c_id)),
+            }
+            for cluster in sorted(
+                self.session.airport_graph.stand_clusters.values(),
+                key=lambda item: item.c_id,
+            )
+        ]
         return {
             "nodes": {"type": "FeatureCollection", "features": node_features},
             "edges": {"type": "FeatureCollection", "features": edge_features},
+            "stand_clusters": stand_clusters,
             "node_count": graph.number_of_nodes(),
             "edge_count": graph.number_of_edges(),
             "flight_count": 0,
@@ -295,7 +332,7 @@ def create_app(
         )
         if not flight_workbench.items:
             flight_workbench.close()
-            raise ValueError("DuckDB 中没有可用的航班")
+            raise ValueError("数据库中没有可用的航班")
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -613,6 +650,66 @@ def create_app(
             *edge, item.attributes, expected_revision=item.expected_revision
         )
         return GraphCommandResponse(message=f"已更新边 {edge!r} 的属性", revision=result.revision)
+
+    @graph_routes.post("/api/stand-clusters/create")
+    def create_stand_cluster(item: CreateStandClusterRequest) -> GraphCommandResponse:
+        try:
+            result = session.create_stand_cluster(
+                [edge.as_tuple() for edge in item.edges],
+                name=item.name,
+                expected_revision=item.expected_revision,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        cluster = result.value
+        label = f" #{cluster.c_id}（{cluster.name}）" if cluster.name else f" #{cluster.c_id}"
+        return GraphCommandResponse(
+            message=f"已新建机位类别{label}，包含 {len(cluster.stands)} 条机位边",
+            revision=result.revision,
+        )
+
+    @graph_routes.post("/api/stand-clusters/assign")
+    def assign_stand_cluster(item: AssignStandClusterRequest) -> GraphCommandResponse:
+        try:
+            result = session.assign_stands_to_cluster(
+                [edge.as_tuple() for edge in item.edges],
+                item.c_id,
+                expected_revision=item.expected_revision,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        if item.c_id is None:
+            message = f"已将 {len(item.edges)} 条机位边移出类别"
+        else:
+            message = f"已将 {len(item.edges)} 条机位边归入类别 #{item.c_id}"
+        return GraphCommandResponse(message=message, revision=result.revision)
+
+    @graph_routes.post("/api/stand-clusters/rename")
+    def rename_stand_cluster(item: RenameStandClusterRequest) -> GraphCommandResponse:
+        try:
+            result = session.rename_stand_cluster(
+                item.c_id,
+                item.name,
+                expected_revision=item.expected_revision,
+            )
+        except ValueError as error:
+            raise HTTPException(400, str(error)) from error
+        label = result.value.name or f"Cluster #{item.c_id}"
+        return GraphCommandResponse(
+            message=f"已更新类别 #{item.c_id} 名称为 {label}",
+            revision=result.revision,
+        )
+
+    @graph_routes.post("/api/stand-clusters/delete")
+    def delete_stand_cluster(item: DeleteStandClusterRequest) -> GraphCommandResponse:
+        result = session.delete_stand_cluster(
+            item.c_id,
+            expected_revision=item.expected_revision,
+        )
+        return GraphCommandResponse(
+            message=f"已删除机位类别 #{item.c_id}",
+            revision=result.revision,
+        )
 
     @graph_routes.post("/api/save")
     def save(item: VersionedRequest) -> GraphCommandResponse:

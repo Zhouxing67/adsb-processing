@@ -284,6 +284,8 @@ export interface components {
         EdgeProperties: {
             /** Aeroway */
             aeroway?: string | null;
+            /** Cluster Id */
+            cluster_id?: number | null;
             /** Editable Attributes */
             editable_attributes: {
                 [key: string]: components["schemas"]["JsonValue"];
@@ -386,8 +388,6 @@ export interface components {
             stand_options: string[];
             /** Supports Validation Filter */
             supports_validation_filter: boolean;
-            /** Supports Whitelist Filter */
-            supports_whitelist_filter: boolean;
             time: components["schemas"]["TimeDisplayResponse"];
             /** Total */
             total: number;
@@ -793,6 +793,11 @@ export interface components {
             created_at: string | null;
             /** Edge Count */
             edge_count: number;
+            /**
+             * Flight Count
+             * @default 0
+             */
+            flight_count: number;
             /** Graph Id */
             graph_id: string;
             /** Matches Current Graph */
@@ -853,6 +858,17 @@ export interface components {
             nearest_m: number;
             /** Stand */
             stand: string;
+        };
+        /** StandClusterResponse */
+        StandClusterResponse: {
+            /** C Id */
+            c_id: number;
+            /** Name */
+            name?: string | null;
+            /** Stand Refs */
+            stand_refs: string[];
+            /** Stands */
+            stands: components["schemas"]["EdgeIdentity"][];
         };
         /** StandRecommendations */
         StandRecommendations: {
@@ -940,6 +956,8 @@ export interface components {
             revision: number;
             /** Save Path */
             save_path: string;
+            /** Stand Clusters */
+            stand_clusters?: components["schemas"]["StandClusterResponse"][];
             topology: components["schemas"]["TopologySummary"];
             /** Topology Revision */
             topology_revision: number;
@@ -965,7 +983,6 @@ export interface operations {
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
-                whitelist_only?: boolean;
                 issues_only?: boolean;
             };
             header?: never;
@@ -1015,7 +1032,6 @@ export interface operations {
                 start_date?: string | null;
                 end_date?: string | null;
                 validation_only?: boolean;
-                whitelist_only?: boolean;
                 issues_only?: boolean;
                 page?: number;
                 page_size?: number;

@@ -9,6 +9,7 @@ export type NodeId = GraphApi['schemas']['NodeIdField'];
 export type EdgeIdentity = GraphApi['schemas']['EdgeIdentity'];
 export type NodeProperties = GraphApi['schemas']['NodeProperties'];
 export type EdgeProperties = GraphApi['schemas']['EdgeProperties'];
+export type StandCluster = GraphApi['schemas']['StandClusterResponse'];
 export type TopologySummary = GraphApi['schemas']['TopologySummary'];
 export type WorkbenchState = GraphApi['schemas']['WorkbenchStateResponse'];
 export type FlightItem = FlightApi['schemas']['FlightCatalogueItemResponse'];

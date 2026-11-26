@@ -7,6 +7,8 @@ from .models import (
     SourceEdge,
     SourceNode,
     SourceSegment,
+    StandCluster,
+    canonical_edge_id,
     edge_source_segments,
     mutable_source_attributes,
 )
@@ -29,6 +31,8 @@ __all__ = [
     "SourceEdge",
     "SourceNode",
     "SourceSegment",
+    "StandCluster",
+    "canonical_edge_id",
     "cumulative_distances",
     "edge_source_segments",
     "mutable_source_attributes",

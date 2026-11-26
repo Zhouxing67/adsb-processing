@@ -13,14 +13,22 @@ from shapely.geometry import LineString, mapping, shape
 
 from utils.json_value import to_json_value
 
-from .models import AirportGraph, GraphMetadata, SourceEdge, SourceNode, edge_source_segments
+from .models import (
+    AirportGraph,
+    GraphMetadata,
+    SourceEdge,
+    SourceNode,
+    StandCluster,
+    edge_source_segments,
+)
 
 DEFAULT_GRAPH_PATH = Path("data/graphs/zbaa_final.json")
 GRAPH_SCHEMA_VERSION = 2
+_GRAPH_ID_EXCLUDED_FIELDS = frozenset({"graph_id", "stand_clusters"})
 
 
 def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
-    return {
+    document: dict[str, Any] = {
         "schema_version": GRAPH_SCHEMA_VERSION,
         "airport": airport_graph.metadata.airport,
         "projection": airport_graph.projection.srs,
@@ -71,10 +79,27 @@ def _graph_document(airport_graph: AirportGraph) -> dict[str, Any]:
             for u, v, key, data in airport_graph.graph.edges(keys=True, data=True)
         ],
     }
+    if airport_graph.stand_clusters:
+        document["stand_clusters"] = [
+            {
+                "c_id": cluster.c_id,
+                "name": cluster.name,
+                "stands": [
+                    [to_json_value(u), to_json_value(v), to_json_value(key)]
+                    for u, v, key in cluster.stands
+                ],
+            }
+            for cluster in sorted(
+                airport_graph.stand_clusters.values(), key=lambda item: item.c_id
+            )
+        ]
+    return document
 
 
 def _document_graph_id(document: Mapping[str, Any]) -> str:
-    payload = {key: value for key, value in document.items() if key != "graph_id"}
+    payload = {
+        key: value for key, value in document.items() if key not in _GRAPH_ID_EXCLUDED_FIELDS
+    }
     canonical = json.dumps(
         payload,
         ensure_ascii=False,
@@ -171,6 +196,18 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
     )
     projection_value = document.get("projection", "UTM zone 50")
     projection = Proj("EPSG:32650") if projection_value == "UTM zone 50" else Proj(projection_value)
+    raw_clusters = document.get("stand_clusters") or ()
+    stand_clusters = [
+        StandCluster(
+            c_id=int(item["c_id"]),
+            stands=tuple(
+                (str(edge[0]), str(edge[1]), int(edge[2]))
+                for edge in item.get("stands", ())
+            ),
+            name=item.get("name"),
+        )
+        for item in raw_clusters
+    ]
     return AirportGraph(
         graph,
         projection,
@@ -178,4 +215,5 @@ def load_graph(path: str | Path = DEFAULT_GRAPH_PATH) -> AirportGraph:
         source_edges=source_edges,
         node_aliases=dict(document.get("node_aliases", ())),
         metadata=metadata,
+        stand_clusters=stand_clusters,
     )

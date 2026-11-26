@@ -1,10 +1,10 @@
 import { useCallback, useEffect, useReducer, useState } from 'react';
 import { api } from '../../api/client';
 import type { GraphPostInput, GraphPostPath } from '../../api/client';
-import type { EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
+import type { EdgeIdentity, EdgeProperties, GeoFeature, LineGeometry, NodeId, NodeProperties, PointGeometry, SelectedFeature } from '../../api/types';
 import { useWorkbench } from '../../app/WorkbenchContext';
 import type { EditorTool } from '../../app/WorkbenchContext';
-import { isNodeFeature as isNode } from '../../domain/features';
+import { isNodeFeature as isNode, isSameEdge } from '../../domain/features';
 import type { Aeroway } from '../../domain/properties';
 import type { MapPreviewLine } from '../map/MapView';
 import type { GraphDialogState } from './types';
@@ -81,11 +81,7 @@ export function useGraphEditorMachine() {
           !isNode(machine.selection[0])
             ? (machine.selection[0] as GeoFeature<LineGeometry, EdgeProperties>)
             : null;
-        const sameEdge =
-          currentEdge !== null &&
-          currentEdge.properties.u === feature.properties.u &&
-          currentEdge.properties.v === feature.properties.v &&
-          currentEdge.properties.key === feature.properties.key;
+        const sameEdge = currentEdge !== null && isSameEdge(currentEdge.properties, feature.properties);
         if (sameEdge && clickPoint) {
           const [longitude, latitude] = clickPoint;
           const preview = await wb.previewGraphCommand('/api/split-source-preview', {
@@ -129,6 +125,25 @@ export function useGraphEditorMachine() {
       }
       return;
     }
+    if (wb.tool === 'cluster') {
+      if (isNode(feature) || feature.properties.aeroway !== 'parking_position') {
+        wb.dispatch({ type: 'status', value: '机位聚类 · 请点击停机位边（parking_position）' });
+        return;
+      }
+      const matchesTarget = (item: SelectedFeature) => !isNode(item) && isSameEdge(item.properties, feature.properties);
+      const exists = machine.selection.some(matchesTarget);
+      const selection = exists
+        ? machine.selection.filter(item => !matchesTarget(item))
+        : [...machine.selection, feature];
+      send({ type: 'SELECT', selection });
+      wb.dispatch({
+        type: 'status',
+        value: selection.length
+          ? `已选择 ${selection.length} 条机位边 · 可新建类别或加入已有类别`
+          : '机位聚类 · 点击多条机位边加入新类别或已有类别',
+      });
+      return;
+    }
     if (wb.tool === 'snap') {
       if (!machine.selection.length && isNode(feature)) { send({ type: 'SELECT', selection: [feature] }); wb.dispatch({ type: 'status', value: '请选择目标边' }); return; }
       if (machine.selection.length && !isNode(feature)) {
@@ -157,6 +172,26 @@ export function useGraphEditorMachine() {
   }, [machine, wb, openDialog]);
 
   const mergeNodeIds = machine.selection.reduce<NodeId[]>((ids, item) => { if (isNode(item)) ids.push(item.properties.id); return ids; }, []);
+  const clusterEdges = machine.selection.reduce<EdgeIdentity[]>((edges, item) => {
+    if (!isNode(item) && item.properties.aeroway === 'parking_position') edges.push(item.properties.id);
+    return edges;
+  }, []);
+  const createCluster = useCallback(async (name: string): Promise<boolean> => {
+    if (!clusterEdges.length) return false;
+    if (await wb.runGraphCommand('/api/stand-clusters/create', { edges: clusterEdges, name: name.trim() || null }) !== null) {
+      reset();
+      return true;
+    }
+    return false;
+  }, [clusterEdges, wb, reset]);
+  const assignCluster = useCallback(async (cId: number | null): Promise<boolean> => {
+    if (!clusterEdges.length) return false;
+    if (await wb.runGraphCommand('/api/stand-clusters/assign', { edges: clusterEdges, c_id: cId }) !== null) {
+      reset();
+      return true;
+    }
+    return false;
+  }, [clusterEdges, wb, reset]);
   const undoDrawPoint = useCallback(() => send({ type: 'UNDO_POINT' }), []);
   const setPreviewOverlays = useCallback((overlays: MapPreviewLine[]) => send({ type: 'SET_PREVIEW', overlays }), []);
 
@@ -171,11 +206,14 @@ export function useGraphEditorMachine() {
     dialog: machine.dialog,
     previewOverlays: machine.previewOverlays,
     mergeNodeIds,
+    clusterEdges,
     handleFeature,
     handleMapClick,
     reset,
     openMergeCandidates,
     previewMerge,
+    createCluster,
+    assignCluster,
     confirmDialog,
     undoDrawPoint,
     setPreviewOverlays,

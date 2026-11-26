@@ -87,6 +87,17 @@
             ],
             "title": "Aeroway"
           },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
+          },
           "editable_attributes": {
             "additionalProperties": {
               "$ref": "#/components/schemas/JsonValue"
@@ -388,10 +399,6 @@
             "title": "Supports Validation Filter",
             "type": "boolean"
           },
-          "supports_whitelist_filter": {
-            "title": "Supports Whitelist Filter",
-            "type": "boolean"
-          },
           "time": {
             "$ref": "#/components/schemas/TimeDisplayResponse"
           },
@@ -408,7 +415,6 @@
           "items",
           "stand_options",
           "supports_validation_filter",
-          "supports_whitelist_filter",
           "total",
           "total_pages",
           "page",
@@ -1527,6 +1533,11 @@
             "title": "Edge Count",
             "type": "integer"
           },
+          "flight_count": {
+            "default": 0,
+            "title": "Flight Count",
+            "type": "integer"
+          },
           "graph_id": {
             "title": "Graph Id",
             "type": "string"
@@ -1714,6 +1725,48 @@
           "nearest_m"
         ],
         "title": "SpatialStandCandidate",
+        "type": "object"
+      },
+      "StandClusterResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "c_id": {
+            "minimum": 1.0,
+            "title": "C Id",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "stand_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stand Refs",
+            "type": "array"
+          },
+          "stands": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeIdentity"
+            },
+            "title": "Stands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "c_id",
+          "stands",
+          "stand_refs"
+        ],
+        "title": "StandClusterResponse",
         "type": "object"
       },
       "StandRecommendations": {
@@ -1966,6 +2019,13 @@
             "title": "Save Path",
             "type": "string"
           },
+          "stand_clusters": {
+            "items": {
+              "$ref": "#/components/schemas/StandClusterResponse"
+            },
+            "title": "Stand Clusters",
+            "type": "array"
+          },
           "topology": {
             "$ref": "#/components/schemas/TopologySummary"
           },
@@ -2127,16 +2187,6 @@
             "schema": {
               "default": false,
               "title": "Validation Only",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "whitelist_only",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Whitelist Only",
               "type": "boolean"
             }
           },
@@ -2313,16 +2363,6 @@
             "schema": {
               "default": false,
               "title": "Validation Only",
-              "type": "boolean"
-            }
-          },
-          {
-            "in": "query",
-            "name": "whitelist_only",
-            "required": false,
-            "schema": {
-              "default": false,
-              "title": "Whitelist Only",
               "type": "boolean"
             }
           },

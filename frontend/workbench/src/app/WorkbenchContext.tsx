@@ -19,7 +19,7 @@ import {
 } from './mapLayerCollection';
 import type { FocusRequest, MapLayerCollection, MapLayerInput } from './mapLayerCollection';
 
-export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'delete';
+export type EditorTool = 'inspect' | 'split' | 'draw' | 'restore' | 'merge' | 'snap' | 'cluster' | 'delete';
 export type MainView = 'map' | 'route-map' | 'flights' | 'observations' | 'routes';
 export type FocusFlightRequest = FocusRequest;
 export interface FocusFeatureRequest { feature: SelectedFeature; seq: number }

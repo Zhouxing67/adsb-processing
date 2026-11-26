@@ -1,6 +1,72 @@
 {
   "components": {
     "schemas": {
+      "AssignStandClusterRequest": {
+        "properties": {
+          "c_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "C Id"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeIdentity"
+            },
+            "minItems": 1,
+            "title": "Edges",
+            "type": "array"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "edges"
+        ],
+        "title": "AssignStandClusterRequest",
+        "type": "object"
+      },
+      "CreateStandClusterRequest": {
+        "properties": {
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeIdentity"
+            },
+            "minItems": 1,
+            "title": "Edges",
+            "type": "array"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "edges"
+        ],
+        "title": "CreateStandClusterRequest",
+        "type": "object"
+      },
       "DeleteEdgePreviewResponse": {
         "additionalProperties": false,
         "properties": {
@@ -86,6 +152,24 @@
           "recommended_unpaired"
         ],
         "title": "DeleteNodePreviewResponse",
+        "type": "object"
+      },
+      "DeleteStandClusterRequest": {
+        "properties": {
+          "c_id": {
+            "title": "C Id",
+            "type": "integer"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "c_id"
+        ],
+        "title": "DeleteStandClusterRequest",
         "type": "object"
       },
       "DrawConnectionRequest": {
@@ -228,6 +312,17 @@
               }
             ],
             "title": "Aeroway"
+          },
+          "cluster_id": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cluster Id"
           },
           "editable_attributes": {
             "additionalProperties": {
@@ -1026,6 +1121,35 @@
         "title": "PointGeometry",
         "type": "object"
       },
+      "RenameStandClusterRequest": {
+        "properties": {
+          "c_id": {
+            "title": "C Id",
+            "type": "integer"
+          },
+          "expected_revision": {
+            "title": "Expected Revision",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          }
+        },
+        "required": [
+          "expected_revision",
+          "c_id"
+        ],
+        "title": "RenameStandClusterRequest",
+        "type": "object"
+      },
       "RestoreCandidateResponse": {
         "additionalProperties": false,
         "properties": {
@@ -1337,6 +1461,48 @@
         "title": "SplitSourcePreviewResponse",
         "type": "object"
       },
+      "StandClusterResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "c_id": {
+            "minimum": 1.0,
+            "title": "C Id",
+            "type": "integer"
+          },
+          "name": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Name"
+          },
+          "stand_refs": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Stand Refs",
+            "type": "array"
+          },
+          "stands": {
+            "items": {
+              "$ref": "#/components/schemas/EdgeIdentity"
+            },
+            "title": "Stands",
+            "type": "array"
+          }
+        },
+        "required": [
+          "c_id",
+          "stands",
+          "stand_refs"
+        ],
+        "title": "StandClusterResponse",
+        "type": "object"
+      },
       "TopologyComponent": {
         "additionalProperties": false,
         "properties": {
@@ -1556,6 +1722,13 @@
           "save_path": {
             "title": "Save Path",
             "type": "string"
+          },
+          "stand_clusters": {
+            "items": {
+              "$ref": "#/components/schemas/StandClusterResponse"
+            },
+            "title": "Stand Clusters",
+            "type": "array"
           },
           "topology": {
             "$ref": "#/components/schemas/TopologySummary"
@@ -2347,6 +2520,198 @@
           }
         },
         "summary": "Split Source Preview"
+      }
+    },
+    "/api/stand-clusters/assign": {
+      "post": {
+        "operationId": "assign_stand_cluster_api_stand_clusters_assign_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AssignStandClusterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Assign Stand Cluster"
+      }
+    },
+    "/api/stand-clusters/create": {
+      "post": {
+        "operationId": "create_stand_cluster_api_stand_clusters_create_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateStandClusterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Create Stand Cluster"
+      }
+    },
+    "/api/stand-clusters/delete": {
+      "post": {
+        "operationId": "delete_stand_cluster_api_stand_clusters_delete_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DeleteStandClusterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Delete Stand Cluster"
+      }
+    },
+    "/api/stand-clusters/rename": {
+      "post": {
+        "operationId": "rename_stand_cluster_api_stand_clusters_rename_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameStandClusterRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/GraphCommandResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Rename Stand Cluster"
       }
     },
     "/api/state": {
