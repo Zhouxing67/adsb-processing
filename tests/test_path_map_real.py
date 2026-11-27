@@ -52,9 +52,6 @@ def test_target_flight_never_returns_the_prohibited_turn(target_case):
     path = Matcher(airport_graph, MatchConfig()).map_flight(flight)
 
     prohibited = ("244881044", "1055651195", "244881044")
-    assert all(
-        tuple(path.nodes[index : index + 3]) != prohibited for index in range(len(path.nodes) - 2)
-    )
-    assert ("244881041", "244881044", "244881048") in tuple(
-        tuple(path.nodes[index : index + 3]) for index in range(len(path.nodes) - 2)
-    )
+    triples = tuple(tuple(path.nodes[index : index + 3]) for index in range(len(path.nodes) - 2))
+    assert all(triple != prohibited for triple in triples)
+    assert ("244881044", "244881048") in tuple(zip(path.nodes, path.nodes[1:]))

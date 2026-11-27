@@ -43,26 +43,21 @@ class MatchConfig:
     candidate_radius: float = 120.0
     max_candidates: int = 16
     gps_sigma: float = 10.0
-    transition_beta: float = 20.0
+    length_scale_m: float = 50.0
     max_transition_turn_angle_deg: float = 130.0
     turn_tangent_sample_m: float = 2.0
-    same_edge_jitter_m: float = 5.0
-    max_transition_detour_m: float = 250.0
     max_pushback_radius_m: float = 250.0
 
     def __post_init__(self) -> None:
         distances = (
             self.candidate_radius,
             self.gps_sigma,
-            self.transition_beta,
+            self.length_scale_m,
             self.turn_tangent_sample_m,
-            self.max_transition_detour_m,
             self.max_pushback_radius_m,
         )
         if any(not math.isfinite(value) or value <= 0 for value in distances):
             raise ValueError("Distance parameters must be finite and positive")
-        if not math.isfinite(self.same_edge_jitter_m) or self.same_edge_jitter_m < 0:
-            raise ValueError("same_edge_jitter_m must be finite and non-negative")
         if (
             not math.isfinite(self.max_transition_turn_angle_deg)
             or not 0 < self.max_transition_turn_angle_deg <= 180

@@ -9,17 +9,19 @@ from shapely.geometry import LineString, Point
 from airport_surface import AirportGraph
 from path_map.candidates import CandidateIndex
 from path_map.edge_dtw import (
-    EdgeState,
-    decode_edge_route,
+    DepartureState,
+    decode_arrival_route,
+    decode_departure_route,
     directed_edge_distances,
+    observation_log_score,
 )
-from path_map.hmm import observation_log_score
 from path_map.path import Path
 from path_map.router import DirectedNetworkRouter
+from path_map.viterbi import viterbi
 from tests.test_path_map import straight_airport_graph, straight_od_graph
 
 
-def test_edge_dtw_matches_exhaustive_search_on_straight_graph():
+def test_arrival_dtw_matches_exhaustive_search_on_straight_graph():
     graph, _ = straight_airport_graph()
     index = CandidateIndex(graph)
     router = DirectedNetworkRouter(index)
@@ -30,7 +32,7 @@ def test_edge_dtw_matches_exhaustive_search_on_straight_graph():
     ]
     sigma, length_scale = 2.0, 50.0
 
-    edges = decode_edge_route(
+    edges = decode_arrival_route(
         obs_candidates,
         observations,
         router,
@@ -58,7 +60,7 @@ def test_edge_dtw_matches_exhaustive_search_on_straight_graph():
     assert best_seq == (("1", "2", 0), ("1", "2", 0), ("2", "3", 1))
 
 
-def test_edge_dtw_absorbs_heavy_backward_jitter_without_heuristics():
+def test_arrival_dtw_absorbs_heavy_backward_jitter_without_heuristics():
     """Large backward jitter (15m+) on a normal taxiway stays cleanly on the edge."""
     projection = Proj("EPSG:32650")
     to_wgs84 = Transformer.from_proj(projection, "EPSG:4326", always_xy=True)
@@ -75,7 +77,7 @@ def test_edge_dtw_absorbs_heavy_backward_jitter_without_heuristics():
         graph.add_edge(u, v, key=0, geometry=line)
     airport_graph = AirportGraph(graph, projection)
     index = CandidateIndex(airport_graph)
-    router = DirectedNetworkRouter(index, same_edge_jitter_m=0.0)
+    router = DirectedNetworkRouter(index)
 
     # Jitter backwards by 25m on 1->2, then poke 3m past junction 2 and jitter back 15m onto 1->2,
     # before continuing cleanly onto 2->3.
@@ -86,12 +88,14 @@ def test_edge_dtw_absorbs_heavy_backward_jitter_without_heuristics():
         for i, pt in enumerate(observations)
     ]
 
-    edges = decode_edge_route(obs_candidates, observations, router, sigma=10.0, length_scale_m=50.0)
+    edges = decode_arrival_route(
+        obs_candidates, observations, router, sigma=10.0, length_scale_m=50.0
+    )
     path = Path(airport_graph, edges)
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 0))
 
 
-def test_edge_dtw_supports_departure_pushback_reversal():
+def test_departure_dtw_supports_pushback_reversal():
     """Departure pushes back from dead-end stand then reverses once onto the taxiway."""
     projection = Proj("EPSG:32650")
     to_wgs84 = Transformer.from_proj(projection, "EPSG:4326", always_xy=True)
@@ -127,13 +131,12 @@ def test_edge_dtw_supports_departure_pushback_reversal():
         for i, pt in enumerate(observations)
     ]
 
-    edges = decode_edge_route(
+    edges = decode_departure_route(
         obs_candidates,
         observations,
         router,
         sigma=10.0,
         length_scale_m=50.0,
-        allow_single_reversal=True,
         max_pushback_radius_m=250.0,
         start_edges=[("1", "2", 0)],
         end_edges=[("2", "4", 0)],
@@ -142,7 +145,7 @@ def test_edge_dtw_supports_departure_pushback_reversal():
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 0), ("3", "2", 0), ("2", "4", 0))
 
 
-def test_edge_dtw_connects_od_boundaries_across_missing_signal_gap():
+def test_arrival_dtw_connects_od_boundaries_across_missing_signal_gap():
     graph, _ = straight_od_graph()
     index = CandidateIndex(graph)
     router = DirectedNetworkRouter(index)
@@ -150,7 +153,7 @@ def test_edge_dtw_connects_od_boundaries_across_missing_signal_gap():
     observations = [Point(450_015.0, 4_428_000.0)]
     obs_candidates = [index.candidates(0, observations[0], radius=5.0, maximum=2)]
 
-    edges = decode_edge_route(
+    edges = decode_arrival_route(
         obs_candidates,
         observations,
         router,
@@ -160,4 +163,42 @@ def test_edge_dtw_connects_od_boundaries_across_missing_signal_gap():
     )
     path = Path(graph, edges)
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 1), ("3", "5", 0))
-    assert EdgeState(("1", "2", 0)).reversed_used is False
+    assert DepartureState(("1", "2", 0)).reversed_used is False
+
+
+def test_generic_viterbi_decodes_arbitrary_state_sequence():
+    class TableScorer:
+        def __init__(self, weights: dict[tuple[str, str], float]) -> None:
+            self._weights = weights
+
+        def best_predecessors(
+            self,
+            previous_layer: tuple[str, ...],
+            previous_scores: list[float],
+            current_layer: tuple[str, ...],
+        ) -> tuple[list[float], list[int]]:
+            best_scores: list[float] = []
+            best_indices: list[int] = []
+            for target in current_layer:
+                best_score = float("-inf")
+                best_index = -1
+                for idx, (source, prev_score) in enumerate(zip(previous_layer, previous_scores)):
+                    weight = self._weights.get((source, target))
+                    if weight is None:
+                        continue
+                    candidate_score = prev_score + weight
+                    if candidate_score > best_score:
+                        best_score = candidate_score
+                        best_index = idx
+                best_scores.append(best_score)
+                best_indices.append(best_index)
+            return best_scores, best_indices
+
+    layers = [("A", "B"), ("C", "D"), ("E",)]
+    emissions = {"A": -1.0, "B": -0.5, "C": -0.2, "D": -2.0, "E": 0.0}
+    scorers = [
+        TableScorer({("A", "C"): -0.1, ("B", "C"): -3.0, ("B", "D"): -0.1}),
+        TableScorer({("C", "E"): -0.2, ("D", "E"): -0.1}),
+    ]
+
+    assert viterbi(layers, emissions.__getitem__, scorers) == ["A", "C", "E"]

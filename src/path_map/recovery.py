@@ -1,4 +1,4 @@
-"""Observation projection and matched path recovery utilities."""
+"""Observation projection and matched path post-processing utilities."""
 
 from __future__ import annotations
 
@@ -18,28 +18,6 @@ def project_observations(airport_graph: AirportGraph, flight: Flight) -> list[Po
     longitude, latitude = zip(*coordinates)
     x, y = airport_graph.project.transform(longitude, latitude)
     return [Point(float(px), float(py)) for px, py in zip(x, y)]
-
-
-def append_transition_edges(
-    output: list[DirectedEdge], edges: Sequence[DirectedEdge]
-) -> None:
-    """Join transitions, collapsing only continued travel on their shared boundary edge."""
-    start = 1 if output and edges and output[-1] == edges[0] else 0
-    output.extend(edges[start:])
-
-
-def recover_edges(
-    edge_sequences: Sequence[Sequence[DirectedEdge]],
-    fallback_edge: EdgeId,
-) -> list[DirectedEdge]:
-    """Flatten step edge sequences into a continuous directed edge list."""
-    if not edge_sequences:
-        u, v, key = fallback_edge
-        return [DirectedEdge(u, v, key)]
-    output: list[DirectedEdge] = []
-    for edges in edge_sequences:
-        append_transition_edges(output, edges)
-    return output
 
 
 def trim_runway_edges(

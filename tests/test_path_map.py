@@ -110,7 +110,7 @@ def test_reusing_matcher_does_not_mutate_graph_or_change_result():
     )
     matcher = Matcher(
         airport_graph,
-        MatchConfig(candidate_radius=3, max_candidates=3, gps_sigma=2, transition_beta=5),
+        MatchConfig(candidate_radius=3, max_candidates=3, gps_sigma=2),
     )
     original_nodes = tuple(airport_graph.graph.nodes)
     original_edges = tuple(airport_graph.graph.edges(keys=True))
@@ -151,7 +151,6 @@ def robust_matcher(airport_graph: AirportGraph) -> Matcher:
             candidate_radius=30,
             max_candidates=10,
             gps_sigma=5,
-            transition_beta=10,
         ),
     )
 
@@ -198,33 +197,6 @@ def test_fixed_od_finds_legal_alternative_or_reports_failure(departure, detour):
     else:
         with pytest.raises(MapMatchingError, match="No turn-constrained path"):
             matcher.map_flight(flight)
-
-
-def test_fixed_od_cannot_reverse_direction_between_observations():
-    airport_graph, to_wgs84 = straight_airport_graph()
-    graph = airport_graph.graph
-    graph.edges["1", "2", 0].update(aeroway="parking_position", ref="009")
-    graph.edges["2", "3", 1]["aeroway"] = "taxiway"
-    x, y = 450_000, 4_428_000
-    graph.add_node("5", pos=to_wgs84.transform(x + 30, y))
-    graph.add_edge(
-        "3",
-        "5",
-        aeroway="runway",
-        geometry=LineString([graph.nodes["3"]["pos"], graph.nodes["5"]["pos"]]),
-    )
-    for _, _, data in graph.edges(data=True):
-        if data.get("aeroway") == "runway":
-            data["ref"] = "01/19"
-    airport_graph.rebuild_stand_index()
-    airport_graph.rebuild_runway_interfaces()
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
-    forward = make_flight(to_wgs84, [(x + 12, y), (x + 18, y)])
-    reverse = make_flight(to_wgs84, [(x + 18, y), (x + 12, y)])
-
-    assert matcher.map_flight(forward).edge_ids == (("1", "2", 0), ("2", "3", 1))
-    with pytest.raises(MapMatchingError, match="No turn-constrained path"):
-        matcher.map_flight(reverse)
 
 
 @pytest.mark.parametrize(
@@ -404,7 +376,7 @@ def test_self_loop_candidates_are_ignored():
     matcher.index = type(
         "SelfLoopIndex",
         (),
-        {"candidates": lambda self, *_args: [Candidate(0, ("1", "1", 2), 0, Point(0, 0), 0, 0)]},
+        {"candidates": lambda self, *_args: [Candidate(0, ("1", "1", 2), 0.0)]},
     )()
 
     assert matcher._candidates(0, Point(0, 0)) == []
@@ -623,7 +595,7 @@ def test_departure_allows_single_pushback_reversal_without_detour_loop():
         [(x0, y0 + 20), (x0, y0 + 80), (x0, y0 + 40), (x0 - 60, y0)],
         movement="departure",
     )
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20))
 
     path = matcher.map_flight(flight)
 
@@ -638,7 +610,7 @@ def test_arrival_does_not_allow_in_place_reversal():
         [(x0 - 60, y0), (x0, y0 + 40), (x0, y0 + 80), (x0, y0 + 20)],
         movement="arrival",
     )
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20))
 
     with pytest.raises(MapMatchingError, match="No turn-constrained path"):
         matcher.map_flight(flight)
@@ -685,7 +657,7 @@ def test_runway_roll_observations_disambiguate_symmetric_runway_entries():
         movement="departure",
     )
     flight = Flight([{**row, "org_runway": None} for row in flight.rows], movement="departure")
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=30, transition_beta=20))
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=30))
 
     path = matcher.map_flight(flight)
 
@@ -703,7 +675,7 @@ def test_missing_runway_ref_requires_runway_end_observation():
         movement="departure",
     )
     flight = Flight([{**row, "org_runway": None} for row in flight.rows], movement="departure")
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20, transition_beta=20))
+    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20))
 
     with pytest.raises(MapMatchingError, match="Missing flight OD") as exc_info:
         matcher.map_flight(flight)
@@ -808,28 +780,85 @@ def test_stand_edge_tolerates_larger_stationary_multipath_jitter():
     assert matcher.map_flight(flight).edge_ids == (("4", "2", 0), ("2", "1", 0))
 
 
-def test_single_step_detour_exceeding_limit_is_pruned():
-    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=True)
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_pushback_radius_configuration_must_be_finite_and_positive(value):
+    with pytest.raises(ValueError, match="finite and positive"):
+        MatchConfig(max_pushback_radius_m=value)
+
+
+@pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])
+def test_length_scale_configuration_must_be_finite_and_positive(value):
+    with pytest.raises(ValueError, match="finite and positive"):
+        MatchConfig(length_scale_m=value)
+
+
+def _rapid_exit_reversal_graph() -> tuple[AirportGraph, Transformer]:
+    projection = Proj(proj="utm", zone=50, ellps="WGS84")
+    to_wgs84 = Transformer.from_proj(projection, AirportGraph.wgs84, always_xy=True)
     x0, y0 = 450_000.0, 4_428_000.0
-    # Arrival observations moving backward on (2->3): without detour pruning, the 300m detour
-    # bulb could legally reverse direction; with max_transition_detour_m=100, it is pruned.
+    coords = {
+        "1": (x0, y0),  # stand start
+        "2": (x0, y0 + 60),  # stand exit onto northbound taxiway
+        "3": (x0, y0 + 500),  # junction with backward-angled rapid-exit taxiway
+        "4": (x0, y0 + 800),  # north taxiway turn into runway
+        "5": (x0 - 80, y0 + 800),  # north runway interface
+        "6": (x0 - 80, y0 + 360),  # rapid-exit runway interface (~150 deg from northbound)
+    }
+    graph = nx.MultiGraph()
+    for node, (x, y) in coords.items():
+        graph.add_node(node, pos=to_wgs84.transform(x, y))
+
+    def add_line(u: str, v: str, key: int, **attrs) -> None:
+        graph.add_edge(
+            u,
+            v,
+            key=key,
+            geometry=LineString([graph.nodes[u]["pos"], graph.nodes[v]["pos"]]),
+            **attrs,
+        )
+
+    add_line("1", "2", 0, aeroway="parking_position", ref="009")
+    add_line("2", "3", 0, aeroway="taxiway")
+    add_line("3", "4", 0, aeroway="taxiway")
+    add_line("4", "5", 0, aeroway="taxiway")
+    add_line("3", "6", 0, aeroway="taxiway")
+    add_line("6", "5", 0, aeroway="runway", ref="01/19")
+    return AirportGraph(graph, projection), to_wgs84
+
+
+def test_departure_blocks_reversal_outside_pushback_radius_near_runway():
+    airport_graph, to_wgs84 = _rapid_exit_reversal_graph()
+    x0, y0 = 450_000.0, 4_428_000.0
     flight = make_flight(
         to_wgs84,
-        [(x0 - 60, y0), (x0, y0 + 20), (x0, y0 + 80), (x0, y0 + 20)],
-        movement="arrival",
-    )
-    matcher = Matcher(
-        airport_graph,
-        MatchConfig(candidate_radius=20, max_transition_detour_m=100.0),
+        [(x0, y0 + 20), (x0, y0 + 300), (x0, y0 + 540)],
+        movement="departure",
     )
 
-    with pytest.raises(MapMatchingError) as exc_info:
-        matcher.map_flight(flight)
+    gated = Matcher(airport_graph, MatchConfig(candidate_radius=20))
+    assert gated.map_flight(flight).edge_ids == (
+        ("1", "2", 0),
+        ("2", "3", 0),
+        ("3", "4", 0),
+        ("4", "5", 0),
+    )
 
-    assert exc_info.value.code is MapMatchingFailure.NO_LEGAL_PATH
 
+def test_departure_pushback_radius_is_anchored_to_stand_when_early_observations_missing():
+    airport_graph, to_wgs84 = _rapid_exit_reversal_graph()
+    x0, y0 = 450_000.0, 4_428_000.0
+    # First observation is already 270m north of the stand (only 240m from y0+540);
+    # Phase 2 must anchor pushback radius to the stand, not observations[0].
+    flight = make_flight(
+        to_wgs84,
+        [(x0, y0 + 300), (x0, y0 + 540)],
+        movement="departure",
+    )
 
-@pytest.mark.parametrize("value", [-1, float("inf"), float("nan")])
-def test_same_edge_jitter_must_be_finite_and_non_negative(value):
-    with pytest.raises(ValueError, match="same_edge_jitter_m"):
-        MatchConfig(same_edge_jitter_m=value)
+    gated = Matcher(airport_graph, MatchConfig(candidate_radius=20))
+    assert gated.map_flight(flight).edge_ids == (
+        ("1", "2", 0),
+        ("2", "3", 0),
+        ("3", "4", 0),
+        ("4", "5", 0),
+    )

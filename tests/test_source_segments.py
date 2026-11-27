@@ -537,7 +537,7 @@ def test_hmm_geometry_and_length_remain_stable_after_safe_manual_simplification(
         ),
         movement="departure",
     )
-    config = MatchConfig(candidate_radius=5, max_candidates=4, gps_sigma=2, transition_beta=5)
+    config = MatchConfig(candidate_radius=5, max_candidates=4, gps_sigma=2)
 
     def match_with_od(airport_graph):
         airport_graph = airport_graph.copy()

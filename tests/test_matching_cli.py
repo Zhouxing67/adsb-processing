@@ -109,7 +109,7 @@ display_timezone = 'UTC'
 max_candidates = 9
 candidate_radius = 25
 gps_sigma = 7
-transition_beta = 12
+length_scale_m = 60
 max_transition_turn_angle_deg = 140
 turn_tangent_sample_m = 8
 """)
@@ -129,7 +129,7 @@ turn_tangent_sample_m = 8
     assert captured["port"] == 8877
     assert captured["open_browser"] is False
     assert captured["save_path"] == Path("custom-graph.json")
-    assert captured["match_config"] == MatchConfig(25, 9, 7, 12, 140, 8)
+    assert captured["match_config"] == MatchConfig(25, 9, 7, 60, 140, 8)
 
 
 def test_settings_defaults_match_algorithm(database_calls):
