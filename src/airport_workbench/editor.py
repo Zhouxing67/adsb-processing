@@ -897,9 +897,6 @@ class EditorSession:
             kinds.add(normalized if normalized else None)
         return kinds
 
-    def _is_business_boundary(self, records: Sequence[dict[str, Any]]) -> bool:
-        return len(self._incident_aeroways(records)) > 1
-
     def _check_business_boundary(self, records: Sequence[dict[str, Any]]) -> None:
         kinds = self._incident_aeroways(records)
         if len(kinds) > 1:

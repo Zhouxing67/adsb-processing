@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from flight.flight_repository import FlightDatabase, database_flight_key
@@ -22,19 +22,30 @@ class MatchIssueService:
         lock: Any,
         items: Mapping[str, Any],
         results: Mapping[str, Any],
+        resolve_items: Callable[[Sequence[str]], dict[str, Any]] | None = None,
     ) -> None:
         self.flight_database = flight_database
         self.graph_id = graph_id
         self.lock = lock
         self.items = items
         self.results = results
+        self._resolve_items_batch = resolve_items
+
+    def _resolve_items(self, keys: Sequence[str]) -> dict[str, Any]:
+        if self._resolve_items_batch is not None:
+            return self._resolve_items_batch(keys)
+        return {key: self.items[key] for key in dict.fromkeys(keys) if key in self.items}
 
     def issue_map(self) -> dict[str, str | None]:
-        return {
-            key: entry.reason
-            for entry in self.flight_database.issues.list_all()
-            if (key := database_flight_key(entry.movement, entry.flight_id)) in self.items
-        }
+        entries = self.flight_database.issues.list_all()
+        if not entries:
+            return {}
+        keyed = [
+            (database_flight_key(entry.movement, entry.flight_id), entry.reason)
+            for entry in entries
+        ]
+        known = self._resolve_items([key for key, _ in keyed])
+        return {key: reason for key, reason in keyed if key in known}
 
     def list_issue_keys(self) -> dict[str, Any]:
         keys = sorted(self.issue_map())
@@ -51,14 +62,18 @@ class MatchIssueService:
         keys = list(dict.fromkeys(flight_keys))
         if not keys:
             raise ValueError("至少选择一条航班")
+        resolved = self._resolve_items(keys)
+        for key in keys:
+            if key not in resolved:
+                raise KeyError(f"未知 flight_key: {key}")
         with self.lock:
             records = []
             for key in keys:
-                if key not in self.items:
-                    raise KeyError(f"未知 flight_key: {key}")
-                item = self.items[key]
-                result = self.results[key]
-                effective_reason = reason if reason is not None else result.error
+                item = resolved[key]
+                result = self.results.get(key)
+                effective_reason = (
+                    reason if reason is not None else (result.error if result is not None else None)
+                )
                 records.append(
                     (item.movement_type, item.flight_id, effective_reason, self.graph_id)
                 )
@@ -81,13 +96,11 @@ class MatchIssueService:
         keys = list(dict.fromkeys(flight_keys))
         if not keys:
             raise ValueError("至少选择一条航班")
-        with self.lock:
-            pairs = []
-            for key in keys:
-                if key not in self.items:
-                    raise KeyError(f"未知 flight_key: {key}")
-                item = self.items[key]
-                pairs.append((item.movement_type, item.flight_id))
+        resolved = self._resolve_items(keys)
+        for key in keys:
+            if key not in resolved:
+                raise KeyError(f"未知 flight_key: {key}")
+        pairs = [(resolved[key].movement_type, resolved[key].flight_id) for key in keys]
         try:
             deleted = self.flight_database.issues.remove(pairs)
         except self.flight_database.database_error as error:

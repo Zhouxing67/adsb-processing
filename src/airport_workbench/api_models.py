@@ -483,7 +483,6 @@ class DetectRouteAnomaliesRequest(ApiModel):
     movement: str | None = None
     stand_ref: str | None = None
     runway_ref: str | None = None
-    runway_is_null: bool = False
     status: str | None = None
     all_graphs: bool = False
 

@@ -159,7 +159,7 @@ RAW_BUTTON_ALLOWLIST = {
 
 
 def test_frontend_uses_shadcn_primitives_not_raw_html():
-    """App and feature components must use src/components/ui/ primitives instead of raw HTML form/table controls."""
+    """App and feature components must use src/components/ui/ primitives instead of raw HTML."""
     forbidden_tags = ("table", "label", "input", "select", "textarea")
     tag_pattern = re.compile(r"<(" + "|".join(forbidden_tags) + r")\b")
     button_pattern = re.compile(r"<button\b")
@@ -174,14 +174,18 @@ def test_frontend_uses_shadcn_primitives_not_raw_html():
         if bad_tags:
             offenders.append(f"{rel}: raw HTML tag(s) {bad_tags}")
         if rel not in RAW_BUTTON_ALLOWLIST and button_pattern.search(text):
-            offenders.append(f"{rel}: raw <button> (use Button, Toggle, InlineEditTrigger, or IconActionButton)")
+            offenders.append(
+                f"{rel}: raw <button> (use Button, Toggle, InlineEditTrigger, or IconActionButton)"
+            )
 
     assert not offenders, "Non-shadcn raw HTML controls found:\n" + "\n".join(offenders)
 
 
 def test_frontend_respects_slate_tokens_and_typography():
-    """Prevent off-theme gray/accent color classes and fragmented arbitrary font sizes from creeping back."""
-    off_theme_colors = re.compile(r"\b(?:bg|text|border|ring)-(?:zinc|gray|neutral|stone|violet|purple)(?:-\d+)?(?:/\d+)?")
+    """Prevent off-theme gray/accent color classes and fragmented arbitrary font sizes."""
+    off_theme_colors = re.compile(
+        r"\b(?:bg|text|border|ring)-(?:zinc|gray|neutral|stone|violet|purple)(?:-\d+)?(?:/\d+)?"
+    )
     bad_font_sizes = re.compile(r"\btext-\[(?:10|12|14)px\]")
     offenders: list[str] = []
 
@@ -200,7 +204,7 @@ def test_frontend_respects_slate_tokens_and_typography():
 
 
 def test_frontend_table_views_share_workbench_shell():
-    """Every feature view rendering a data <Table> must use the shared workbench-shell layout primitives."""
+    """Every feature view rendering a data <Table> must use the shared workbench-shell layout."""
     required_shell_parts = ("ViewHeader", "DataTableContainer", "PaginationFooter")
     offenders: list[str] = []
 

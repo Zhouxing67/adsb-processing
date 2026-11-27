@@ -85,6 +85,26 @@ class DirectedNetworkRouter:
                     )
         nx.freeze(self.graph)
 
+        graph = self.graph
+        directed_edges = self._directed_edges
+
+        @lru_cache(maxsize=4_096)
+        def _distances_from(source: DirectedEdgeId) -> dict[DirectedEdgeId, float]:
+            return dict(nx.single_source_dijkstra_path_length(graph, source, weight="length"))
+
+        @lru_cache(maxsize=50_000)
+        def _route_tail(
+            source: DirectedEdgeId, target: DirectedEdgeId
+        ) -> tuple[DirectedEdge, ...] | None:
+            try:
+                route = nx.shortest_path(graph, source, target, weight="length")
+            except nx.NetworkXNoPath:
+                return None
+            return tuple(directed_edges[edge] for edge in route[1:])
+
+        self._distances_from = _distances_from
+        self._route_tail = _route_tail
+
     def turn_angle(
         self, incoming_edge: DirectedEdgeId, outgoing_edge: DirectedEdgeId
     ) -> float:
@@ -125,18 +145,12 @@ class DirectedNetworkRouter:
                 result.append(edge)
         return result
 
-    @lru_cache(maxsize=4_096)
     def distances_from(self, source: DirectedEdgeId) -> dict[DirectedEdgeId, float]:
         """Return single-source dual-graph shortest distances (hot path during Viterbi)."""
-        return dict(nx.single_source_dijkstra_path_length(self.graph, source, weight="length"))
+        return self._distances_from(source)
 
-    @lru_cache(maxsize=50_000)
     def route_tail(
         self, source: DirectedEdgeId, target: DirectedEdgeId
     ) -> tuple[DirectedEdge, ...] | None:
         """Return shortest dual-graph edges excluding ``source`` (lazy path reconstruction)."""
-        try:
-            route = nx.shortest_path(self.graph, source, target, weight="length")
-        except nx.NetworkXNoPath:
-            return None
-        return tuple(self._directed_edges[edge] for edge in route[1:])
+        return self._route_tail(source, target)

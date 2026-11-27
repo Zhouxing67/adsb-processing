@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import networkx as nx
 import pandas as pd
 import pytest
 
 from flight import Flight
-from path_map import BatchStats, MapMatchingError, MapMatchingFailure, match_batch
+from path_map import BatchStats, MapMatchingError, MapMatchingFailure, Path, match_batch
+from path_map.path import DirectedEdge
 
 
 def flights_with_two_flights() -> tuple[Flight, ...]:
@@ -56,3 +58,79 @@ def test_batch_does_not_hide_programming_errors():
 
     captured = list(match_batch(BrokenMatcher(), inputs, capture_system_errors=True))
     assert [item.failure_type for item in captured] == ["system", "system"]
+
+
+def _make_od_test_flight(
+    flight_id: str,
+    movement: str,
+    *,
+    stand: str | None = None,
+    runway: str | None = None,
+) -> Flight:
+    record: dict[str, object] = {
+        "flight_id": flight_id,
+        "timestamp": "2026-01-01T00:00:00+00:00",
+        "longitude": 116.6,
+        "latitude": 40.07,
+    }
+    if stand is not None:
+        key = "dep_stand_position" if movement == "departure" else "arr_stand_position"
+        record[key] = stand
+    if runway is not None:
+        key = "org_runway" if movement == "departure" else "dst_runway"
+        record[key] = runway
+    return Flight([record], movement=movement)
+
+
+def test_batch_infers_missing_stand_and_runway_from_path():
+    stand_edge_id = ("S1", "N1", 0)
+    runway_edge_id = ("N1", "R1", 0)
+    raw_graph = nx.MultiGraph()
+    raw_graph.add_edge("S1", "N1", key=0)
+    raw_graph.add_edge("N1", "R1", key=0)
+    raw_graph.add_edge("R1", "R2", key=0, ref="36R/18L")
+
+    class FakeAirportGraph:
+        runway_interfaces = {"R1": {"runway": [("R1", "R2", 0)]}}
+        graph = raw_graph
+
+        def stand_for_edge(self, edge):
+            return "301" if edge in (stand_edge_id, ("N1", "S1", 0)) else None
+
+        def runways_for_edge(self, edge):
+            return frozenset({"36R"}) if edge in (runway_edge_id, ("R1", "N1", 0)) else None
+
+    fake_graph = FakeAirportGraph()
+    dep_path = Path(
+        fake_graph,  # type: ignore[arg-type]
+        [DirectedEdge("S1", "N1", 0), DirectedEdge("N1", "R1", 0)],
+    )
+    arr_path = Path(
+        fake_graph,  # type: ignore[arg-type]
+        [DirectedEdge("R1", "N1", 0), DirectedEdge("N1", "S1", 0)],
+    )
+
+    class FakeMatcher:
+        airport_graph = fake_graph
+
+        def map_flight(self, flight: Flight) -> Path:
+            return dep_path if flight.movement == "departure" else arr_path
+
+    dep_missing = _make_od_test_flight("dep_no_od", "departure")
+    arr_missing = _make_od_test_flight("arr_no_od", "arrival")
+    dep_reported = _make_od_test_flight("dep_reported", "departure", stand="999", runway="01")
+
+    outcomes = list(
+        match_batch(
+            FakeMatcher(),  # type: ignore[arg-type]
+            [
+                (dep_missing.flight_id, dep_missing),
+                (arr_missing.flight_id, arr_missing),
+                (dep_reported.flight_id, dep_reported),
+            ],
+        )
+    )
+
+    assert (outcomes[0].stand_ref, outcomes[0].runway_ref) == ("301", "18L/36R")
+    assert (outcomes[1].stand_ref, outcomes[1].runway_ref) == ("301", "18L/36R")
+    assert (outcomes[2].stand_ref, outcomes[2].runway_ref) == ("999", "01")

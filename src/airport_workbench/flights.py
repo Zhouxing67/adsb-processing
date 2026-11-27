@@ -26,22 +26,6 @@ from .serializers import flight_geojson, path_geojson
 from .stand_recommendations import StandGeometryIndex
 
 MATCH_STATUSES = {"unmatched", "queued", "matching", "success", "failed"}
-BUSINESS_FIELD_NAMES = {
-    "flight_id",
-    "flight_number",
-    "number",
-    "callsign",
-    "flight",
-    "ident",
-    "registration",
-    "aircraft",
-    "aircraft_type",
-    "origin",
-    "destination",
-    "movement_type",
-    "dep_stand_position",
-    "arr_stand_position",
-}
 
 
 class CataloguePageOutOfRange(ValueError):
@@ -195,6 +179,7 @@ class FlightWorkbench:
             items=self.items,
             results=self.match_tasks.results,
             page_out_of_range_cls=CataloguePageOutOfRange,
+            resolve_items=self._resolve_items_batch,
         )
         self.issues_service = MatchIssueService(
             self.flight_database,
@@ -202,6 +187,7 @@ class FlightWorkbench:
             lock=self.lock,
             items=self.items,
             results=self.match_tasks.results,
+            resolve_items=self._resolve_items_batch,
         )
 
     def _summary_to_item(self, key: str, summary: FlightSummary) -> FlightCatalogItem:
@@ -476,7 +462,6 @@ class FlightWorkbench:
                 item.flight_id,
                 start,
                 observation_page_size,
-                BUSINESS_FIELD_NAMES,
             )
         )
         fields = {name: to_json_value(value) for name, value in fields.items()}
@@ -573,7 +558,6 @@ class FlightWorkbench:
         movement: str | None = None,
         stand_ref: str | None = None,
         runway_ref: str | None = None,
-        runway_is_null: bool = False,
         status: str | None = None,
         all_graphs: bool = False,
     ) -> dict[str, Any]:
@@ -583,7 +567,6 @@ class FlightWorkbench:
             movement=movement,
             stand_ref=stand_ref,
             runway_ref=runway_ref,
-            runway_is_null=runway_is_null,
             status=status,
             all_graphs=all_graphs,
         )

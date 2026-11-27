@@ -25,15 +25,6 @@ from .serializers import path_geojson
 logger = logging.getLogger(__name__)
 
 
-class RoutePageOutOfRange(ValueError):
-    """Raised when a filtered route library page no longer exists."""
-
-    def __init__(self, requested_page: int, total_pages: int) -> None:
-        self.requested_page = requested_page
-        self.total_pages = total_pages
-        super().__init__(f"page must be between 1 and {total_pages}; got {requested_page}")
-
-
 class RouteLibraryService:
     """Coordinate route_library queries, review updates, and matched-flight imports."""
 
@@ -46,7 +37,8 @@ class RouteLibraryService:
         lock: Any,
         items: Mapping[str, Any],
         results: Mapping[str, Any],
-        page_out_of_range_cls: Callable[[int, int], ValueError] = RoutePageOutOfRange,
+        page_out_of_range_cls: Callable[[int, int], ValueError],
+        resolve_items: Callable[[Sequence[str]], dict[str, Any]] | None = None,
     ) -> None:
         self.airport_graph = airport_graph
         self.flight_database = flight_database
@@ -56,6 +48,12 @@ class RouteLibraryService:
         self.items = items
         self.results = results
         self._page_out_of_range = page_out_of_range_cls
+        self._resolve_items_batch = resolve_items
+
+    def _resolve_items(self, keys: Sequence[str]) -> dict[str, Any]:
+        if self._resolve_items_batch is not None:
+            return self._resolve_items_batch(keys)
+        return {key: self.items[key] for key in dict.fromkeys(keys) if key in self.items}
 
     def _serialize(self, entry: RouteEntry) -> dict[str, Any]:
         return {
@@ -338,7 +336,6 @@ class RouteLibraryService:
         movement: str | None = None,
         stand_ref: str | None = None,
         runway_ref: str | None = None,
-        runway_is_null: bool = False,
         status: str | None = None,
         all_graphs: bool = False,
     ) -> dict[str, Any]:
@@ -347,14 +344,15 @@ class RouteLibraryService:
         else:
             normalized_movement = normalize_movement(movement) if movement else None
             normalized_stand = stand_ref.strip() if stand_ref and stand_ref.strip() else None
-            normalized_runway = normalize_runway_ref(runway_ref) if runway_ref else None
+            normalized_runway = (
+                normalize_runway_ref(runway_ref) if runway_ref and runway_ref.strip() else None
+            )
             normalized_status = RouteStatus(status).value if status else None
             entries = self.repository.find_by_od(
                 graph_id=None if all_graphs else self.graph_id,
                 movement=normalized_movement,
                 stand_ref=normalized_stand,
                 runway_ref=normalized_runway,
-                runway_is_null=runway_is_null,
                 status=normalized_status,
                 query=query,
             )
@@ -396,28 +394,46 @@ class RouteLibraryService:
     ) -> dict[str, Any]:
         if self.flight_database.read_only:
             raise ValueError("当前数据库为只读模式，无法写入路径库")
-        with self.lock:
-            if flight_keys is None:
-                candidate_keys = list(self.results)
-            else:
-                candidate_keys = list(dict.fromkeys(flight_keys))
-                unknown = [key for key in candidate_keys if key not in self.items]
-                if unknown:
-                    raise KeyError(f"未知 flight_key: {unknown[0]}")
-            matched_records = []
-            for key in candidate_keys:
-                result = self.results[key]
-                if (
-                    result.status != "success"
-                    or result.graph_id != self.graph_id
-                    or result.path is None
-                ):
-                    continue
-                item = self.items[key]
-                stand_ref = result.stand_ref or item.stand_position
-                matched_records.append(
-                    (item.flight_id, item.movement_type, stand_ref, result.runway_ref, result.path)
-                )
+        resolved: dict[str, Any]
+        successful: list[tuple[str, str | None, str | None, Any]] = []
+        if flight_keys is not None:
+            candidate_keys = list(dict.fromkeys(flight_keys))
+            resolved = self._resolve_items(candidate_keys)
+            unknown = [key for key in candidate_keys if key not in resolved]
+            if unknown:
+                raise KeyError(f"未知 flight_key: {unknown[0]}")
+            with self.lock:
+                for key in candidate_keys:
+                    result = self.results.get(key)
+                    if (
+                        result is None
+                        or result.status != "success"
+                        or result.graph_id != self.graph_id
+                        or result.path is None
+                    ):
+                        continue
+                    successful.append((key, result.stand_ref, result.runway_ref, result.path))
+        else:
+            with self.lock:
+                for key, result in self.results.items():
+                    if (
+                        result.status != "success"
+                        or result.graph_id != self.graph_id
+                        or result.path is None
+                    ):
+                        continue
+                    successful.append((key, result.stand_ref, result.runway_ref, result.path))
+            resolved = self._resolve_items([key for key, _, _, _ in successful])
+
+        matched_records = []
+        for key, result_stand, runway_ref, path in successful:
+            item = resolved.get(key)
+            if item is None:
+                continue
+            stand_ref = result_stand or item.stand_position
+            matched_records.append(
+                (item.flight_id, item.movement_type, stand_ref, runway_ref, path)
+            )
 
         unique_entries: dict[str, RouteEntry] = {}
         flight_matches: list[RouteFlightMatch] = []

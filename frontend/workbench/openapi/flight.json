@@ -954,11 +954,6 @@
             ],
             "title": "Route Ids"
           },
-          "runway_is_null": {
-            "default": false,
-            "title": "Runway Is Null",
-            "type": "boolean"
-          },
           "runway_ref": {
             "anyOf": [
               {

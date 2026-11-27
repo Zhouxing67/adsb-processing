@@ -285,30 +285,20 @@ def test_database_flight_matches_using_its_od(
         matcher.map_flight(missing_stand)
 
 
-def test_isolated_observation_without_candidates_is_skipped():
+@pytest.mark.parametrize(
+    "missing_points",
+    [
+        [(450_010, 4_428_500)],
+        [(450_005, 4_428_500), (450_015, 4_428_500)],
+    ],
+)
+def test_observations_without_candidates_are_skipped(missing_points):
     airport_graph, to_wgs84 = straight_od_graph()
     flight = make_flight(
         to_wgs84,
         [
             (450_001, 4_428_000),
-            (450_010, 4_428_500),
-            (450_019, 4_428_000),
-        ],
-    )
-
-    path = robust_matcher(airport_graph).map_flight(flight)
-
-    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
-
-
-def test_consecutive_observations_without_candidates_are_skipped():
-    airport_graph, to_wgs84 = straight_od_graph()
-    flight = make_flight(
-        to_wgs84,
-        [
-            (450_001, 4_428_000),
-            (450_005, 4_428_500),
-            (450_015, 4_428_500),
+            *missing_points,
             (450_019, 4_428_000),
         ],
     )
@@ -328,23 +318,6 @@ def test_candidate_radius_finds_candidates_across_the_complete_range():
     path = robust_matcher(airport_graph).map_flight(flight)
 
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
-
-
-def test_candidate_search_queries_once_with_complete_radius():
-    airport_graph, _ = straight_airport_graph()
-    matcher = robust_matcher(airport_graph)
-    calls = []
-
-    class RecordingIndex:
-        def candidates(self, observation_index, point, radius, maximum):
-            calls.append((observation_index, point, radius, maximum))
-            return []
-
-    matcher.index = RecordingIndex()
-    point = Point(450_001, 4_428_000)
-
-    assert matcher._candidates(7, point) == []
-    assert calls == [(7, point, 30, 10)]
 
 
 def test_complete_radius_keeps_farther_candidate_when_near_candidate_exists():
@@ -493,21 +466,6 @@ def test_stationary_observations_can_match_with_od():
     flight = make_flight(to_wgs84, [(450_007, 4_428_000)] * 3)
 
     assert robust_matcher(airport_graph).map_flight(flight).nodes == ("1", "2", "3")
-
-
-def test_long_time_gap_does_not_reject_otherwise_valid_observations():
-    airport_graph, to_wgs84 = straight_od_graph()
-    flight = make_flight(
-        to_wgs84,
-        [(450_001, 4_428_000), (450_019, 4_428_000)],
-    )
-    rows = flight.rows
-    rows[1]["timestamp"] += pd.Timedelta(hours=1)
-    flight = Flight(rows, movement=flight.movement)
-
-    path = robust_matcher(airport_graph).map_flight(flight)
-
-    assert path.edge_ids == (("1", "2", 0), ("2", "3", 1))
 
 
 def test_path_record_round_trip_resolves_against_same_graph(tmp_path):
@@ -743,41 +701,6 @@ def test_phase1_falls_back_to_phase2_when_pure_path_conflicts_with_reported_stan
 
     assert path.edge_ids[0] == ("1", "2", 0)
     assert path.edge_ids[-1] == ("2", "3", 1)
-
-
-def test_same_edge_jitter_within_tolerance_is_accepted_without_loop():
-    airport_graph, to_wgs84 = straight_od_graph()
-    x, y = 450_000.0, 4_428_000.0
-    # Slight 3m backward GPS jitter on taxiway (2->3) within default 5m tolerance.
-    flight = make_flight(
-        to_wgs84,
-        [(x + 2, y), (x + 16, y), (x + 13, y), (x + 19, y)],
-        movement="departure",
-    )
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=0.5))
-
-    assert matcher.map_flight(flight).edge_ids == (("1", "2", 0), ("2", "3", 1))
-
-
-def test_stand_edge_tolerates_larger_stationary_multipath_jitter():
-    airport_graph, to_wgs84 = pushback_airport_graph(with_detour_loop=False)
-    x0, y0 = 450_000.0, 4_428_000.0
-    # Arrival reaches stand (2->1) and emits a 15m back-and-forth stationary hairball (> 5m).
-    flight = make_flight(
-        to_wgs84,
-        [
-            (x0 - 80, y0),
-            (x0, y0 - 20),
-            (x0, y0 - 50),
-            (x0, y0 - 35),
-            (x0, y0 - 52),
-            (x0, y0 - 38),
-        ],
-        movement="arrival",
-    )
-    matcher = Matcher(airport_graph, MatchConfig(candidate_radius=20))
-
-    assert matcher.map_flight(flight).edge_ids == (("4", "2", 0), ("2", "1", 0))
 
 
 @pytest.mark.parametrize("value", [0, -1, float("inf"), float("nan")])

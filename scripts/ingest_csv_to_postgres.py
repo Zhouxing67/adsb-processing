@@ -150,7 +150,13 @@ def ingest_month_csv(
 
     print(f"Streaming raw CSV: {csv_path} (source_month={source_month})")
     for chunk_idx, chunk in enumerate(
-        pd.read_csv(csv_path, chunksize=chunk_size, dtype=use_dtypes, low_memory=False),
+        pd.read_csv(
+            csv_path,
+            chunksize=chunk_size,
+            dtype=use_dtypes,
+            low_memory=False,
+            on_bad_lines="warn",
+        ),
         start=1,
     ):
         raw_rows += len(chunk)

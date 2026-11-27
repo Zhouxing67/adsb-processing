@@ -197,9 +197,7 @@ class FlightObservationRepository:
         identifier: str,
         offset: int,
         limit: int,
-        business_fields: set[str],
     ) -> tuple[list[str], dict[str, Any], dict[str, list[Any]], list[dict[str, Any]], int]:
-        del business_fields  # Normalized in public.flights
         with self._database.connection() as connection:
             flight_row = connection.execute(
                 f"{FLIGHT_SELECT_SQL} WHERE movement = :movement AND flight_id = :flight_id",

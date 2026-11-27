@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import gc
+import weakref
 from itertools import product
 
 import networkx as nx
@@ -9,7 +11,6 @@ from shapely.geometry import LineString, Point
 from airport_surface import AirportGraph
 from path_map.candidates import CandidateIndex
 from path_map.edge_dtw import (
-    DepartureState,
     decode_arrival_route,
     decode_departure_route,
     directed_edge_distances,
@@ -163,7 +164,19 @@ def test_arrival_dtw_connects_od_boundaries_across_missing_signal_gap():
     )
     path = Path(graph, edges)
     assert path.edge_ids == (("1", "2", 0), ("2", "3", 1), ("3", "5", 0))
-    assert DepartureState(("1", "2", 0)).reversed_used is False
+
+
+def test_directed_network_router_cache_does_not_leak_instances():
+    graph, _ = straight_airport_graph()
+    router = DirectedNetworkRouter(CandidateIndex(graph))
+    router_ref = weakref.ref(router)
+
+    assert router.distances_from(("1", "2", 0))[("2", "3", 1)] > 0
+    assert router.route_tail(("1", "2", 0), ("2", "3", 1)) is not None
+
+    del router
+    gc.collect()
+    assert router_ref() is None
 
 
 def test_generic_viterbi_decodes_arbitrary_state_sequence():

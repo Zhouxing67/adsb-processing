@@ -669,11 +669,6 @@ export interface components {
             q: string;
             /** Route Ids */
             route_ids?: string[] | null;
-            /**
-             * Runway Is Null
-             * @default false
-             */
-            runway_is_null: boolean;
             /** Runway Ref */
             runway_ref?: string | null;
             /** Stand Ref */

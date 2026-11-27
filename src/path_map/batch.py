@@ -15,6 +15,17 @@ from .models import MapMatchingError
 from .path import Path
 
 
+def _infer_stand_ref(
+    airport_graph: AirportGraph,
+    path: Path,
+    movement: str | None,
+) -> str | None:
+    if not path.edges or movement not in ("departure", "arrival"):
+        return None
+    stand_edge = path.edges[0] if movement == "departure" else path.edges[-1]
+    return airport_graph.stand_for_edge(stand_edge.id)
+
+
 def _infer_runway_ref(
     airport_graph: AirportGraph,
     path: Path,
@@ -77,8 +88,11 @@ def match_batch(
             runway_ref = flight.runway_ref
             started = perf_counter()
             path = matcher.map_flight(flight)
-            if not runway_ref and hasattr(matcher, "airport_graph") and isinstance(path, Path):
-                runway_ref = _infer_runway_ref(matcher.airport_graph, path, flight.movement)
+            if hasattr(matcher, "airport_graph") and isinstance(path, Path):
+                if not stand_ref:
+                    stand_ref = _infer_stand_ref(matcher.airport_graph, path, flight.movement)
+                if not runway_ref:
+                    runway_ref = _infer_runway_ref(matcher.airport_graph, path, flight.movement)
         except MapMatchingError as error:
             reason = str(error)
             yield MatchOutcome(

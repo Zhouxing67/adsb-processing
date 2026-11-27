@@ -290,7 +290,6 @@ class RouteLibraryRepository:
         stand_refs: Sequence[str] | None = None,
         runway_ref: str | None = None,
         runway_refs: Sequence[str] | None = None,
-        runway_is_null: bool = False,
         status: RouteStatus | str | None = None,
         exclude_rejected: bool = False,
         query: str = "",
@@ -313,9 +312,7 @@ class RouteLibraryRepository:
         elif stand_ref is not None:
             clauses.append("stand_ref = :stand_ref")
             params["stand_ref"] = normalize_stand_ref(stand_ref)
-        if runway_is_null:
-            clauses.append("runway_ref IS NULL")
-        elif runway_refs is not None:
+        if runway_refs is not None:
             normalized_runways = list(
                 dict.fromkeys(
                     normalize_runway_ref(raw) for raw in runway_refs if raw.strip()
@@ -357,23 +354,6 @@ class RouteLibraryRepository:
                 params,
             ).mappings()
             return [_row_to_entry(row) for row in rows]
-
-    def list_metadata(self, *, graph_id: str | None = None) -> list[dict[str, Any]]:
-        """Query route metadata without fetching or deserializing edges_json."""
-        columns = ", ".join(ROUTE_LIBRARY_SUMMARY_COLUMNS)
-        params: dict[str, Any] = {}
-        where = ""
-        if graph_id is not None:
-            where = " WHERE graph_id = :graph_id"
-            params["graph_id"] = graph_id
-        with self._database.connection() as connection:
-            rows = connection.execute(
-                f"SELECT {columns} FROM {ROUTE_LIBRARY_TABLE}{where} "
-                "ORDER BY movement, stand_ref, runway_ref, "
-                "flight_count DESC, total_length_m, route_id",
-                params,
-            ).mappings()
-            return [self._summary_row_to_dict(row) for row in rows]
 
     @staticmethod
     def _summary_row_to_dict(row: Mapping[str, Any]) -> dict[str, Any]:

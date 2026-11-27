@@ -260,7 +260,6 @@ export function RouteLibraryPanel({ active = true, splitView = false }: RouteLib
       movement: filters.movement || null,
       stand_ref: filters.stand || null,
       runway_ref: filters.runway || null,
-      runway_is_null: false,
       status: filters.status || null,
       all_graphs: filters.allGraphs,
     });
