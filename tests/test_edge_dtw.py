@@ -195,10 +195,10 @@ def test_generic_viterbi_decodes_arbitrary_state_sequence():
             return best_scores, best_indices
 
     layers = [("A", "B"), ("C", "D"), ("E",)]
-    emissions = {"A": -1.0, "B": -0.5, "C": -0.2, "D": -2.0, "E": 0.0}
+    emissions = [[-1.0, -0.5], [-0.2, -2.0], [0.0]]
     scorers = [
         TableScorer({("A", "C"): -0.1, ("B", "C"): -3.0, ("B", "D"): -0.1}),
         TableScorer({("C", "E"): -0.2, ("D", "E"): -0.1}),
     ]
 
-    assert viterbi(layers, emissions.__getitem__, scorers) == ["A", "C", "E"]
+    assert viterbi(layers, emissions, scorers) == ["A", "C", "E"]

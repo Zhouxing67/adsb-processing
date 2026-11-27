@@ -10,6 +10,8 @@ from shapely.geometry import LineString
 
 from airport_surface import AirportGraph, EdgeId, EdgeKey, NodeId, graph_id
 
+type DirectedEdgeId = EdgeId
+
 
 @dataclass(frozen=True, slots=True)
 class DirectedEdge:

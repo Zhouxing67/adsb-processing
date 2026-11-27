@@ -16,14 +16,14 @@ import networkx as nx
 from shapely.geometry import Point
 
 from .candidates import Candidate
-from .path import DirectedEdge, EdgeId
+from .path import DirectedEdge, DirectedEdgeId
 from .router import DirectedNetworkRouter
 from .viterbi import viterbi
 
 DEFAULT_LENGTH_SCALE_M = 50.0
 REVERSAL_PENALTY_M = 40.0
 
-type _ScoredSource = tuple[int, float, EdgeId, dict[EdgeId, float]]
+type _ScoredSource = tuple[int, float, DirectedEdgeId, dict[DirectedEdgeId, float]]
 
 
 # ---------------------------------------------------------------------------
@@ -44,18 +44,18 @@ def observation_log_score(distance: float, sigma: float) -> float:
 def directed_edge_distances(
     candidates: Sequence[Candidate],
     router: DirectedNetworkRouter,
-) -> dict[EdgeId, float]:
+) -> dict[DirectedEdgeId, float]:
     """Expand undirected edge candidates to both travel directions keeping min 2D distance."""
-    distances: dict[EdgeId, float] = {}
+    distances: dict[DirectedEdgeId, float] = {}
     lengths = router.lengths
     for candidate in candidates:
         u, v, key = candidate.edge_id
-        for edge in ((u, v, key), (v, u, key)):
-            if edge not in lengths:
+        for directed_edge in ((u, v, key), (v, u, key)):
+            if directed_edge not in lengths:
                 continue
-            previous = distances.get(edge)
+            previous = distances.get(directed_edge)
             if previous is None or candidate.distance < previous:
-                distances[edge] = candidate.distance
+                distances[directed_edge] = candidate.distance
     return distances
 
 
@@ -65,14 +65,14 @@ def _build_emission_layers(
     router: DirectedNetworkRouter,
     sigma: float,
     *,
-    start_edges: Iterable[EdgeId] | None = None,
-    end_edges: Iterable[EdgeId] | None = None,
-) -> tuple[list[dict[EdgeId, float]], list[Point]]:
+    start_edges: Iterable[DirectedEdgeId] | None = None,
+    end_edges: Iterable[DirectedEdgeId] | None = None,
+) -> tuple[list[dict[DirectedEdgeId, float]], list[Point]]:
     """Build per-layer ``{directed_edge: emission_log_score}`` maps and reference points."""
     if not observation_candidates:
         raise nx.NetworkXNoPath("No reachable candidate sequence")
 
-    emission_layers: list[dict[EdgeId, float]] = []
+    emission_layers: list[dict[DirectedEdgeId, float]] = []
     layer_points: list[Point] = []
 
     if start_edges is not None:
@@ -103,7 +103,7 @@ def _build_emission_layers(
 
 def _best_predecessor(
     sources: Sequence[_ScoredSource],
-    target_edge: EdgeId,
+    target_edge: DirectedEdgeId,
     inv_scale: float,
     *,
     penalty: float = 0.0,
@@ -129,8 +129,6 @@ def _best_predecessor(
 # 1. Arrival decoder (simple: directed edges only, zero reversals)
 # ---------------------------------------------------------------------------
 
-type _ArrivalLayerItem = tuple[EdgeId, float]
-
 
 @dataclass(frozen=True, slots=True)
 class ArrivalTransitionStep:
@@ -141,20 +139,20 @@ class ArrivalTransitionStep:
 
     def best_predecessors(
         self,
-        previous_layer: Sequence[_ArrivalLayerItem],
+        previous_layer: Sequence[DirectedEdgeId],
         previous_scores: Sequence[float],
-        current_layer: Sequence[_ArrivalLayerItem],
+        current_layer: Sequence[DirectedEdgeId],
     ) -> tuple[list[float], list[int]]:
         distances_from = self.router.distances_from
         sources: list[_ScoredSource] = [
-            (index, score, edge, distances_from(edge))
-            for index, ((edge, _), score) in enumerate(zip(previous_layer, previous_scores))
+            (index, score, directed_edge, distances_from(directed_edge))
+            for index, (directed_edge, score) in enumerate(zip(previous_layer, previous_scores))
             if score > -inf
         ]
         inv_scale = 1.0 / self.length_scale_m
         best_scores: list[float] = []
         best_indices: list[int] = []
-        for target_edge, _ in current_layer:
+        for target_edge in current_layer:
             score, index = _best_predecessor(sources, target_edge, inv_scale)
             best_scores.append(score)
             best_indices.append(index)
@@ -168,8 +166,8 @@ def decode_arrival_route(
     sigma: float,
     *,
     length_scale_m: float = DEFAULT_LENGTH_SCALE_M,
-    start_edges: Iterable[EdgeId] | None = None,
-    end_edges: Iterable[EdgeId] | None = None,
+    start_edges: Iterable[DirectedEdgeId] | None = None,
+    end_edges: Iterable[DirectedEdgeId] | None = None,
 ) -> list[DirectedEdge]:
     """Decode an arrival route using plain directed-edge Dual-Graph DTW (no reversal)."""
     emission_layers, _ = _build_emission_layers(
@@ -180,13 +178,11 @@ def decode_arrival_route(
         start_edges=start_edges,
         end_edges=end_edges,
     )
-    scored_layers: list[list[_ArrivalLayerItem]] = [
-        list(emissions.items()) for emissions in emission_layers
-    ]
+    state_layers = [list(layer.keys()) for layer in emission_layers]
+    emission_values = [list(layer.values()) for layer in emission_layers]
     step = ArrivalTransitionStep(router=router, length_scale_m=length_scale_m)
-    decoded = viterbi(scored_layers, lambda item: item[1], [step] * (len(scored_layers) - 1))
+    edges = viterbi(state_layers, emission_values, [step] * (len(state_layers) - 1))
 
-    edges = [edge for edge, _ in decoded]
     output: list[DirectedEdge] = [DirectedEdge(*edges[0])]
     for previous, current in zip(edges, edges[1:]):
         if previous == current:
@@ -206,11 +202,8 @@ def decode_arrival_route(
 class DepartureState:
     """Product state pairing a directed edge with whether pushback reversal was used."""
 
-    edge: EdgeId
+    directed_edge: DirectedEdgeId
     reversed_used: bool = False
-
-
-type _DepartureLayerItem = tuple[DepartureState, float]
 
 
 @dataclass(frozen=True, slots=True)
@@ -224,41 +217,48 @@ class DepartureTransitionStep:
 
     def best_predecessors(
         self,
-        previous_layer: Sequence[_DepartureLayerItem],
+        previous_layer: Sequence[DepartureState],
         previous_scores: Sequence[float],
-        current_layer: Sequence[_DepartureLayerItem],
+        current_layer: Sequence[DepartureState],
     ) -> tuple[list[float], list[int]]:
         distances_from = self.router.distances_from
-        normal_p0: list[_ScoredSource] = []
-        normal_p1: list[_ScoredSource] = []
-        reversed_p0: list[_ScoredSource] = []
-        for index, ((state, _), score) in enumerate(zip(previous_layer, previous_scores)):
+        before_pushback: list[_ScoredSource] = []
+        after_pushback: list[_ScoredSource] = []
+        flipped_from_pushback: list[_ScoredSource] = []
+
+        for index, (state, score) in enumerate(zip(previous_layer, previous_scores)):
             if score == -inf:
                 continue
-            edge = state.edge
+            directed_edge = state.directed_edge
             if state.reversed_used:
-                normal_p1.append((index, score, edge, distances_from(edge)))
+                after_pushback.append((index, score, directed_edge, distances_from(directed_edge)))
             else:
-                normal_p0.append((index, score, edge, distances_from(edge)))
+                before_pushback.append((index, score, directed_edge, distances_from(directed_edge)))
                 if self.allow_reversal:
-                    u, v, key = edge
-                    rev_edge: EdgeId = (v, u, key)
+                    u, v, key = directed_edge
+                    rev_edge: DirectedEdgeId = (v, u, key)
                     if rev_edge in self.router.lengths:
-                        reversed_p0.append((index, score, rev_edge, distances_from(rev_edge)))
+                        flipped_from_pushback.append(
+                            (index, score, rev_edge, distances_from(rev_edge))
+                        )
 
         inv_scale = 1.0 / self.length_scale_m
         reversal_penalty = -self.reversal_penalty_m * inv_scale
         best_scores: list[float] = []
         best_indices: list[int] = []
-        for target_state, _ in current_layer:
+        for target_state in current_layer:
             if not target_state.reversed_used:
-                score, index = _best_predecessor(normal_p0, target_state.edge, inv_scale)
+                score, index = _best_predecessor(
+                    before_pushback, target_state.directed_edge, inv_scale
+                )
             else:
-                score, index = _best_predecessor(normal_p1, target_state.edge, inv_scale)
-                if reversed_p0:
+                score, index = _best_predecessor(
+                    after_pushback, target_state.directed_edge, inv_scale
+                )
+                if flipped_from_pushback:
                     score, index = _best_predecessor(
-                        reversed_p0,
-                        target_state.edge,
+                        flipped_from_pushback,
+                        target_state.directed_edge,
                         inv_scale,
                         penalty=reversal_penalty,
                         best_score=score,
@@ -278,8 +278,8 @@ def decode_departure_route(
     length_scale_m: float = DEFAULT_LENGTH_SCALE_M,
     max_pushback_radius_m: float | None = None,
     reversal_origin: Point | None = None,
-    start_edges: Iterable[EdgeId] | None = None,
-    end_edges: Iterable[EdgeId] | None = None,
+    start_edges: Iterable[DirectedEdgeId] | None = None,
+    end_edges: Iterable[DirectedEdgeId] | None = None,
 ) -> list[DirectedEdge]:
     """Decode a departure route allowing at most one in-place pushback reversal near stand."""
     emission_layers, layer_points = _build_emission_layers(
@@ -292,17 +292,17 @@ def decode_departure_route(
     )
     origin = reversal_origin if reversal_origin is not None else observations[0]
 
-    scored_layers: list[list[_DepartureLayerItem]] = [
-        [
-            (DepartureState(edge, reversed_used=False), emit)
-            for edge, emit in emission_layers[0].items()
-        ]
+    state_layers: list[list[DepartureState]] = [
+        [DepartureState(edge, reversed_used=False) for edge in emission_layers[0]]
     ]
-    for emissions in emission_layers[1:]:
-        scored_layers.append(
-            [(DepartureState(edge, reversed_used=False), emit) for edge, emit in emissions.items()]
-            + [(DepartureState(edge, reversed_used=True), emit) for edge, emit in emissions.items()]
+    emission_values: list[list[float]] = [list(emission_layers[0].values())]
+    for layer in emission_layers[1:]:
+        state_layers.append(
+            [DepartureState(edge, reversed_used=False) for edge in layer]
+            + [DepartureState(edge, reversed_used=True) for edge in layer]
         )
+        layer_scores = list(layer.values())
+        emission_values.append(layer_scores + layer_scores)
 
     step_scorers = [
         DepartureTransitionStep(
@@ -313,23 +313,24 @@ def decode_departure_route(
                 or layer_points[step - 1].distance(origin) <= max_pushback_radius_m
             ),
         )
-        for step in range(1, len(scored_layers))
+        for step in range(1, len(state_layers))
     ]
 
-    decoded = viterbi(scored_layers, lambda item: item[1], step_scorers)
-    states = [state for state, _ in decoded]
+    states = viterbi(state_layers, emission_values, step_scorers)
 
-    output: list[DirectedEdge] = [DirectedEdge(*states[0].edge)]
+    output: list[DirectedEdge] = [DirectedEdge(*states[0].directed_edge)]
     for previous, current in zip(states, states[1:]):
+        # reversed_used can only transition False -> True once, uniquely identifying
+        # the exact pushback reversal step without storing extra backref flags.
         if (not previous.reversed_used) and current.reversed_used:
-            u, v, key = previous.edge
-            start_edge: EdgeId = (v, u, key)
+            u, v, key = previous.directed_edge
+            start_edge: DirectedEdgeId = (v, u, key)
             output.append(DirectedEdge(*start_edge))
         else:
-            start_edge = previous.edge
-        if start_edge == current.edge:
+            start_edge = previous.directed_edge
+        if start_edge == current.directed_edge:
             continue
-        tail = router.route_tail(start_edge, current.edge)
+        tail = router.route_tail(start_edge, current.directed_edge)
         assert tail is not None
         output.extend(tail)
     return output

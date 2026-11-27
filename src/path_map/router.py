@@ -12,7 +12,7 @@ from shapely.geometry import LineString, Point
 from airport_surface import NodeId
 
 from .candidates import CandidateIndex
-from .path import DirectedEdge, EdgeId
+from .path import DirectedEdge, DirectedEdgeId, EdgeId
 
 ZERO_DISTANCE_TOLERANCE_M = 1e-9
 ANGLE_COMPARISON_TOLERANCE_DEG = 1e-9
@@ -44,19 +44,19 @@ class DirectedNetworkRouter:
     ) -> None:
         self.max_turn_angle_deg = max_turn_angle_deg
         self.tangent_sample_m = tangent_sample_m
-        self.lengths: dict[EdgeId, float] = {}
-        self._directed_edges: dict[EdgeId, DirectedEdge] = {}
-        self.outgoing: dict[NodeId, list[EdgeId]] = {}
-        self._endpoints: dict[EdgeId, tuple[Point, Point]] = {}
-        self._start_tangents: dict[EdgeId, Tangent] = {}
-        self._end_tangents: dict[EdgeId, Tangent] = {}
+        self.lengths: dict[DirectedEdgeId, float] = {}
+        self._directed_edges: dict[DirectedEdgeId, DirectedEdge] = {}
+        self.outgoing: dict[NodeId, list[DirectedEdgeId]] = {}
+        self._endpoints: dict[DirectedEdgeId, tuple[Point, Point]] = {}
+        self._start_tangents: dict[DirectedEdgeId, Tangent] = {}
+        self._end_tangents: dict[DirectedEdgeId, Tangent] = {}
 
         for edge, line in zip(index.edge_ids, index.lines):
             u, v, key = edge
             length = line.length
             if u == v or length <= ZERO_DISTANCE_TOLERANCE_M:
                 continue
-            reverse: EdgeId = (v, u, key)
+            reverse: DirectedEdgeId = (v, u, key)
             start_point = Point(line.coords[0])
             end_point = Point(line.coords[-1])
             self.lengths[edge] = length
@@ -85,7 +85,9 @@ class DirectedNetworkRouter:
                     )
         nx.freeze(self.graph)
 
-    def turn_angle(self, incoming_edge: EdgeId, outgoing_edge: EdgeId) -> float:
+    def turn_angle(
+        self, incoming_edge: DirectedEdgeId, outgoing_edge: DirectedEdgeId
+    ) -> float:
         """Return the local turn angle in degrees between two connected directed edges."""
         incoming = self._end_tangents[incoming_edge]
         outgoing = self._start_tangents[outgoing_edge]
@@ -94,7 +96,7 @@ class DirectedNetworkRouter:
         )
         return degrees(acos(max(-1.0, min(1.0, cosine))))
 
-    def directed_stand_edges(self, edges: Iterable[EdgeId]) -> frozenset[EdgeId]:
+    def directed_stand_edges(self, edges: Iterable[EdgeId]) -> frozenset[DirectedEdgeId]:
         """Expand undirected stand edges into both valid travel directions."""
         return frozenset(
             directed
@@ -103,7 +105,7 @@ class DirectedNetworkRouter:
             if directed in self.lengths
         )
 
-    def edge_centroid(self, edges: Iterable[EdgeId]) -> Point:
+    def edge_centroid(self, edges: Iterable[DirectedEdgeId]) -> Point:
         """Return the mean endpoint coordinate of the given directed edges."""
         points = [self._endpoints[edge][0] for edge in edges if edge in self._endpoints]
         return Point(
@@ -113,24 +115,26 @@ class DirectedNetworkRouter:
 
     def directed_runway_interface_edges(
         self, node: NodeId, taxiway_edges: Iterable[EdgeId], *, departure: bool
-    ) -> list[EdgeId]:
+    ) -> list[DirectedEdgeId]:
         """Orient runway-interface taxiway edges into/out of ``node``."""
-        result: list[EdgeId] = []
+        result: list[DirectedEdgeId] = []
         for u, v, key in taxiway_edges:
             other = v if u == node else u
-            edge: EdgeId = (other, node, key) if departure else (node, other, key)
+            edge: DirectedEdgeId = (other, node, key) if departure else (node, other, key)
             if edge in self.lengths:
                 result.append(edge)
         return result
 
     @lru_cache(maxsize=4_096)
-    def distances_from(self, source: EdgeId) -> dict[EdgeId, float]:
-        """Return single-source dual-graph shortest distances from ``source``."""
+    def distances_from(self, source: DirectedEdgeId) -> dict[DirectedEdgeId, float]:
+        """Return single-source dual-graph shortest distances (hot path during Viterbi)."""
         return dict(nx.single_source_dijkstra_path_length(self.graph, source, weight="length"))
 
     @lru_cache(maxsize=50_000)
-    def route_tail(self, source: EdgeId, target: EdgeId) -> tuple[DirectedEdge, ...] | None:
-        """Return shortest dual-graph path edges from ``source`` to ``target``, excluding source."""
+    def route_tail(
+        self, source: DirectedEdgeId, target: DirectedEdgeId
+    ) -> tuple[DirectedEdge, ...] | None:
+        """Return shortest dual-graph edges excluding ``source`` (lazy path reconstruction)."""
         try:
             route = nx.shortest_path(self.graph, source, target, weight="length")
         except nx.NetworkXNoPath:
