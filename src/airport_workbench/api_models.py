@@ -676,5 +676,163 @@ def normalize_error_detail(status_code: int, detail: Any) -> ErrorDetail:
 
 ERROR_RESPONSES = {
     "default": {"model": ErrorResponse, "description": "Error response"},
-    422: {"model": ErrorResponse, "description": "Request validation error"},
+    "422": {"model": ErrorResponse, "description": "Request validation error"},
 }
+
+
+class DemoMatchConfig(ApiModel):
+    candidate_radius: float = Field(default=120.0, gt=0)
+    max_candidates: int = Field(default=16, ge=1, le=32)
+    gps_sigma: float = Field(default=10.0, gt=0)
+    length_scale_m: float = Field(default=50.0, gt=0)
+    max_transition_turn_angle_deg: float = Field(default=130.0, gt=0, le=180)
+    turn_tangent_sample_m: float = Field(default=2.0, gt=0)
+    max_pushback_radius_m: float = Field(default=250.0, gt=0)
+
+
+class DemoPointInput(ApiModel):
+    x: float
+    y: float
+
+
+class DemoScenarioSummary(ApiModel):
+    id: str
+    title: str
+    description: str
+    movement: Literal["arrival", "departure"]
+    stand_ref: str
+    runway_ref: str
+    default_observations: list[DemoPointInput]
+    default_config: DemoMatchConfig
+
+
+class DemoScenariosResponse(ApiModel):
+    scenarios: list[DemoScenarioSummary]
+
+
+class DemoTraceRequest(ApiModel):
+    scenario_id: str
+    observations: list[DemoPointInput] | None = None
+    config: DemoMatchConfig | None = None
+
+
+class DemoGraphBounds(ApiModel):
+    min_x: float
+    min_y: float
+    max_x: float
+    max_y: float
+
+
+class DemoGraphNode(ApiModel):
+    id: str
+    x: float
+    y: float
+    role: Literal["stand", "taxiway", "runway_interface", "runway"]
+
+
+class DemoGraphEdge(ApiModel):
+    id: str
+    u: str
+    v: str
+    key: int
+    aeroway: str
+    ref: str | None = None
+    length_m: float
+    coords: list[tuple[float, float]]
+
+
+class DemoGraph(ApiModel):
+    bounds: DemoGraphBounds
+    nodes: list[DemoGraphNode]
+    edges: list[DemoGraphEdge]
+
+
+class DemoObservationCandidate(ApiModel):
+    edge_id: str
+    u: str
+    v: str
+    key: int
+    aeroway: str
+    ref: str | None = None
+    distance_m: float
+    emission_score: float
+
+
+class DemoObservationTrace(ApiModel):
+    index: int
+    x: float
+    y: float
+    retained: bool
+    candidates: list[DemoObservationCandidate]
+
+
+class DemoDualTransition(ApiModel):
+    from_edge: str
+    to_edge: str
+    via_node: str
+    turn_angle_deg: float
+    allowed: bool
+    length_m: float
+
+
+class DemoDualGraph(ApiModel):
+    directed_edge_count: int
+    allowed_transition_count: int
+    pruned_transition_count: int
+    transitions: list[DemoDualTransition]
+
+
+class DemoTrellisState(ApiModel):
+    state_index: int
+    directed_edge: str
+    u: str
+    v: str
+    key: int
+    reversed_used: bool = False
+    emission_score: float
+    best_prev_index: int | None = None
+    transition_distance_m: float | None = None
+    transition_score: float | None = None
+    used_reversal_step: bool = False
+    cumulative_score: float | None = None
+    is_optimal: bool = False
+
+
+class DemoTrellisLayer(ApiModel):
+    layer_index: int
+    kind: Literal["start_boundary", "observation", "end_boundary"]
+    observation_index: int | None = None
+    label: str
+    allow_reversal: bool = False
+    states: list[DemoTrellisState]
+
+
+class DemoDecodeAttempt(ApiModel):
+    status: Literal["accepted", "rejected", "no_path"]
+    rejection_reason: str | None = None
+    start_edges: list[str] = Field(default_factory=list)
+    end_edges: list[str] = Field(default_factory=list)
+    reversal_origin: DemoPointInput | None = None
+    pushback_radius_m: float | None = None
+    layers: list[DemoTrellisLayer] = Field(default_factory=list)
+    decoded_edges: list[str] = Field(default_factory=list)
+    trimmed_edges: list[str] = Field(default_factory=list)
+
+
+class DemoFinalResult(ApiModel):
+    status: Literal["success", "failed"]
+    used_phase: Literal["phase1", "phase2"] | None = None
+    edges: list[str] = Field(default_factory=list)
+    error_code: str | None = None
+    error_message: str | None = None
+
+
+class DemoTraceResponse(ApiModel):
+    scenario: DemoScenarioSummary
+    config: DemoMatchConfig
+    graph: DemoGraph
+    observations: list[DemoObservationTrace]
+    dual_graph: DemoDualGraph
+    phase1: DemoDecodeAttempt
+    phase2: DemoDecodeAttempt | None = None
+    final_result: DemoFinalResult

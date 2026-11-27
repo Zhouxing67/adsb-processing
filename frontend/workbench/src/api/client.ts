@@ -1,4 +1,4 @@
-import type { BatchRouteReviewResponse, DetectRouteAnomaliesRequest, FlightCatalogue, FlightDetail, FlightGeometry, ImportRoutesRequest, ImportRoutesSummary, MatchIssueList, MatchIssueMutation, MatchStatus, RouteAnomalyResult, RouteCoverage, RouteGeometry, RouteItem, RouteList, RouteReviewUpdate, WorkbenchState } from './types';
+import type { BatchRouteReviewResponse, DemoScenariosResponse, DemoTraceRequest, DemoTraceResponse, DetectRouteAnomaliesRequest, FlightCatalogue, FlightDetail, FlightGeometry, ImportRoutesRequest, ImportRoutesSummary, MatchIssueList, MatchIssueMutation, MatchStatus, RouteAnomalyResult, RouteCoverage, RouteGeometry, RouteItem, RouteList, RouteReviewUpdate, WorkbenchState } from './types';
 import type { components as GraphApi } from './generated/graph';
 import type { paths as GraphPaths } from './generated/graph';
 import type { components as FlightApi } from './generated/flight';
@@ -83,6 +83,9 @@ export const api = {
   addMatchIssues: (flight_keys: string[], reason?: string | null) => request<MatchIssueMutation>('/api/match-issues', json('POST', { flight_keys, reason: reason ?? null })),
   removeMatchIssues: (flight_keys: string[]) => request<MatchIssueMutation>('/api/match-issues/remove', json('POST', { flight_keys })),
   mergeCandidates: () => request<GraphApi['schemas']['MergeCandidatesResponse']>('/api/merge-candidates'),
+  demoScenarios: (signal?: AbortSignal) => request<DemoScenariosResponse>('/api/algorithm-demo/scenarios', { signal }),
+  demoTrace: (body: DemoTraceRequest, signal?: AbortSignal) =>
+    request<DemoTraceResponse>('/api/algorithm-demo/trace', { ...json('POST', body), signal }),
   graphCommand: <P extends GraphPostPath>(path: P, body: GraphPostRequest<P>) =>
     request<GraphPostResponse<P>>(path, json('POST', body)),
 };

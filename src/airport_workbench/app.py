@@ -26,6 +26,7 @@ from .api_models import (
 from .editor import EditorSession, GraphObjectNotFound, RevisionConflict
 from .flights import FlightWorkbench
 from .graph_state import VALIDATION_EDGE_COLORS, BrowserState, _edge_colors
+from .routes_demo import build_demo_router
 from .routes_flights import build_flights_router
 from .routes_graph import build_graph_router
 from .routes_issues import build_match_issues_router
@@ -154,6 +155,7 @@ def create_app(
             value["flight_count"] = flight_workbench.dataset_total_flights
         return WorkbenchStateResponse.model_validate(value)
 
+    app.include_router(build_demo_router())
     if flight_mode:
         assert flight_workbench is not None
         app.include_router(build_flights_router(flight_workbench))

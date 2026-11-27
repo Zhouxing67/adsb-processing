@@ -39,3 +39,18 @@ export interface MapRouteEntry {
   geometry: RouteGeometry; label: string; slot: number; visible: boolean;
 }
 export type SelectedFeature = GeoFeature<PointGeometry, NodeProperties> | GeoFeature<LineGeometry, EdgeProperties>;
+
+export type DemoMatchConfig = GraphApi['schemas']['DemoMatchConfig'];
+export type DemoPointInput = GraphApi['schemas']['DemoPointInput'];
+export type DemoScenarioSummary = GraphApi['schemas']['DemoScenarioSummary'];
+export type DemoScenariosResponse = GraphApi['schemas']['DemoScenariosResponse'];
+export type DemoTraceRequest = GraphApi['schemas']['DemoTraceRequest'];
+export type DemoGraph = GraphApi['schemas']['DemoGraph'];
+export type DemoGraphEdge = GraphApi['schemas']['DemoGraphEdge'];
+export type DemoGraphNode = GraphApi['schemas']['DemoGraphNode'];
+export type DemoObservationTrace = GraphApi['schemas']['DemoObservationTrace'];
+export type DemoDualTransition = GraphApi['schemas']['DemoDualTransition'];
+export type DemoTrellisState = GraphApi['schemas']['DemoTrellisState'];
+export type DemoTrellisLayer = GraphApi['schemas']['DemoTrellisLayer'];
+export type DemoDecodeAttempt = GraphApi['schemas']['DemoDecodeAttempt'];
+export type DemoTraceResponse = GraphApi['schemas']['DemoTraceResponse'];

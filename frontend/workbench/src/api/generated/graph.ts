@@ -4,6 +4,40 @@
  */
 
 export interface paths {
+    "/api/algorithm-demo/scenarios": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Demo Scenarios */
+        get: operations["demo_scenarios_api_algorithm_demo_scenarios_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/algorithm-demo/trace": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Demo Trace */
+        post: operations["demo_trace_api_algorithm_demo_trace_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/delete-edge-confirm": {
         parameters: {
             query?: never;
@@ -467,6 +501,308 @@ export interface components {
             c_id: number;
             /** Expected Revision */
             expected_revision: number;
+        };
+        /** DemoDecodeAttempt */
+        DemoDecodeAttempt: {
+            /** Decoded Edges */
+            decoded_edges?: string[];
+            /** End Edges */
+            end_edges?: string[];
+            /** Layers */
+            layers?: components["schemas"]["DemoTrellisLayer"][];
+            /** Pushback Radius M */
+            pushback_radius_m?: number | null;
+            /** Rejection Reason */
+            rejection_reason?: string | null;
+            reversal_origin?: components["schemas"]["DemoPointInput"] | null;
+            /** Start Edges */
+            start_edges?: string[];
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "accepted" | "rejected" | "no_path";
+            /** Trimmed Edges */
+            trimmed_edges?: string[];
+        };
+        /** DemoDualGraph */
+        DemoDualGraph: {
+            /** Allowed Transition Count */
+            allowed_transition_count: number;
+            /** Directed Edge Count */
+            directed_edge_count: number;
+            /** Pruned Transition Count */
+            pruned_transition_count: number;
+            /** Transitions */
+            transitions: components["schemas"]["DemoDualTransition"][];
+        };
+        /** DemoDualTransition */
+        DemoDualTransition: {
+            /** Allowed */
+            allowed: boolean;
+            /** From Edge */
+            from_edge: string;
+            /** Length M */
+            length_m: number;
+            /** To Edge */
+            to_edge: string;
+            /** Turn Angle Deg */
+            turn_angle_deg: number;
+            /** Via Node */
+            via_node: string;
+        };
+        /** DemoFinalResult */
+        DemoFinalResult: {
+            /** Edges */
+            edges?: string[];
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Message */
+            error_message?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "success" | "failed";
+            /** Used Phase */
+            used_phase?: ("phase1" | "phase2") | null;
+        };
+        /** DemoGraph */
+        DemoGraph: {
+            bounds: components["schemas"]["DemoGraphBounds"];
+            /** Edges */
+            edges: components["schemas"]["DemoGraphEdge"][];
+            /** Nodes */
+            nodes: components["schemas"]["DemoGraphNode"][];
+        };
+        /** DemoGraphBounds */
+        DemoGraphBounds: {
+            /** Max X */
+            max_x: number;
+            /** Max Y */
+            max_y: number;
+            /** Min X */
+            min_x: number;
+            /** Min Y */
+            min_y: number;
+        };
+        /** DemoGraphEdge */
+        DemoGraphEdge: {
+            /** Aeroway */
+            aeroway: string;
+            /** Coords */
+            coords: [
+                number,
+                number
+            ][];
+            /** Id */
+            id: string;
+            /** Key */
+            key: number;
+            /** Length M */
+            length_m: number;
+            /** Ref */
+            ref?: string | null;
+            /** U */
+            u: string;
+            /** V */
+            v: string;
+        };
+        /** DemoGraphNode */
+        DemoGraphNode: {
+            /** Id */
+            id: string;
+            /**
+             * Role
+             * @enum {string}
+             */
+            role: "stand" | "taxiway" | "runway_interface" | "runway";
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** DemoMatchConfig */
+        DemoMatchConfig: {
+            /**
+             * Candidate Radius
+             * @default 120
+             */
+            candidate_radius: number;
+            /**
+             * Gps Sigma
+             * @default 10
+             */
+            gps_sigma: number;
+            /**
+             * Length Scale M
+             * @default 50
+             */
+            length_scale_m: number;
+            /**
+             * Max Candidates
+             * @default 16
+             */
+            max_candidates: number;
+            /**
+             * Max Pushback Radius M
+             * @default 250
+             */
+            max_pushback_radius_m: number;
+            /**
+             * Max Transition Turn Angle Deg
+             * @default 130
+             */
+            max_transition_turn_angle_deg: number;
+            /**
+             * Turn Tangent Sample M
+             * @default 2
+             */
+            turn_tangent_sample_m: number;
+        };
+        /** DemoObservationCandidate */
+        DemoObservationCandidate: {
+            /** Aeroway */
+            aeroway: string;
+            /** Distance M */
+            distance_m: number;
+            /** Edge Id */
+            edge_id: string;
+            /** Emission Score */
+            emission_score: number;
+            /** Key */
+            key: number;
+            /** Ref */
+            ref?: string | null;
+            /** U */
+            u: string;
+            /** V */
+            v: string;
+        };
+        /** DemoObservationTrace */
+        DemoObservationTrace: {
+            /** Candidates */
+            candidates: components["schemas"]["DemoObservationCandidate"][];
+            /** Index */
+            index: number;
+            /** Retained */
+            retained: boolean;
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** DemoPointInput */
+        DemoPointInput: {
+            /** X */
+            x: number;
+            /** Y */
+            y: number;
+        };
+        /** DemoScenarioSummary */
+        DemoScenarioSummary: {
+            default_config: components["schemas"]["DemoMatchConfig"];
+            /** Default Observations */
+            default_observations: components["schemas"]["DemoPointInput"][];
+            /** Description */
+            description: string;
+            /** Id */
+            id: string;
+            /**
+             * Movement
+             * @enum {string}
+             */
+            movement: "arrival" | "departure";
+            /** Runway Ref */
+            runway_ref: string;
+            /** Stand Ref */
+            stand_ref: string;
+            /** Title */
+            title: string;
+        };
+        /** DemoScenariosResponse */
+        DemoScenariosResponse: {
+            /** Scenarios */
+            scenarios: components["schemas"]["DemoScenarioSummary"][];
+        };
+        /** DemoTraceRequest */
+        DemoTraceRequest: {
+            config?: components["schemas"]["DemoMatchConfig"] | null;
+            /** Observations */
+            observations?: components["schemas"]["DemoPointInput"][] | null;
+            /** Scenario Id */
+            scenario_id: string;
+        };
+        /** DemoTraceResponse */
+        DemoTraceResponse: {
+            config: components["schemas"]["DemoMatchConfig"];
+            dual_graph: components["schemas"]["DemoDualGraph"];
+            final_result: components["schemas"]["DemoFinalResult"];
+            graph: components["schemas"]["DemoGraph"];
+            /** Observations */
+            observations: components["schemas"]["DemoObservationTrace"][];
+            phase1: components["schemas"]["DemoDecodeAttempt"];
+            phase2?: components["schemas"]["DemoDecodeAttempt"] | null;
+            scenario: components["schemas"]["DemoScenarioSummary"];
+        };
+        /** DemoTrellisLayer */
+        DemoTrellisLayer: {
+            /**
+             * Allow Reversal
+             * @default false
+             */
+            allow_reversal: boolean;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "start_boundary" | "observation" | "end_boundary";
+            /** Label */
+            label: string;
+            /** Layer Index */
+            layer_index: number;
+            /** Observation Index */
+            observation_index?: number | null;
+            /** States */
+            states: components["schemas"]["DemoTrellisState"][];
+        };
+        /** DemoTrellisState */
+        DemoTrellisState: {
+            /** Best Prev Index */
+            best_prev_index?: number | null;
+            /** Cumulative Score */
+            cumulative_score?: number | null;
+            /** Directed Edge */
+            directed_edge: string;
+            /** Emission Score */
+            emission_score: number;
+            /**
+             * Is Optimal
+             * @default false
+             */
+            is_optimal: boolean;
+            /** Key */
+            key: number;
+            /**
+             * Reversed Used
+             * @default false
+             */
+            reversed_used: boolean;
+            /** State Index */
+            state_index: number;
+            /** Transition Distance M */
+            transition_distance_m?: number | null;
+            /** Transition Score */
+            transition_score?: number | null;
+            /** U */
+            u: string;
+            /**
+             * Used Reversal Step
+             * @default false
+             */
+            used_reversal_step: boolean;
+            /** V */
+            v: string;
         };
         /** DrawConnectionRequest */
         DrawConnectionRequest: {
@@ -1024,6 +1360,86 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    demo_scenarios_api_algorithm_demo_scenarios_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoScenariosResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
+    demo_trace_api_algorithm_demo_trace_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DemoTraceRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DemoTraceResponse"];
+                };
+            };
+            /** @description Request validation error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     delete_edge_confirm_api_delete_edge_confirm_post: {
         parameters: {
             query?: never;

@@ -172,6 +172,860 @@
         "title": "DeleteStandClusterRequest",
         "type": "object"
       },
+      "DemoDecodeAttempt": {
+        "additionalProperties": false,
+        "properties": {
+          "decoded_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Decoded Edges",
+            "type": "array"
+          },
+          "end_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "End Edges",
+            "type": "array"
+          },
+          "layers": {
+            "items": {
+              "$ref": "#/components/schemas/DemoTrellisLayer"
+            },
+            "title": "Layers",
+            "type": "array"
+          },
+          "pushback_radius_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Pushback Radius M"
+          },
+          "rejection_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Rejection Reason"
+          },
+          "reversal_origin": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoPointInput"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "start_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Start Edges",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "accepted",
+              "rejected",
+              "no_path"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trimmed_edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Trimmed Edges",
+            "type": "array"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DemoDecodeAttempt",
+        "type": "object"
+      },
+      "DemoDualGraph": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed_transition_count": {
+            "title": "Allowed Transition Count",
+            "type": "integer"
+          },
+          "directed_edge_count": {
+            "title": "Directed Edge Count",
+            "type": "integer"
+          },
+          "pruned_transition_count": {
+            "title": "Pruned Transition Count",
+            "type": "integer"
+          },
+          "transitions": {
+            "items": {
+              "$ref": "#/components/schemas/DemoDualTransition"
+            },
+            "title": "Transitions",
+            "type": "array"
+          }
+        },
+        "required": [
+          "directed_edge_count",
+          "allowed_transition_count",
+          "pruned_transition_count",
+          "transitions"
+        ],
+        "title": "DemoDualGraph",
+        "type": "object"
+      },
+      "DemoDualTransition": {
+        "additionalProperties": false,
+        "properties": {
+          "allowed": {
+            "title": "Allowed",
+            "type": "boolean"
+          },
+          "from_edge": {
+            "title": "From Edge",
+            "type": "string"
+          },
+          "length_m": {
+            "title": "Length M",
+            "type": "number"
+          },
+          "to_edge": {
+            "title": "To Edge",
+            "type": "string"
+          },
+          "turn_angle_deg": {
+            "title": "Turn Angle Deg",
+            "type": "number"
+          },
+          "via_node": {
+            "title": "Via Node",
+            "type": "string"
+          }
+        },
+        "required": [
+          "from_edge",
+          "to_edge",
+          "via_node",
+          "turn_angle_deg",
+          "allowed",
+          "length_m"
+        ],
+        "title": "DemoDualTransition",
+        "type": "object"
+      },
+      "DemoFinalResult": {
+        "additionalProperties": false,
+        "properties": {
+          "edges": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "error_message": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Message"
+          },
+          "status": {
+            "enum": [
+              "success",
+              "failed"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "used_phase": {
+            "anyOf": [
+              {
+                "enum": [
+                  "phase1",
+                  "phase2"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Used Phase"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "title": "DemoFinalResult",
+        "type": "object"
+      },
+      "DemoGraph": {
+        "additionalProperties": false,
+        "properties": {
+          "bounds": {
+            "$ref": "#/components/schemas/DemoGraphBounds"
+          },
+          "edges": {
+            "items": {
+              "$ref": "#/components/schemas/DemoGraphEdge"
+            },
+            "title": "Edges",
+            "type": "array"
+          },
+          "nodes": {
+            "items": {
+              "$ref": "#/components/schemas/DemoGraphNode"
+            },
+            "title": "Nodes",
+            "type": "array"
+          }
+        },
+        "required": [
+          "bounds",
+          "nodes",
+          "edges"
+        ],
+        "title": "DemoGraph",
+        "type": "object"
+      },
+      "DemoGraphBounds": {
+        "additionalProperties": false,
+        "properties": {
+          "max_x": {
+            "title": "Max X",
+            "type": "number"
+          },
+          "max_y": {
+            "title": "Max Y",
+            "type": "number"
+          },
+          "min_x": {
+            "title": "Min X",
+            "type": "number"
+          },
+          "min_y": {
+            "title": "Min Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "min_x",
+          "min_y",
+          "max_x",
+          "max_y"
+        ],
+        "title": "DemoGraphBounds",
+        "type": "object"
+      },
+      "DemoGraphEdge": {
+        "additionalProperties": false,
+        "properties": {
+          "aeroway": {
+            "title": "Aeroway",
+            "type": "string"
+          },
+          "coords": {
+            "items": {
+              "maxItems": 2,
+              "minItems": 2,
+              "prefixItems": [
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "number"
+                }
+              ],
+              "type": "array"
+            },
+            "title": "Coords",
+            "type": "array"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "key": {
+            "title": "Key",
+            "type": "integer"
+          },
+          "length_m": {
+            "title": "Length M",
+            "type": "number"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "u": {
+            "title": "U",
+            "type": "string"
+          },
+          "v": {
+            "title": "V",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "u",
+          "v",
+          "key",
+          "aeroway",
+          "length_m",
+          "coords"
+        ],
+        "title": "DemoGraphEdge",
+        "type": "object"
+      },
+      "DemoGraphNode": {
+        "additionalProperties": false,
+        "properties": {
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "stand",
+              "taxiway",
+              "runway_interface",
+              "runway"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "id",
+          "x",
+          "y",
+          "role"
+        ],
+        "title": "DemoGraphNode",
+        "type": "object"
+      },
+      "DemoMatchConfig": {
+        "additionalProperties": false,
+        "properties": {
+          "candidate_radius": {
+            "default": 120.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Candidate Radius",
+            "type": "number"
+          },
+          "gps_sigma": {
+            "default": 10.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Gps Sigma",
+            "type": "number"
+          },
+          "length_scale_m": {
+            "default": 50.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Length Scale M",
+            "type": "number"
+          },
+          "max_candidates": {
+            "default": 16,
+            "maximum": 32.0,
+            "minimum": 1.0,
+            "title": "Max Candidates",
+            "type": "integer"
+          },
+          "max_pushback_radius_m": {
+            "default": 250.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Max Pushback Radius M",
+            "type": "number"
+          },
+          "max_transition_turn_angle_deg": {
+            "default": 130.0,
+            "exclusiveMinimum": 0.0,
+            "maximum": 180.0,
+            "title": "Max Transition Turn Angle Deg",
+            "type": "number"
+          },
+          "turn_tangent_sample_m": {
+            "default": 2.0,
+            "exclusiveMinimum": 0.0,
+            "title": "Turn Tangent Sample M",
+            "type": "number"
+          }
+        },
+        "title": "DemoMatchConfig",
+        "type": "object"
+      },
+      "DemoObservationCandidate": {
+        "additionalProperties": false,
+        "properties": {
+          "aeroway": {
+            "title": "Aeroway",
+            "type": "string"
+          },
+          "distance_m": {
+            "title": "Distance M",
+            "type": "number"
+          },
+          "edge_id": {
+            "title": "Edge Id",
+            "type": "string"
+          },
+          "emission_score": {
+            "title": "Emission Score",
+            "type": "number"
+          },
+          "key": {
+            "title": "Key",
+            "type": "integer"
+          },
+          "ref": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Ref"
+          },
+          "u": {
+            "title": "U",
+            "type": "string"
+          },
+          "v": {
+            "title": "V",
+            "type": "string"
+          }
+        },
+        "required": [
+          "edge_id",
+          "u",
+          "v",
+          "key",
+          "aeroway",
+          "distance_m",
+          "emission_score"
+        ],
+        "title": "DemoObservationCandidate",
+        "type": "object"
+      },
+      "DemoObservationTrace": {
+        "additionalProperties": false,
+        "properties": {
+          "candidates": {
+            "items": {
+              "$ref": "#/components/schemas/DemoObservationCandidate"
+            },
+            "title": "Candidates",
+            "type": "array"
+          },
+          "index": {
+            "title": "Index",
+            "type": "integer"
+          },
+          "retained": {
+            "title": "Retained",
+            "type": "boolean"
+          },
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "index",
+          "x",
+          "y",
+          "retained",
+          "candidates"
+        ],
+        "title": "DemoObservationTrace",
+        "type": "object"
+      },
+      "DemoPointInput": {
+        "additionalProperties": false,
+        "properties": {
+          "x": {
+            "title": "X",
+            "type": "number"
+          },
+          "y": {
+            "title": "Y",
+            "type": "number"
+          }
+        },
+        "required": [
+          "x",
+          "y"
+        ],
+        "title": "DemoPointInput",
+        "type": "object"
+      },
+      "DemoScenarioSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "default_config": {
+            "$ref": "#/components/schemas/DemoMatchConfig"
+          },
+          "default_observations": {
+            "items": {
+              "$ref": "#/components/schemas/DemoPointInput"
+            },
+            "title": "Default Observations",
+            "type": "array"
+          },
+          "description": {
+            "title": "Description",
+            "type": "string"
+          },
+          "id": {
+            "title": "Id",
+            "type": "string"
+          },
+          "movement": {
+            "enum": [
+              "arrival",
+              "departure"
+            ],
+            "title": "Movement",
+            "type": "string"
+          },
+          "runway_ref": {
+            "title": "Runway Ref",
+            "type": "string"
+          },
+          "stand_ref": {
+            "title": "Stand Ref",
+            "type": "string"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "description",
+          "movement",
+          "stand_ref",
+          "runway_ref",
+          "default_observations",
+          "default_config"
+        ],
+        "title": "DemoScenarioSummary",
+        "type": "object"
+      },
+      "DemoScenariosResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "scenarios": {
+            "items": {
+              "$ref": "#/components/schemas/DemoScenarioSummary"
+            },
+            "title": "Scenarios",
+            "type": "array"
+          }
+        },
+        "required": [
+          "scenarios"
+        ],
+        "title": "DemoScenariosResponse",
+        "type": "object"
+      },
+      "DemoTraceRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoMatchConfig"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "observations": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/DemoPointInput"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observations"
+          },
+          "scenario_id": {
+            "title": "Scenario Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_id"
+        ],
+        "title": "DemoTraceRequest",
+        "type": "object"
+      },
+      "DemoTraceResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "config": {
+            "$ref": "#/components/schemas/DemoMatchConfig"
+          },
+          "dual_graph": {
+            "$ref": "#/components/schemas/DemoDualGraph"
+          },
+          "final_result": {
+            "$ref": "#/components/schemas/DemoFinalResult"
+          },
+          "graph": {
+            "$ref": "#/components/schemas/DemoGraph"
+          },
+          "observations": {
+            "items": {
+              "$ref": "#/components/schemas/DemoObservationTrace"
+            },
+            "title": "Observations",
+            "type": "array"
+          },
+          "phase1": {
+            "$ref": "#/components/schemas/DemoDecodeAttempt"
+          },
+          "phase2": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/DemoDecodeAttempt"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "scenario": {
+            "$ref": "#/components/schemas/DemoScenarioSummary"
+          }
+        },
+        "required": [
+          "scenario",
+          "config",
+          "graph",
+          "observations",
+          "dual_graph",
+          "phase1",
+          "final_result"
+        ],
+        "title": "DemoTraceResponse",
+        "type": "object"
+      },
+      "DemoTrellisLayer": {
+        "additionalProperties": false,
+        "properties": {
+          "allow_reversal": {
+            "default": false,
+            "title": "Allow Reversal",
+            "type": "boolean"
+          },
+          "kind": {
+            "enum": [
+              "start_boundary",
+              "observation",
+              "end_boundary"
+            ],
+            "title": "Kind",
+            "type": "string"
+          },
+          "label": {
+            "title": "Label",
+            "type": "string"
+          },
+          "layer_index": {
+            "title": "Layer Index",
+            "type": "integer"
+          },
+          "observation_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Observation Index"
+          },
+          "states": {
+            "items": {
+              "$ref": "#/components/schemas/DemoTrellisState"
+            },
+            "title": "States",
+            "type": "array"
+          }
+        },
+        "required": [
+          "layer_index",
+          "kind",
+          "label",
+          "states"
+        ],
+        "title": "DemoTrellisLayer",
+        "type": "object"
+      },
+      "DemoTrellisState": {
+        "additionalProperties": false,
+        "properties": {
+          "best_prev_index": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Best Prev Index"
+          },
+          "cumulative_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Cumulative Score"
+          },
+          "directed_edge": {
+            "title": "Directed Edge",
+            "type": "string"
+          },
+          "emission_score": {
+            "title": "Emission Score",
+            "type": "number"
+          },
+          "is_optimal": {
+            "default": false,
+            "title": "Is Optimal",
+            "type": "boolean"
+          },
+          "key": {
+            "title": "Key",
+            "type": "integer"
+          },
+          "reversed_used": {
+            "default": false,
+            "title": "Reversed Used",
+            "type": "boolean"
+          },
+          "state_index": {
+            "title": "State Index",
+            "type": "integer"
+          },
+          "transition_distance_m": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Distance M"
+          },
+          "transition_score": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Transition Score"
+          },
+          "u": {
+            "title": "U",
+            "type": "string"
+          },
+          "used_reversal_step": {
+            "default": false,
+            "title": "Used Reversal Step",
+            "type": "boolean"
+          },
+          "v": {
+            "title": "V",
+            "type": "string"
+          }
+        },
+        "required": [
+          "state_index",
+          "directed_edge",
+          "u",
+          "v",
+          "key",
+          "emission_score"
+        ],
+        "title": "DemoTrellisState",
+        "type": "object"
+      },
       "DrawConnectionRequest": {
         "properties": {
           "aeroway": {
@@ -1764,6 +2618,92 @@
   },
   "openapi": "3.1.0",
   "paths": {
+    "/api/algorithm-demo/scenarios": {
+      "get": {
+        "operationId": "demo_scenarios_api_algorithm_demo_scenarios_get",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoScenariosResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Demo Scenarios"
+      }
+    },
+    "/api/algorithm-demo/trace": {
+      "post": {
+        "operationId": "demo_trace_api_algorithm_demo_trace_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DemoTraceRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DemoTraceResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Request validation error"
+          },
+          "default": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Error response"
+          }
+        },
+        "summary": "Demo Trace"
+      }
+    },
     "/api/delete-edge-confirm": {
       "post": {
         "operationId": "delete_edge_confirm_api_delete_edge_confirm_post",

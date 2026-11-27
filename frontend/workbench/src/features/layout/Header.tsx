@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { PanelLeft, PanelRight, Undo2 } from 'lucide-react';
+import { GitBranch, PanelLeft, PanelRight, Undo2 } from 'lucide-react';
 import { useWorkbench } from '@/app/WorkbenchContext';
 import {
   AlertDialog,
@@ -22,9 +22,10 @@ interface HeaderProps {
   showRightToggle?: boolean;
   onLeft(): void;
   onRight(): void;
+  onOpenAlgorithmDemo(): void;
 }
 
-export function Header({ editing, leftOpen, rightOpen, showRightToggle = true, onLeft, onRight }: HeaderProps) {
+export function Header({ editing, leftOpen, rightOpen, showRightToggle = true, onLeft, onRight, onOpenAlgorithmDemo }: HeaderProps) {
   const wb = useWorkbench();
   const state = wb.state;
   const [finishOpen, setFinishOpen] = useState(false);
@@ -68,6 +69,15 @@ export function Header({ editing, leftOpen, rightOpen, showRightToggle = true, o
       </div>
 
       <div className="ml-auto flex items-center gap-1.5">
+        <Button
+          variant="outline"
+          size="sm"
+          className="gap-1.5 text-xs"
+          onClick={onOpenAlgorithmDemo}
+        >
+          <GitBranch className="h-3.5 w-3.5 text-primary" />
+          算法演示
+        </Button>
         {state?.capabilities.can_edit_graph && editing && (
           <>
             <Button

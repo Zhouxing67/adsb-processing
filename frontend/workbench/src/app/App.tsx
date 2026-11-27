@@ -9,6 +9,7 @@ import { TooltipProvider } from '@/components/ui/tooltip';
 import { isNodeFeature, isParkingEdgeFeature, isSameEdge } from '@/domain/features';
 import { lineIntersectsBounds } from '@/domain/geometry';
 import type { GeoBounds } from '@/domain/geometry';
+import { AlgorithmDemoView } from '@/features/algorithm-demo/AlgorithmDemoView';
 import { FlightPanel } from '@/features/flights/FlightPanel';
 import { MapSelectionRail } from '@/features/flights/MapSelectionRail';
 import { ObservationView } from '@/features/flights/ObservationView';
@@ -48,6 +49,7 @@ function Workspace() {
   const [inspectedClusterEdges, setInspectedClusterEdges] = useState<AngleMeasureEdge[]>([]);
   const [zoomLocked, setZoomLocked] = useState(false);
   const [graphEditing, setGraphEditing] = useState(false);
+  const [algorithmDemoOpen, setAlgorithmDemoOpen] = useState(false);
   const [splitViews, setSplitViews] = useState<[MainView, MainView] | null>(null);
   const splitView = splitViews !== null;
   const [splitLeftSize, setSplitLeftSize] = useState(() => {
@@ -483,6 +485,7 @@ function Workspace() {
         showRightToggle={!flightMode || hasRightContext}
         onLeft={() => setLeftOpen(value => !value)}
         onRight={() => setRightOpen(value => !value)}
+        onOpenAlgorithmDemo={() => setAlgorithmDemoOpen(true)}
       />
 
       {topologyLeft ? (
@@ -714,6 +717,8 @@ function Workspace() {
           )}
         </div>
       )}
+
+      {algorithmDemoOpen && <AlgorithmDemoView onClose={() => setAlgorithmDemoOpen(false)} />}
 
       {wb.busy && (
         <div className="absolute inset-0 z-[1500] grid cursor-wait place-items-center bg-background/35">
