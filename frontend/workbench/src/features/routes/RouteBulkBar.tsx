@@ -99,7 +99,7 @@ export function RouteBulkBar({
           variant="outline"
           size="sm"
           disabled={!selectedCount || Boolean(addingProgress) || detectingAnomalies}
-          title="对已选路径运行高精度异常检测（重复边、闭合环路、低频极端绕行）"
+          title="对已选路径检测明显闭合环路（≥ 3 条边回到已访问节点）"
           onClick={onDetectSelectedAnomalies}
         >
           <ShieldAlert className="h-3.5 w-3.5" />
@@ -109,7 +109,7 @@ export function RouteBulkBar({
           variant="outline"
           size="sm"
           disabled={!totalFilteredCount || Boolean(addingProgress) || detectingAnomalies}
-          title="对当前筛选条件下的全部路径运行高精度异常检测"
+          title="对当前筛选条件下的全部路径检测明显闭合环路"
           onClick={onDetectAllAnomalies}
         >
           <ShieldAlert className="h-3.5 w-3.5" />

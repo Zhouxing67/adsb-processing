@@ -67,9 +67,7 @@ export const ROUTE_SOURCE_LABELS: Record<string, string> = {
 };
 
 export const ROUTE_ANOMALY_LABELS: Record<string, string> = {
-  repeated_edge: '重复边',
   closed_loop: '闭合环路',
-  extreme_detour: '极端绕行',
 };
 
 export const STAND_CLUSTER_COLORS = [

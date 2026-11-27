@@ -360,15 +360,7 @@ class RouteLibraryService:
             )
         if not entries:
             return {"checked_count": 0, "anomalous_count": 0, "items": []}
-        reference_entries = self.repository.find_by_od(
-            graph_id=self.graph_id,
-            exclude_rejected=True,
-        )
-        reports = detect_route_anomalies(
-            entries,
-            airport_graph=self.airport_graph,
-            reference_entries=reference_entries,
-        )
+        reports = detect_route_anomalies(entries)
         by_id = {entry.route_id: entry for entry in entries}
         anomalous_items = []
         for report in reports:

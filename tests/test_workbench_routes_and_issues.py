@@ -275,8 +275,7 @@ def test_route_anomaly_detection_flags_obvious_anomalies_without_false_positives
         assert payload["anomalous_count"] == 1
         assert payload["items"][0]["route_id"] == loop_anomaly.route_id
         codes = {reason["code"] for reason in payload["items"][0]["reasons"]}
-        assert "closed_loop" in codes
-        assert "repeated_edge" in codes
+        assert codes == {"closed_loop"}
 
         # Filter-scoped full detection (without explicit route_ids) checks all matching routes.
         full_scan = client.post(
